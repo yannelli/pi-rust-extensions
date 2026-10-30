@@ -26,6 +26,17 @@ pub struct StartOptions {
 pub struct Registry {
     inner: Mutex<Inner>,
     pub monitor_started: AtomicBool,
+    widget: Mutex<WidgetMode>,
+}
+
+/// How the widget below the editor shows running tasks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WidgetMode {
+    /// One row per task, or one summary line above `ui::COLLAPSE_AT` tasks.
+    #[default]
+    Auto,
+    Collapsed,
+    Expanded,
 }
 
 #[derive(Default)]
@@ -48,6 +59,20 @@ impl Registry {
             inner.tasks = task::load_all(&dir);
             inner.dir = Some(dir);
         }
+    }
+
+    pub fn widget_mode(&self) -> WidgetMode {
+        *self
+            .widget
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    pub fn set_widget_mode(&self, mode: WidgetMode) {
+        *self
+            .widget
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = mode;
     }
 
     pub fn is_bound(&self) -> bool {

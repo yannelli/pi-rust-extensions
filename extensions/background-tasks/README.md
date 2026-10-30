@@ -24,13 +24,14 @@ When a task completes, fails, times out or is lost, the extension sends a `backg
 | Command | Action |
 | --- | --- |
 | `/bg [--no-survive-reload] [--agent] [--name "Task name"] <command>` | Starts a task. Its notification does not start a turn. |
+| `/tasks widget [collapse\|expand\|auto]` | Changes the widget below the editor; without an argument it changes between one line and the list. |
 | `/tasks [id]`, `/bg-tasks [id]` | Task manager panel: `↑↓`/`jk` select, `enter` logs, `x` twice stops, `c` removes finished tasks, `esc`/`q` closes or goes back. Refreshes every second. |
 | `/jobs` | Lists tasks. |
 | `/logs <id> [maxBytes]` | Shows the output tail. Completes task ids. |
 | `/kill <id>` | Stops a running task. Completes running task ids. |
 | `/bg-clear` | Removes finished tasks and their output files. |
 
-The footer status `background-tasks` shows counts by state (`bg: 1 running, 2 completed`). A widget below the editor lists up to 4 running tasks with elapsed time.
+The footer status `background-tasks` shows counts by state (`bg: 1 running, 2 completed`). A widget below the editor lists up to 3 running tasks with elapsed time. With more running tasks, it shows one line with the count and `/tasks`. `/tasks widget` changes between one line and a list of up to 20 tasks; `/tasks widget collapse`, `expand`, or `auto` sets the view.
 
 ## Reload and shutdown
 

@@ -183,3 +183,36 @@ async fn a_choice_shows_before_any_event_arrives() {
     );
     host.finish().await.unwrap();
 }
+
+#[tokio::test]
+async fn the_footer_follows_the_snapshot_mode_over_the_load_time_mode() {
+    let dirs = Dirs::new("load-mode");
+    dirs.write(
+        &dirs.agent().join("ext/statusline.json"),
+        json!({"chip": "plain", "icons": "none", "segments": ["model"]}),
+    );
+    let mut host = TestHost::start(extension(PathBuf::from("/nonexistent-home")));
+    host.initialize_as(
+        dirs.cwd().to_str().unwrap(),
+        dirs.agent().to_str().unwrap(),
+        "print",
+        false,
+    )
+    .await;
+    let mut ctx = ctx(&dirs.cwd(), false);
+    ctx["mode"] = json!("tui");
+    let event =
+        json!({ "name": "session_start", "event": { "type": "session_start" }, "ctx": ctx });
+    host.request(1, "event", event).await;
+    let mut seen = Seen::default();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        pump(&mut host, &mut seen, 1, |seen| {
+            seen.responded && !seen.footers.is_empty()
+        }),
+    )
+    .await
+    .expect("the footer renders in tui mode");
+    assert_eq!(strip(&seen.footers[0][0]), "gpt-5");
+    host.finish().await.unwrap();
+}
