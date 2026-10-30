@@ -4,7 +4,11 @@ use std::process::ExitCode;
 
 type Extension = (&'static str, fn() -> ExitCode);
 
-const EXTENSIONS: &[Extension] = &[];
+const EXTENSIONS: &[Extension] = &[
+    ("hooks", pi_ext_hooks::main),
+    ("claude-marketplace", pi_ext_claude_marketplace::main),
+    ("context-include", pi_ext_context_include::main),
+];
 
 fn main() -> ExitCode {
     let name = std::env::args().nth(1).unwrap_or_default();

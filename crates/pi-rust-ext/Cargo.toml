@@ -12,6 +12,9 @@ name = "pi-rust-ext"
 path = "src/main.rs"
 
 [dependencies]
+pi-ext-hooks = { path = "../../extensions/hooks" }
+pi-ext-claude-marketplace = { path = "../../extensions/claude-marketplace" }
+pi-ext-context-include = { path = "../../extensions/context-include" }
 
 [lints]
 workspace = true
