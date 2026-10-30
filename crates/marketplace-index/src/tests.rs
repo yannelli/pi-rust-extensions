@@ -49,6 +49,20 @@ fn sample_catalog() -> Value {
     })
 }
 
+#[test]
+fn repository_catalog_is_valid() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../marketplace.json");
+    let catalog: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let version = env!("CARGO_PKG_VERSION");
+    build_index(
+        &catalog,
+        &format!("v{version}"),
+        version,
+        &sample_archives(),
+    )
+    .expect("marketplace.json must pass the release index generator");
+}
+
 fn build_error(catalog: &Value) -> String {
     build_index(catalog, "v0.1.0", "0.1.0", &sample_archives()).unwrap_err()
 }

@@ -27,13 +27,19 @@ Each build becomes `pi-rust-ext-<target>.tar.gz`, or `.zip` for Windows.
 The archive root holds the binary, `LICENSE`, and `README.md`.
 The binary is `pi-rust-ext`, or `pi-rust-ext.exe` on Windows.
 
-The workflow writes `SHA256SUMS` with `sha256sum`. It then runs `marketplace-index` to write `index.json`.
-The `MARKETPLACE_SIGNING_KEY` secret holds an Ed25519 key in PKCS#8 PEM format.
-The workflow stops if this key does not match the public key in the client.
-It signs the exact bytes of `index.json`. It writes the base64 signature on one line to `index.json.sig`.
+The workflow runs `cargo test --workspace --locked` before it builds the archives.
+Linux builds use `cargo-zigbuild` 0.24.0 and Zig 0.15.2.
+The `index` job writes `SHA256SUMS` with `sha256sum`. It then runs `marketplace-index` to write `index.json`.
 
-Before upload, the workflow runs `scripts/verify-release.sh <tag> dist`.
-It creates provenance attestations for the archives and `index.json`.
+The `sign` job uses the `release` environment, whose deployment policy permits `v*` tags.
+Its `MARKETPLACE_SIGNING_KEY` secret holds an Ed25519 key in PKCS#8 PEM format.
+The job downloads the index artifact and signs the exact bytes with system OpenSSL.
+It verifies the signature against the client public key, then uploads `index.json.sig` as an artifact.
+The signature is base64 on one line.
+This job has no checkout or Rust build steps.
+
+The `publish` job downloads the archives, index, and signature.
+It runs `scripts/verify-release.sh <tag> dist` and creates provenance attestations for the archives and `index.json`.
 It then creates a GitHub release with generated notes and uploads the archives, index, and signature.
 
 To check an attestation, run `gh attestation verify <file> -R yannelli/pi-rust-extensions`.
@@ -76,20 +82,29 @@ scripts/verify-release.sh v0.1.0
 ```
 
 The script downloads `index.json` and `index.json.sig`. It checks the signature against the public key.
+It checks `protocolVersion` is 1 and `minPiVersion` is a SemVer string without build metadata.
 It then downloads each archive and checks its SHA-256 and size.
 It needs OpenSSL 3, `jq`, `shasum`, and `curl`.
 The macOS system `openssl` is LibreSSL. On macOS, use Homebrew `openssl@3`.
 
+To check local artifacts, pass the directory as the second argument.
+For test keys, use `--public-key <base64-raw-key>` before the tag.
+`bash scripts/test-verify-release.sh` generates a local release and a temporary key to test verification failures.
+CI also loads `marketplace.json` through the index generator to validate its entries.
+
 ## Action versions
 
-The workflow uses these action versions, checked against their GitHub releases on 2026-10-29:
+The workflows pin these action versions by commit SHA, resolved from GitHub tags on 2026-10-30:
 
 | Action | Version |
 | --- | --- |
-| `actions/checkout` | v7 |
-| `actions/upload-artifact` | v7 |
-| `actions/download-artifact` | v8 |
-| `actions/attest-build-provenance` | v4 |
+| `actions/checkout` | v7.0.1 |
+| `actions/upload-artifact` | v7.0.2 |
+| `actions/download-artifact` | v8.0.2 |
+| `actions/attest-build-provenance` | v4.2.2 |
+| `Swatinem/rust-cache` | v2.9.3 |
+
+The workflows use the runner's `rustup` to install stable Rust.
 
 `attest-build-provenance` wraps `actions/attest`. It needs `id-token: write` and `attestations: write`.
 

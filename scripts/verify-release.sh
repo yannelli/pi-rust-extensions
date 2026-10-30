@@ -12,15 +12,23 @@ die() {
 }
 
 usage() {
-  echo "usage: scripts/verify-release.sh <tag> [<dir>]" >&2
+  echo "usage: scripts/verify-release.sh [--public-key <base64-raw-key>] <tag> [<dir>]" >&2
   echo "With <dir>, checks index.json, index.json.sig, and the archives in <dir> and downloads nothing." >&2
+  echo "--public-key replaces the release key with another raw 32-byte Ed25519 key in base64." >&2
   exit 2
 }
 
+if [ "${1:-}" = "--public-key" ]; then
+  [ $# -ge 2 ] || usage
+  PUBLIC_KEY="$2"
+  shift 2
+fi
 [ $# -ge 1 ] && [ $# -le 2 ] || usage
 tag="$1"
 [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "invalid tag: $tag"
-for tool in openssl jq shasum curl; do
+tools="openssl jq shasum"
+[ $# -eq 2 ] || tools="$tools curl"
+for tool in $tools; do
   command -v "$tool" > /dev/null || die "$tool is not installed"
 done
 openssl version | grep -q '^OpenSSL 3' || die "OpenSSL 3 is necessary for Ed25519 -rawin (found: $(openssl version))"
@@ -59,6 +67,14 @@ index="$dir/index.json"
 [ "$(jq -r '.schemaVersion' "$index")" = 1 ] || die "schemaVersion is not 1"
 [ "$(jq -r '.repository' "$index")" = "$REPOSITORY" ] || die "repository is not $REPOSITORY"
 [ "$(jq -r '.tag' "$index")" = "$tag" ] || die "index tag is not $tag"
+jq -e '.protocolVersion | type == "number" and . == 1' "$index" > /dev/null \
+  || die "protocolVersion is not the number 1"
+numeric='(0|[1-9][0-9]*)'
+pre_id="($numeric|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+semver="\\A$numeric\\.$numeric\\.$numeric(-$pre_id(\\.$pre_id)*)?\\z"
+jq -e --arg pattern "$semver" \
+  '.minPiVersion | if type == "string" then test($pattern) else false end' "$index" > /dev/null \
+  || die "minPiVersion is not a SemVer string: $(jq -c '.minPiVersion' "$index")"
 [ "$(jq -r '.binaries["pi-rust-ext"] | length' "$index")" = 5 ] || die "index does not list 5 targets"
 
 for target in $TARGETS; do
