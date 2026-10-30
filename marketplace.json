@@ -2,5 +2,22 @@
   "schemaVersion": 1,
   "protocolVersion": 1,
   "minPiVersion": "0.7.7",
-  "extensions": []
+  "extensions": [
+    {
+      "name": "lens",
+      "displayName": "Lens",
+      "description": "Post-write formatters, linters, type checks, LSP diagnostics and a read-before-edit guard.",
+      "version": "0.1.0",
+      "args": ["lens"],
+      "tags": ["diagnostics", "formatting", "lsp", "tui"]
+    },
+    {
+      "name": "typesafe",
+      "displayName": "TypeSafe",
+      "description": "Structured TypeSafe judgments with session controls and usage limits.",
+      "version": "0.1.0",
+      "args": ["typesafe"],
+      "tags": ["evaluation", "api", "tui"]
+    }
+  ]
 }

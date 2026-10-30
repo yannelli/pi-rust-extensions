@@ -4,7 +4,10 @@ use std::process::ExitCode;
 
 type Extension = (&'static str, fn() -> ExitCode);
 
-const EXTENSIONS: &[Extension] = &[];
+const EXTENSIONS: &[Extension] = &[
+    ("lens", pi_ext_lens::main),
+    ("typesafe", pi_ext_typesafe::main),
+];
 
 fn main() -> ExitCode {
     let name = std::env::args().nth(1).unwrap_or_default();

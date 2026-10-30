@@ -12,6 +12,8 @@ name = "pi-rust-ext"
 path = "src/main.rs"
 
 [dependencies]
+pi-ext-lens = { path = "../../extensions/lens" }
+pi-ext-typesafe = { path = "../../extensions/typesafe" }
 
 [lints]
 workspace = true
