@@ -140,6 +140,14 @@ async fn stalled_server_is_skipped_after_one_timeout() {
     runner.reset();
     let (third, _) = scan(&config, &project, &runner).await;
     assert!(messages(&third)[0].contains("timed out"));
+    config.pipeline_timeout_ms = 300;
+    let runner = Runner::default();
+    scan(&config, &project, &runner).await;
+    let (equal, _) = scan(&config, &project, &runner).await;
+    assert!(
+        messages(&equal)[0].starts_with("Skipped: timed out earlier"),
+        "{equal:?}"
+    );
 }
 
 #[tokio::test]

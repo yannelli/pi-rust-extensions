@@ -16,7 +16,7 @@ mod wire;
 use wire::{command_name, convert, file_uri, language_id, read_message, uri_path, write_message};
 
 const EMPTY_PUBLISH_GRACE: Duration = Duration::from_millis(500);
-const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
+pub const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Opens `path` in a fresh `server` process rooted at `root` and returns the

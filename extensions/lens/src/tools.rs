@@ -124,7 +124,7 @@ async fn scan_lsp(
             match lsp_diagnostics(server, &root, &path, limit, &runner.live).await {
                 Ok(items) => findings.extend(items),
                 Err(error) => {
-                    if limit == Duration::from_millis(config.timeout_ms) {
+                    if crate::pipeline::full_wait(config, limit) {
                         runner.record(&server.command, &error);
                     }
                     let mut item = diagnostics::finding(&path, &server.command, "warning", &error);

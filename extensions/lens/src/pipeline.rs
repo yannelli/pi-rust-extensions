@@ -19,7 +19,7 @@ pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const PIPE_GRACE: Duration = Duration::from_millis(500);
 
 /// Shared by all scans of one session: one scan runs at a time, and an LSP server
-/// that used its full timeout is skipped until the next session start or `/lens` change.
+/// that stalled (see [`full_wait`]) is skipped until the next session start or `/lens` change.
 #[derive(Clone)]
 pub struct Runner {
     gate: Arc<Semaphore>,
@@ -132,7 +132,7 @@ pub async fn run(config: &Config, cwd: &Path, path: &Path, runner: &Runner) -> V
         match lsp_diagnostics(server, &root, path, limit, &runner.live).await {
             Ok(items) => findings.extend(items),
             Err(error) => {
-                if limit == Duration::from_millis(config.timeout_ms) {
+                if full_wait(config, limit) {
                     runner.record(&server.command, &error);
                 }
                 findings.push(diagnostics::finding(
@@ -157,9 +157,12 @@ pub async fn lsp_diagnostics(
 ) -> Result<Vec<Value>, String> {
     let limit_ms = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX).max(1);
     let call = lsp::diagnostics(server, root, path, limit_ms, live);
-    let items = timeout(limit, call)
-        .await
-        .unwrap_or_else(|_| Err(format!("{} timed out after {limit_ms} ms", server.command)))?;
+    let items = timeout(
+        limit + lsp::SHUTDOWN_GRACE + Duration::from_millis(200),
+        call,
+    )
+    .await
+    .unwrap_or_else(|_| Err(format!("{} timed out after {limit_ms} ms", server.command)))?;
     Ok(items
         .into_iter()
         .map(|mut item| {
@@ -167,6 +170,13 @@ pub async fn lsp_diagnostics(
             item
         })
         .collect())
+}
+
+/// True when `limit` is close to the most a server can get, so a timeout means
+/// the server stalled rather than a short remaining budget.
+pub fn full_wait(config: &Config, limit: Duration) -> bool {
+    let most = config.timeout_ms.min(config.pipeline_timeout_ms);
+    limit >= Duration::from_millis(most / 10 * 9)
 }
 
 pub fn budget(deadline: Instant, timeout_ms: u64) -> Option<Duration> {

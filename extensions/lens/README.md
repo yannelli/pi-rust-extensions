@@ -104,7 +104,7 @@ Lens returns from every hook and tool within a fixed time. A failure becomes a w
 | Length of one finding message | 4 KiB | Fixed |
 
 - Scans run one at a time. A scan that waits longer than `pipelineTimeoutMs` for its turn adds one skip finding.
-- An LSP server that uses its full `timeoutMs` is skipped for the rest of the session. A session start, branch change, compaction or `/lens` change resets this.
+- An LSP server that times out after at least 90% of the smaller of `timeoutMs` and `pipelineTimeoutMs` is skipped for the rest of the session. A session start, branch change, compaction or `/lens` change resets this.
 - When a command exits but a child process keeps its output open, Lens kills the command's process group after 0.5 s.
 - After a response, Lens kills the LSP server's process group, also when the server ignores `exit`.
 - When pi stops the extension, Lens kills all process groups that are still running. When the extension process is killed with SIGKILL, LSP servers get `processId` in `initialize` and stdin EOF.
