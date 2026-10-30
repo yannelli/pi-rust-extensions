@@ -1,6 +1,8 @@
 //! Status line segments: what each one shows, its theme role, and its icon. Codex
 //! `[tui] status_line` item names work as aliases, so a Codex list renders as is.
 
+pub mod usage;
+
 use std::sync::OnceLock;
 
 use crate::model::{RunState, StatusSnapshot, format_cwd, format_tokens};
@@ -56,6 +58,8 @@ segments! {
     ContextBar => "contextBar",
     ContextTokens => "contextTokens" | "context-tokens",
     ContextHeadroom => "contextHeadroom" | "context-headroom" | "tokensRemaining",
+    Usage => "usage",
+    UsageReset => "usageReset",
     Version => "version" | "codex-version",
     RunState => "runState" | "run-state",
     Time => "time",
@@ -95,6 +99,9 @@ impl Segment {
                 } else {
                     Role::ContextOk
                 }
+            }
+            Segment::Usage | Segment::UsageReset => {
+                usage::segment_role(snapshot.model.as_ref().map(|model| model.provider.as_str()))
             }
             Segment::Version | Segment::User | Segment::Host | Segment::Fill => Role::Meta,
             Segment::RunState => Role::State,
@@ -240,6 +247,8 @@ pub fn segment_text(segment: Segment, snapshot: &StatusSnapshot) -> Option<Strin
                 "▱".repeat(BAR_CELLS - filled)
             ))
         }
+        Segment::Usage => usage::segment_text(&snapshot.model.as_ref()?.provider, false),
+        Segment::UsageReset => usage::segment_text(&snapshot.model.as_ref()?.provider, true),
         Segment::Version => {
             (!snapshot.version.is_empty()).then(|| format!("v{}", snapshot.version))
         }
