@@ -56,8 +56,15 @@ pub(super) async fn write_message(writer: &mut ChildStdin, message: &Value) -> R
     writer
         .write_all(frame.as_bytes())
         .await
-        .map_err(|e| e.to_string())?;
-    writer.flush().await.map_err(|e| e.to_string())
+        .map_err(write_error)?;
+    writer.flush().await.map_err(write_error)
+}
+
+fn write_error(error: std::io::Error) -> String {
+    match error.kind() {
+        std::io::ErrorKind::BrokenPipe => format!("language server closed its input: {error}"),
+        _ => error.to_string(),
+    }
 }
 
 pub(super) fn convert(diagnostic: &Value, path: &Path, default_source: &str) -> Value {

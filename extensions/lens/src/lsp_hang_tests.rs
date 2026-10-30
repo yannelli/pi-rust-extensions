@@ -205,8 +205,20 @@ async fn garbage_output_fails_fast() {
 async fn crash_after_initialize_is_an_error() {
     let fx = Fixture::new();
     let (result, elapsed) = fx.run("crash", 10_000).await;
-    assert!(result.unwrap_err().contains("closed"));
+    let error = result.unwrap_err();
+    assert!(error.contains("closed"), "{error}");
     assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+}
+
+#[tokio::test]
+async fn crash_while_sending_a_document_is_an_error() {
+    let fx = Fixture::new();
+    fx.project.write("a.py", &"x = 1\n".repeat(200_000));
+    let (result, elapsed) = fx.run("crash", 10_000).await;
+    let error = result.unwrap_err();
+    assert!(error.contains("closed"), "{error}");
+    assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+    assert_dead(&fx.logged("pid ")).await;
 }
 
 #[tokio::test]
