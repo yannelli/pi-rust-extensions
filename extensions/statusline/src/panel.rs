@@ -63,27 +63,39 @@ async fn open_editor(footer: Arc<Footer>, host: Host) -> Result<()> {
     });
     let mut editor =
         StatusLineEditor::new(value, footer.home().to_path_buf(), save).with_config_path(path);
-    let render = |editor: &StatusLineEditor, width: usize| {
-        editor.render(width, &footer.preview(&editor.value, width))
-    };
-    let mut panel = host.panel(render(&editor, DEFAULT_WIDTH)).open().await?;
+    let mut shown = editor.preview_value();
+    footer.show_preview(&host, &shown).await;
+    let result = run_editor(&footer, &host, &mut editor, &mut shown).await;
+    footer.end_preview(&host).await;
+    result
+}
+
+/// Runs the panel; the real footer previews the editor's value after each key.
+async fn run_editor(
+    footer: &Arc<Footer>,
+    host: &Host,
+    editor: &mut StatusLineEditor,
+    shown: &mut Value,
+) -> Result<()> {
+    let mut panel = host.panel(editor.render(DEFAULT_WIDTH, &[])).open().await?;
     loop {
         match panel.next_event().await {
             PanelEvent::Key(key) => {
-                let before = editor.value.clone();
                 editor.handle_key(&key);
-                if editor.value != before {
-                    footer.reload(&host).await;
-                }
                 if editor.closed {
                     break;
+                }
+                let preview = editor.preview_value();
+                if preview != *shown {
+                    footer.show_preview(host, &preview).await;
+                    *shown = preview;
                 }
             }
             PanelEvent::Resize(_) => {}
             PanelEvent::Closed => return Ok(()),
         }
         let width = panel.width().unwrap_or(DEFAULT_WIDTH);
-        panel.set_lines(render(&editor, width))?;
+        panel.set_lines(editor.render(width, &[]))?;
     }
     panel.close(Value::Null).await.map(|_| ())
 }

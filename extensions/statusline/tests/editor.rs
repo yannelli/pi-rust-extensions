@@ -100,3 +100,31 @@ fn rejected_save_keeps_original_settings_and_reports_error() {
     assert!(lines.iter().any(|line| line.contains("read only")));
     assert!(lines.iter().any(|line| line.contains("preview")));
 }
+
+#[test]
+fn the_preview_follows_the_highlighted_choice_and_escape_restores_it() {
+    let (mut editor, saved) = recording_editor(Some(json!({"type": "builtin", "preset": "pi"})));
+    editor.select_item("preset");
+    editor.handle_input("\r");
+    editor.handle_input("pills");
+    assert_eq!(editor.preview_value()["preset"], "pills");
+    assert!(saved.lock().unwrap().is_empty());
+    editor.handle_input("\x1b");
+    assert_eq!(
+        editor.preview_value(),
+        json!({"type": "builtin", "preset": "pi"})
+    );
+    assert!(!editor.closed);
+}
+
+#[test]
+fn other_sources_are_not_previewed() {
+    let (mut editor, _) = recording_editor(Some(json!({"type": "builtin", "preset": "pi"})));
+    editor.select_item("source");
+    editor.handle_input("\r");
+    editor.handle_input("command");
+    assert_eq!(
+        editor.preview_value(),
+        json!({"type": "builtin", "preset": "pi"})
+    );
+}

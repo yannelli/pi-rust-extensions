@@ -12,7 +12,7 @@ A footer status line for pi-rust. It replaces the built-in `statusLine` setting 
 
 ## Commands
 
-- `/statusline`: choose global or project scope, then edit the source, appearance, or layout. Project scope requires a trusted project. Changes save at once to the selected config.
+- `/statusline`: choose global or project scope, then edit the source, appearance, or layout. Project scope requires a trusted project. Changes save at once to the selected config. While the editor is open, pi's footer shows the edited status line and the value under the cursor of an open list. Esc on a list shows the saved value again, and closing the editor shows the saved status line.
 - `/statusline <preset | command | from-claude | from-cursor | from-codex | off>`: switches directly.
 
 ## Config

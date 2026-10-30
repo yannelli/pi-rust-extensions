@@ -160,6 +160,29 @@ impl StatusLineEditor {
         }
     }
 
+    /// The value the footer previews: the highlighted choice of an open value list or the
+    /// unapplied layout, else the saved value. Other sources than builtin are not previewed.
+    pub fn preview_value(&self) -> Value {
+        let highlighted = match &self.layout {
+            Some((lines, list)) => match list.highlighted() {
+                Some((id, selected)) => {
+                    let mut lines = lines.clone();
+                    change_layout(&mut lines, &id, &selected);
+                    Some(("segments".to_string(), json!(lines).to_string()))
+                }
+                None => Some(("segments".to_string(), json!(lines).to_string())),
+            },
+            None => self.list.highlighted(),
+        };
+        let Some((id, selected)) = highlighted else {
+            return self.value.clone();
+        };
+        match edit_value(&self.value, &id, &selected, &self.home) {
+            Ok(value) if matches!(value["type"].as_str(), Some("builtin" | "off")) => value,
+            _ => self.value.clone(),
+        }
+    }
+
     pub fn apply_change(&mut self, id: &str, selected: &str) {
         let result = edit_value(&self.value, id, selected, &self.home).and_then(|value| {
             (self.save)(value.clone())?;
