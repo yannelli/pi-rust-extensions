@@ -32,7 +32,7 @@ pub use error::{Error, Result, code};
 pub use extension::Extension;
 pub use host::{
     CustomMessage, DeliverAs, ExecOutput, ExecRequest, Host, InputOptions, LlmRequest, LlmResponse,
-    NotifyType, Placement, ProviderAuth,
+    NotifyType, Placement, ProviderAuth, ProviderUsage, UsageWindow,
 };
 pub use keys::Key;
 pub use panel::{KeyInput, Panel, PanelBuilder, PanelEvent};
