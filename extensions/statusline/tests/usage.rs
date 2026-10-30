@@ -10,7 +10,7 @@ use support::*;
 
 fn fetcher() -> Extension {
     Extension::new("usage-test").command("fetch", "", |provider, ctx: CommandCtx| async move {
-        if !usage::fetch(ctx.host(), &provider).await {
+        if !usage::fetch(ctx.host(), &provider, false).await {
             bail!("no usage.get");
         }
         Ok(())

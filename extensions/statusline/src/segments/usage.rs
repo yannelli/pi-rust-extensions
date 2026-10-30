@@ -107,16 +107,17 @@ async fn watch(host: Host) {
             cache().run_ended = true;
         }
         working = now_working;
-        let Some(provider) = due(Instant::now()) else {
+        let Some((provider, refresh)) = due(Instant::now()) else {
             continue;
         };
-        if !fetch(&host, &provider).await {
+        if !fetch(&host, &provider, refresh).await {
             return;
         }
     }
 }
 
-fn due(now: Instant) -> Option<String> {
+/// The provider to fetch now, and whether a finished run asks pi to skip its cache.
+fn due(now: Instant) -> Option<(String, bool)> {
     let mut cache = cache();
     let (provider, asked) = cache.wanted.clone()?;
     if now.duration_since(asked) > WANTED_FOR {
@@ -131,15 +132,16 @@ fn due(now: Instant) -> Option<String> {
     if !due {
         return None;
     }
+    let refresh = run_ended && since.is_some_and(|since| since >= AFTER_RUN);
     cache.run_ended = false;
     cache.attempts.insert(provider.clone(), now);
-    Some(provider)
+    Some((provider, refresh))
 }
 
 /// Fetches `provider` into the cache. `false` when pi has no `usage.get`; other errors keep
 /// the cached data.
-pub async fn fetch(host: &Host, provider: &str) -> bool {
-    match host.usage(Some(provider)).await {
+pub async fn fetch(host: &Host, provider: &str, refresh: bool) -> bool {
+    match host.usage_with(Some(provider), refresh).await {
         Ok(list) => {
             if let Some(usage) = list.into_iter().find(|usage| usage.provider == provider) {
                 store(usage);
