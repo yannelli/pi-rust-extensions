@@ -618,11 +618,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "pi-ext-background-tasks"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-e2e"
 version = "0.1.0"
 dependencies = [
  "pi-ext-sdk",
  "serde_json",
+]
+
+[[package]]
+name = "pi-ext-goal"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -637,10 +659,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-rewind"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-sdk"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "pi-ext-ssh"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
  "serde",
  "serde_json",
  "tokio",
@@ -664,7 +709,11 @@ dependencies = [
 name = "pi-rust-ext"
 version = "0.1.0"
 dependencies = [
+ "pi-ext-background-tasks",
+ "pi-ext-goal",
  "pi-ext-lens",
+ "pi-ext-rewind",
+ "pi-ext-ssh",
  "pi-ext-typesafe",
 ]
 

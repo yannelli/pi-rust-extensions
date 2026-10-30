@@ -7,6 +7,10 @@ type Extension = (&'static str, fn() -> ExitCode);
 const EXTENSIONS: &[Extension] = &[
     ("lens", pi_ext_lens::main),
     ("typesafe", pi_ext_typesafe::main),
+    ("background-tasks", pi_ext_background_tasks::main),
+    ("goal", pi_ext_goal::main),
+    ("rewind", pi_ext_rewind::main),
+    ("ssh", pi_ext_ssh::main),
 ];
 
 fn main() -> ExitCode {

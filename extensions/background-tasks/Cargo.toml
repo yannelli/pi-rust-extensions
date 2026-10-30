@@ -1,0 +1,21 @@
+[package]
+name = "pi-ext-background-tasks"
+description = "Durable background shell jobs for pi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+pi-ext-sdk = { path = "../../crates/pi-ext-sdk" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+pi-ext-e2e = { path = "../../crates/pi-ext-e2e" }
+
+[lints]
+workspace = true
