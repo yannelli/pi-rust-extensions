@@ -22,3 +22,17 @@ A footer status line for pi-rust. It replaces the built-in `statusLine` setting 
 Without either file, the old `statusLine` setting applies (through `settings.get`, with `command` from `~/.pi/agent/settings.json` only). Without that too, the `minimal` preset applies.
 
 In a project that is not trusted, `command` and the `command`, `claude`, and `cursor` types come from the global layer only; the extension says so once.
+
+## Usage segments
+
+`usage` and `usageReset` show the subscription limits of the current model's provider (`anthropic`, `openai-codex`, `cursor`, `google-antigravity`) from pi's `usage.get`, as `/usage` shows them. Add them in `/statusline` under "Modules / order", or in `segments`.
+
+| Segment | Example |
+| --- | --- |
+| `usage` | `5h 42% · wk 18%` |
+| `usageReset` | `5h 42% (2h13m) · wk 18% (3d)`, with the time to each reset |
+
+- Labels: a 5-hour window is `5h` and a week is `wk`. `Weekly Opus` is `wk Opus`, `Gemini Models: Weekly` is `Gemini wk`; Cursor's `Total`, `Auto`, and `API` stay as they are.
+- Color: the context roles, by the highest window: above 90% high, above 70% warn, else ok.
+- Hidden for other providers, for a provider without a login or with a fetch error, and under pi versions without `usage.get` (pi-rust 0.8.2 and older).
+- The extension asks pi only while a usage segment is in the status line: at once, every 90 seconds, and when a run ends. pi keeps each result for 60 seconds (5 minutes for `google-antigravity`).

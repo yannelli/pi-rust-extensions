@@ -113,7 +113,7 @@ When you drop a `Host` request future, the SDK sends `$/cancelRequest` to pi. pi
 | Model and tools | `model`, `set_model`, `thinking_level`, `set_thinking_level`, `active_tools`, `set_active_tools`, `all_tools`, `all_commands`, `flag::<T>(name)` |
 | Settings | `settings::<T>(namespace)` returns `Option<T>`, `all_settings()` |
 | Context | `compact`, `abort`, `is_idle`, `context_usage`, `system_prompt` |
-| Other | `complete(LlmRequest)`, `provider_auth`, `emit(channel, data)`, `subscribe(channel)`, `exec(cmd, &args)`, `exec_with(ExecRequest)`, `register_provider`, `unregister_provider` |
+| Other | `complete(LlmRequest)`, `provider_auth`, `usage(provider)` and `usage_with(provider, refresh)` (`usage.get`), `emit(channel, data)`, `subscribe(channel)`, `exec(cmd, &args)`, `exec_with(ExecRequest)`, `register_provider`, `unregister_provider` |
 | Later registration | `register_tool`, `register_command`, `register_shortcut`, `register_flag`, `on(event, handler)`, `register_autocomplete`, `register_virtual_model`, `unregister_virtual_model` |
 
 `subscribe` returns a `Subscription`. Call `recv().await` or `recv_as::<T>().await`. When you drop the last subscription of a channel, the SDK sends `events.unsubscribe`.

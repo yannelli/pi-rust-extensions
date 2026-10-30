@@ -89,6 +89,7 @@ pub fn extension(home: PathBuf) -> Extension {
             footer.set_version(host.init().map(|init| init.pi_version).unwrap_or_default());
             footer.find_project(&host).await;
             footer.reload(&host).await;
+            segments::usage::start(&host);
             tokio::spawn(ticker(footer, host));
             Ok(())
         }
