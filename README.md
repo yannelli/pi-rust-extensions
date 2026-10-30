@@ -19,4 +19,10 @@ You can also open `/extensions` in the pi TUI to browse, install, and remove ext
 | `crates/pi-ext-sdk` | Rust SDK for the pi-rust native extension protocol |
 | `crates/pi-rust-ext` | The multi-call binary |
 | `extensions/<name>` | One crate for each extension |
+| `crates/marketplace-index` | Writes the release `index.json` |
 | `marketplace.json` | Catalog data for the release index |
+| `scripts/verify-release.sh` | Checks the signature and archives of a release |
+
+## Docs
+
+See [docs/INDEX.md](docs/INDEX.md). [docs/release.md](docs/release.md) tells how to make and verify a release.

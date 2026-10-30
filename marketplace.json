@@ -1,1 +1,6 @@
-{ "schemaVersion": 1, "extensions": [] }
+{
+  "schemaVersion": 1,
+  "protocolVersion": 1,
+  "minPiVersion": "0.7.7",
+  "extensions": []
+}

@@ -2,7 +2,9 @@
 
 use std::process::ExitCode;
 
-const EXTENSIONS: &[(&str, fn() -> ExitCode)] = &[];
+type Extension = (&'static str, fn() -> ExitCode);
+
+const EXTENSIONS: &[Extension] = &[];
 
 fn main() -> ExitCode {
     let name = std::env::args().nth(1).unwrap_or_default();
@@ -10,7 +12,10 @@ fn main() -> ExitCode {
         Some((_, run)) => run(),
         None => {
             let names: Vec<&str> = EXTENSIONS.iter().map(|(id, _)| *id).collect();
-            eprintln!("usage: pi-rust-ext <extension>\nextensions: {}", names.join(", "));
+            eprintln!(
+                "usage: pi-rust-ext <extension>\nextensions: {}",
+                names.join(", ")
+            );
             ExitCode::from(2)
         }
     }

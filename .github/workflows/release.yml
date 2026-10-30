@@ -1,0 +1,151 @@
+name: Release
+
+# A `v*` tag releases that exact workspace version: archives, a signed index.json, and provenance.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ github.ref_name }}
+
+jobs:
+  check-tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tag matches the workspace version
+        run: |
+          version="$(cargo metadata --no-deps --locked --format-version 1 \
+            | jq -r '.packages[] | select(.name == "pi-rust-ext") | .version')"
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match workspace version $version"
+            exit 1
+          fi
+
+  build:
+    needs: check-tag
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, zig: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, zig: true }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cargo-zigbuild
+        if: matrix.zig
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install --quiet cargo-zigbuild
+          echo "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
+      - name: Build
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ZIG: ${{ matrix.zig }}
+        run: |
+          if [ "$ZIG" = true ]; then
+            cargo zigbuild --release --locked -p pi-rust-ext --target "$TARGET"
+          else
+            cargo build --release --locked -p pi-rust-ext --target "$TARGET"
+          fi
+      # Archive root: the binary (pi-rust-ext or pi-rust-ext.exe), LICENSE, and README.md.
+      - name: Package
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p stage dist
+          cp README.md LICENSE stage/
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp "target/$TARGET/release/pi-rust-ext.exe" stage/
+            (cd stage && 7z a -tzip -bso0 "../dist/pi-rust-ext-$TARGET.zip" pi-rust-ext.exe LICENSE README.md)
+          else
+            cp "target/$TARGET/release/pi-rust-ext" stage/
+            chmod 755 stage/pi-rust-ext
+            tar -C stage -czf "dist/pi-rust-ext-$TARGET.tar.gz" pi-rust-ext LICENSE README.md
+          fi
+          rm -rf stage
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- pi-rust-ext-* > SHA256SUMS && cat SHA256SUMS
+      - name: Generate index.json
+        run: cargo run --release --locked -p marketplace-index -- marketplace.json "$TAG" dist dist/index.json
+      - name: Sign index.json
+        env:
+          MARKETPLACE_SIGNING_KEY: ${{ secrets.MARKETPLACE_SIGNING_KEY }}
+          PUBLIC_KEY: G33uzqR2bwGJyZD3qnY4BNThlZzwyntF+DWRTMQYBBo=
+        run: |
+          [ -n "$MARKETPLACE_SIGNING_KEY" ] || { echo "::error::MARKETPLACE_SIGNING_KEY is not set"; exit 1; }
+          key="$RUNNER_TEMP/marketplace-signing-key.pem"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$MARKETPLACE_SIGNING_KEY" > "$key")
+          actual="$(openssl pkey -in "$key" -pubout -outform DER | tail -c 32 | base64 -w0)"
+          if [ "$actual" != "$PUBLIC_KEY" ]; then
+            echo "::error::MARKETPLACE_SIGNING_KEY does not match the public key in the client contract"
+            exit 1
+          fi
+          openssl pkeyutl -sign -rawin -inkey "$key" -in dist/index.json | base64 -w0 > dist/index.json.sig
+      - name: Verify index signature and archives
+        run: bash scripts/verify-release.sh "$TAG" dist
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/pi-rust-ext-*
+            dist/index.json
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          flags=(--verify-tag --title "$TAG" --generate-notes)
+          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$TAG" "${flags[@]}" dist/pi-rust-ext-* dist/index.json dist/index.json.sig
