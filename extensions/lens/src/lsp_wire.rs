@@ -1,26 +1,34 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{ChildStdin, ChildStdout};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::ChildStdin;
 
 use crate::config::LspServer;
 
-const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+pub(super) const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_HEADER_BYTES: u64 = 8 * 1024;
 
-pub(super) async fn read_message(reader: &mut BufReader<ChildStdout>) -> Result<Value, String> {
+pub(super) async fn read_message<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+) -> Result<Value, String> {
     let mut length: Option<usize> = None;
-    let mut line = String::new();
+    let mut line = Vec::new();
     loop {
         line.clear();
-        let read = reader
-            .read_line(&mut line)
+        let read = (&mut *reader)
+            .take(MAX_HEADER_BYTES)
+            .read_until(b'\n', &mut line)
             .await
             .map_err(|e| e.to_string())?;
         if read == 0 {
             return Err("language server closed its output".into());
         }
-        let header = line.trim_end();
+        if line.last() != Some(&b'\n') {
+            return Err("language server sent a header line without an end".into());
+        }
+        let header = String::from_utf8_lossy(&line);
+        let header = header.trim_end();
         if header.is_empty() {
             break;
         }
@@ -62,8 +70,8 @@ pub(super) fn convert(diagnostic: &Value, path: &Path, default_source: &str) -> 
     };
     json!({
         "path": path.to_string_lossy(),
-        "line": start["line"].as_u64().unwrap_or(0) + 1,
-        "column": start["character"].as_u64().unwrap_or(0) + 1,
+        "line": start["line"].as_u64().unwrap_or(0).saturating_add(1),
+        "column": start["character"].as_u64().unwrap_or(0).saturating_add(1),
         "severity": severity,
         "message": diagnostic["message"].as_str().unwrap_or_default(),
         "source": diagnostic["source"].as_str().unwrap_or(default_source),
@@ -105,13 +113,24 @@ pub(super) fn command_name(command: &str) -> String {
 }
 
 pub(super) fn file_uri(path: &Path) -> String {
-    let raw = path.to_string_lossy().replace('\\', "/");
-    let mut uri = String::from(if raw.starts_with('/') {
+    let raw: Vec<u8> = path
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .map(|byte| {
+            if cfg!(windows) && *byte == b'\\' {
+                b'/'
+            } else {
+                *byte
+            }
+        })
+        .collect();
+    let mut uri = String::from(if raw.starts_with(b"/") {
         "file://"
     } else {
         "file:///"
     });
-    for byte in raw.bytes() {
+    for byte in raw {
         if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
             uri.push(byte as char);
         } else {
@@ -142,12 +161,17 @@ pub(super) fn uri_path(uri: &str) -> Option<PathBuf> {
             }
         }
     }
-    let text = String::from_utf8(decoded).ok()?;
-    let trimmed = text.trim_end_matches('/');
-    let path = if cfg!(windows) {
-        trimmed.trim_start_matches('/')
-    } else {
-        trimmed
-    };
-    Some(PathBuf::from(path))
+    while decoded.len() > 1 && decoded.last() == Some(&b'/') {
+        decoded.pop();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Some(PathBuf::from(std::ffi::OsString::from_vec(decoded)))
+    }
+    #[cfg(not(unix))]
+    {
+        let text = String::from_utf8(decoded).ok()?;
+        Some(PathBuf::from(text.trim_start_matches('/')))
+    }
 }

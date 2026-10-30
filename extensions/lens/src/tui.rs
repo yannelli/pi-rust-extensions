@@ -22,15 +22,17 @@ pub async fn manage(host: &Host, state: Arc<Mutex<State>>) -> Result<()> {
             return Ok(());
         };
         if action == "Status" {
-            let state = state.lock().await;
-            host.notify_info(format!(
-                "Lens enabled={} context={} readGuard={} findings={}",
-                state.config.enabled,
-                state.config.context,
-                state.config.read_guard,
-                state.all_findings().len()
-            ))
-            .await?;
+            let text = {
+                let state = state.lock().await;
+                format!(
+                    "Lens enabled={} context={} readGuard={} findings={}",
+                    state.config.enabled,
+                    state.config.context,
+                    state.config.read_guard,
+                    state.all_findings().len()
+                )
+            };
+            host.notify_info(text).await?;
             continue;
         }
         let Some(scope) = host
@@ -57,7 +59,7 @@ pub async fn manage(host: &Host, state: Arc<Mutex<State>>) -> Result<()> {
                 else {
                     continue;
                 };
-                value["languages"][&language]["enabled"] =
+                *slot(&mut value, &["languages", &language, "enabled"])? =
                     json!(!current.language_enabled(&language));
             }
             "Tools" => {
@@ -83,7 +85,8 @@ pub async fn manage(host: &Host, state: Arc<Mutex<State>>) -> Result<()> {
                 let Some(name) = host.select("Toggle tool", &names).await? else {
                     continue;
                 };
-                value["tools"][&name]["enabled"] = json!(!current.tool_enabled(&name));
+                *slot(&mut value, &["tools", &name, "enabled"])? =
+                    json!(!current.tool_enabled(&name));
             }
             "Commands" | "LSP servers" => {
                 let lsp = action == "LSP servers";
@@ -95,11 +98,12 @@ pub async fn manage(host: &Host, state: Arc<Mutex<State>>) -> Result<()> {
                 .cloned()
                 .unwrap_or_default();
                 if let Some(items) = edit_items(host, items, lsp).await? {
-                    if lsp {
-                        value["lsp"]["servers"] = json!(items);
+                    let keys: &[&str] = if lsp {
+                        &["lsp", "servers"]
                     } else {
-                        value["commands"] = json!(items);
-                    }
+                        &["commands"]
+                    };
+                    *slot(&mut value, keys)? = json!(items);
                 } else {
                     continue;
                 }
@@ -170,7 +174,8 @@ async fn edit_items(host: &Host, mut items: Vec<Value>, lsp: bool) -> Result<Opt
                 }
             }
             "Enable or disable" => {
-                items[index]["enabled"] = json!(items[index]["enabled"] == false)
+                let enabled = items[index]["enabled"] == false;
+                *slot(&mut items[index], &["enabled"])? = json!(enabled);
             }
             "Delete"
                 if host
@@ -183,4 +188,22 @@ async fn edit_items(host: &Host, mut items: Vec<Value>, lsp: bool) -> Result<Opt
         }
     }
     Ok(Some(items))
+}
+
+/// The value at `keys`, after it turns null parents into objects. Other parent
+/// types are an error, because `serde_json` panics when it indexes them.
+pub(crate) fn slot<'a>(value: &'a mut Value, keys: &[&str]) -> Result<&'a mut Value> {
+    let mut current = value;
+    for key in keys {
+        if current.is_null() {
+            *current = json!({});
+        }
+        let map = current.as_object_mut().ok_or_else(|| {
+            Error::msg(format!(
+                "Lens config: the parent of \"{key}\" is not an object"
+            ))
+        })?;
+        current = map.entry((*key).to_owned()).or_insert(Value::Null);
+    }
+    Ok(current)
 }

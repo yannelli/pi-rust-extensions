@@ -4,6 +4,7 @@ use std::time::Instant;
 use super::diagnostics;
 use super::wire::{file_uri, language_id, uri_path};
 use crate::config::LspServer;
+use crate::group::Live;
 
 const FAKE_SERVER: &str = r#"
 import json, os, re, sys
@@ -145,6 +146,7 @@ async fn publish_returns_only_target_diagnostics() {
         &fx.dir,
         Path::new("my file é.py"),
         10_000,
+        &Live::default(),
     )
     .await
     .unwrap();
@@ -181,9 +183,15 @@ async fn publish_returns_only_target_diagnostics() {
 #[tokio::test]
 async fn pull_uses_document_diagnostic_request() {
     let fx = Fixture::new("pull");
-    let found = diagnostics(&fx.server("pull"), &fx.dir, &fx.file, 10_000)
-        .await
-        .unwrap();
+    let found = diagnostics(
+        &fx.server("pull"),
+        &fx.dir,
+        &fx.file,
+        10_000,
+        &Live::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!(found[0]["message"], "bad");
     assert!(fx.log().contains("method textDocument/diagnostic"));
@@ -192,9 +200,15 @@ async fn pull_uses_document_diagnostic_request() {
 #[tokio::test]
 async fn empty_publish_returns_no_diagnostics() {
     let fx = Fixture::new("empty");
-    let found = diagnostics(&fx.server("empty"), &fx.dir, &fx.file, 10_000)
-        .await
-        .unwrap();
+    let found = diagnostics(
+        &fx.server("empty"),
+        &fx.dir,
+        &fx.file,
+        10_000,
+        &Live::default(),
+    )
+    .await
+    .unwrap();
     assert!(found.is_empty());
 }
 
@@ -202,7 +216,7 @@ async fn empty_publish_returns_no_diagnostics() {
 async fn timeout_kills_and_reaps_server() {
     let fx = Fixture::new("hang");
     let started = Instant::now();
-    let error = diagnostics(&fx.server("hang"), &fx.dir, &fx.file, 300)
+    let error = diagnostics(&fx.server("hang"), &fx.dir, &fx.file, 300, &Live::default())
         .await
         .unwrap_err();
     assert!(error.contains("timed out"), "{error}");
@@ -228,14 +242,21 @@ async fn assert_child_stops(fx: &Fixture) {
 #[tokio::test]
 async fn timeout_and_drop_kill_server_descendants() {
     let fx = Fixture::new("spawn-timeout");
-    let error = diagnostics(&fx.server("spawn"), &fx.dir, &fx.file, 300)
-        .await
-        .unwrap_err();
+    let error = diagnostics(
+        &fx.server("spawn"),
+        &fx.dir,
+        &fx.file,
+        300,
+        &Live::default(),
+    )
+    .await
+    .unwrap_err();
     assert!(error.contains("timed out"), "{error}");
     assert_child_stops(&fx).await;
     let fx = Fixture::new("spawn-drop");
     let server = fx.server("spawn");
-    let call = diagnostics(&server, &fx.dir, &fx.file, 10_000);
+    let live = Live::default();
+    let call = diagnostics(&server, &fx.dir, &fx.file, 10_000, &live);
     let limit = std::time::Duration::from_millis(500);
     assert!(tokio::time::timeout(limit, call).await.is_err());
     assert_child_stops(&fx).await;
@@ -244,9 +265,15 @@ async fn timeout_and_drop_kill_server_descendants() {
 #[tokio::test]
 async fn early_exit_is_an_error() {
     let fx = Fixture::new("exit");
-    let error = diagnostics(&fx.server("exit"), &fx.dir, &fx.file, 10_000)
-        .await
-        .unwrap_err();
+    let error = diagnostics(
+        &fx.server("exit"),
+        &fx.dir,
+        &fx.file,
+        10_000,
+        &Live::default(),
+    )
+    .await
+    .unwrap_err();
     assert!(error.contains("closed"), "{error}");
 }
 
@@ -255,7 +282,7 @@ async fn missing_command_is_an_error() {
     let fx = Fixture::new("missing");
     let mut server = fx.server("publish");
     server.command = "/nonexistent/lens-lsp".into();
-    let error = diagnostics(&server, &fx.dir, &fx.file, 1_000)
+    let error = diagnostics(&server, &fx.dir, &fx.file, 1_000, &Live::default())
         .await
         .unwrap_err();
     assert!(error.starts_with("failed to start"), "{error}");

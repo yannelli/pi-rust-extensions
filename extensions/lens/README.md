@@ -40,7 +40,7 @@ In an untrusted project, Lens does not auto-detect tools and does not add `node_
 | `readGuard` | `true` | Requires a read before an edit. |
 | `autoDetect` | `true` | Detects tools from language and project files. |
 | `timeoutMs` | `30000` | Sets each command and LSP timeout, from 1 to 300000 ms. |
-| `pipelineTimeoutMs` | `30000` | Sets the total time for all commands and LSP servers after one write or edit, from 1 to 600000 ms. Lens skips the remaining steps with a warning finding. |
+| `pipelineTimeoutMs` | `30000` | Sets the total time for all commands and LSP servers after one write or edit, and for one `lens_diagnostics` LSP request, from 1 to 600000 ms. Lens skips the remaining steps with a warning finding. |
 | `languages.<name>.enabled` | `true` | Enables `rust`, `javascript`, `python` or `go`. |
 | `tools.<name>.enabled` | `true` | Enables a detected or configured tool. |
 | `commands` | `[]` | Adds commands or overrides detected commands by name. |
@@ -69,7 +69,7 @@ In an untrusted project, Lens does not auto-detect tools and does not add `node_
 Stages run in this order: `format`, `lint`, `types`.
 Arguments expand `{path}` and `{root}` without a shell.
 Children use the nearest project root. In a trusted project, `PATH` starts with `<root>/node_modules/.bin`.
-On Unix, each command runs in its own process group. On timeout or cancel, Lens kills the group.
+On Unix, each command and LSP server runs in its own process group. On timeout or cancel, Lens kills the group.
 Lens skips files outside the current directory, after it resolves symlinks.
 `rustfmt` uses the edition from the nearest `Cargo.toml`: `package.edition`, or the workspace root's `workspace.package.edition` when the package sets `edition.workspace = true`. The default is 2021. Lens reads one-line `key = value` entries only.
 Detected tools: Rust `rustfmt`, `cargo check`, `cargo clippy`; JavaScript `prettier`, `eslint`, `tsc`; Python `ruff format`, `ruff check`; Go `gofmt`, `go vet`.
@@ -82,4 +82,34 @@ CLI flags: `--no-lens`, `--no-lens-context`, `--no-read-guard`.
 Tool text and context injection are capped at 40 KiB.
 LSP servers run for each diagnostic request and close after the response or timeout.
 
-Checks use fake tool binaries, a fake stdio LSP server, the in-memory native protocol, and pi with a local mock model.
+## Limits
+
+Lens returns from every hook and tool within a fixed time. A failure becomes a warning finding or a log line, and the tool call continues.
+
+| Limit | Value | Setting |
+| --- | --- | --- |
+| One command or LSP server | 30 s | `timeoutMs` |
+| All steps after one `write` or `edit` | 30 s | `pipelineTimeoutMs` |
+| `tool_result` hook | `pipelineTimeoutMs` + 6 s | `pipelineTimeoutMs` |
+| `tool_call` read guard: file read and state lock | 2 s each | Fixed |
+| Each call from a hook to pi (session entries, widget, notice, trust query) | 2 s | Fixed |
+| LSP server after `shutdown` and `exit` | 0.5 s | Fixed |
+| Output kept from each command stream | 1 MiB | Fixed |
+| Wait for output pipes after a command exits | 0.5 s | Fixed |
+| LSP header line | 8 KiB | Fixed |
+| LSP message | 16 MiB | Fixed |
+| File sent to an LSP server | 4 MiB, regular files only | Fixed |
+| File checked by the read guard | 2 MiB, regular UTF-8 files only | Fixed |
+| Findings from one command or server for one file | 200, plus one count of the rest | Fixed |
+| Length of one finding message | 4 KiB | Fixed |
+
+- Scans run one at a time. A scan that waits longer than `pipelineTimeoutMs` for its turn adds one skip finding.
+- An LSP server that uses its full `timeoutMs` is skipped for the rest of the session. A session start, branch change, compaction or `/lens` change resets this.
+- When a command exits but a child process keeps its output open, Lens kills the command's process group after 0.5 s.
+- After a response, Lens kills the LSP server's process group, also when the server ignores `exit`.
+- When pi stops the extension, Lens kills all process groups that are still running. When the extension process is killed with SIGKILL, LSP servers get `processId` in `initialize` and stdin EOF.
+- Commands get stdin from `/dev/null` and `GIT_TERMINAL_PROMPT=0`. A command that reads `/dev/tty` runs in a background process group, so it stops until the timeout kills it.
+- The read guard does not block FIFOs, devices, files larger than 2 MiB or non-UTF-8 files.
+- An LSP message with a header line longer than 8 KiB, no `Content-Length`, or invalid JSON ends that request with a warning finding.
+
+Checks use fake tool binaries, fake stdio LSP servers that stall, crash, flood or send malformed output, the in-memory native protocol, and pi with a local mock model.
