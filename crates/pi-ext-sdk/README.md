@@ -60,7 +60,7 @@ pub fn main() -> ExitCode {
 | `.provider(name, config)` | Declares a provider (`baseUrl`, `api`, `apiKey`, `headers`, `models`, `oauth`). |
 | `.virtual_model(definition, \|req: RouteRequest, host\| ...)` | Declares a virtual model and its route handler. |
 | `.autocomplete(&["@"], \|req: AutocompleteRequest, host\| ...)` | Editor suggestions. Return `None` to keep the suggestions of pi. |
-| `.on_start(\|host\| ...)` | Runs in its own task after `initialized`. |
+| `.on_start(\|host\| ...)` | Runs in its own task at the first `session_start`, when `host.snapshot()` holds the session ctx. |
 | `.on_shutdown(\|host\| ...)` | Runs one time on `shutdown`, `exit`, or EOF. The limit is 1.5 seconds. |
 | `.on_surface(\|event: SurfaceEvent, host\| ...)` | Runs when pi resizes or removes a widget or the footer. |
 | `.run()` | Builds a tokio runtime and serves stdin and stdout. Returns `ExitCode::FAILURE` on a protocol failure. |

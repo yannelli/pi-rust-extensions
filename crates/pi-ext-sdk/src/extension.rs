@@ -147,7 +147,7 @@ impl Extension {
         self
     }
 
-    /// Runs in its own task after `initialized`.
+    /// Runs in its own task at the first `session_start`, when the host snapshot holds the session ctx.
     pub fn on_start<F, Fut>(mut self, start: F) -> Self
     where
         F: Fn(Host) -> Fut + Send + Sync + 'static,

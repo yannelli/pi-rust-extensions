@@ -173,18 +173,34 @@ async fn unknown_method_and_parse_error() {
 }
 
 #[tokio::test]
-async fn on_start_runs_after_initialized() {
+async fn on_start_runs_at_the_first_session_start() {
     let ext = Extension::new("start").on_start(|host: Host| async move {
         let init = host.init().expect("init params");
-        host.notify_info(format!("started in {}", init.cwd)).await
+        host.notify_info(format!("started in {} ui={}", init.cwd, host.has_ui()))
+            .await
     });
     let mut host = TestHost::start(ext);
-    host.initialize().await;
-    let (id, params) = host.expect_request("ui.notify").await;
-    assert_eq!(
-        params,
-        json!({ "message": "started in /work", "type": "info" })
+    let init = host.initialize().await;
+    assert_eq!(init["events"], json!(["session_start"]));
+    let event = json!({ "name": "session_start", "event": { "type": "session_start" }, "ctx": common::ctx() });
+    host.request(1, "event", event.clone()).await;
+    let mut seen = Vec::new();
+    while seen.len() < 2 {
+        let message = host.recv().await;
+        if message["method"] == "ui.notify" {
+            assert_eq!(
+                message["params"],
+                json!({ "message": "started in /work ui=true", "type": "info" })
+            );
+            host.answer(&message["id"], Value::Null).await;
+        }
+        seen.push(message);
+    }
+    assert!(
+        seen.iter()
+            .any(|message| message["id"] == 1 && message.get("result").is_some())
     );
-    host.answer(&id, Value::Null).await;
+    host.request(2, "event", event).await;
+    assert_eq!(host.expect_response(2).await["id"], 2);
     host.finish().await.unwrap();
 }

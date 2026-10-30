@@ -25,6 +25,7 @@ pub(crate) struct State {
     running: Mutex<HashMap<String, CancellationToken>>,
     tasks: Mutex<JoinSet<()>>,
     shutdown_started: AtomicBool,
+    started: AtomicBool,
 }
 
 impl State {
@@ -34,6 +35,14 @@ impl State {
             running: Mutex::new(HashMap::new()),
             tasks: Mutex::new(JoinSet::new()),
             shutdown_started: AtomicBool::new(false),
+            started: AtomicBool::new(false),
+        }
+    }
+
+    /// Runs the `on_start` hooks once, at the first `session_start` (its ctx is the snapshot).
+    pub(crate) fn start(&self) {
+        if !self.started.swap(true, Ordering::AcqRel) {
+            start(&self.host);
         }
     }
 
@@ -150,7 +159,6 @@ fn notification(state: &Arc<State>, method: &str, params: Value) -> Flow {
     let text = |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default();
     match method {
         "exit" => return Flow::Exit,
-        "initialized" => start(host),
         "$/cancelRequest" => {
             let key = params.get("id").map(protocol::id_key).unwrap_or_default();
             if let Some(token) = state.running().get(&key) {

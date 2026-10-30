@@ -31,7 +31,13 @@ pub(crate) async fn handle(
             state.shutdown().await;
             return Ok(Value::Null);
         }
-        "event" => Box::pin(event(base(state, &params, token.clone()), params)),
+        "event" => {
+            let base = base(state, &params, token.clone());
+            if params.get("name").and_then(Value::as_str) == Some("session_start") {
+                state.start();
+            }
+            Box::pin(event(base, params))
+        }
         "tool.execute" => tool(state, params, token.clone())?,
         "command.run" => command(state, params, token.clone())?,
         "shortcut.run" => shortcut(state, params, token.clone())?,

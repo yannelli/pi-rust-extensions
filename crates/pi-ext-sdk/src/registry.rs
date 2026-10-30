@@ -83,6 +83,9 @@ impl Registry {
                 names.push(name.clone());
             }
         }
+        if !self.on_start.is_empty() && !names.iter().any(|name| name == "session_start") {
+            names.push("session_start".into());
+        }
         names
     }
 
