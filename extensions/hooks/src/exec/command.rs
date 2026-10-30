@@ -9,6 +9,7 @@ use crate::output::RawRun;
 
 pub const STDOUT_CAP: usize = 1024 * 1024;
 pub const STDERR_CAP: usize = 64 * 1024;
+#[cfg(unix)]
 const KILL_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
@@ -29,11 +30,7 @@ pub async fn run_command(spec: CommandSpec) -> RawRun {
             command.args(args);
             command
         }
-        None => {
-            let mut command = Command::new("sh");
-            command.arg("-c").arg(&spec.command);
-            command
-        }
+        None => shell_command(&spec.command),
     };
     if spec.cwd.is_dir() {
         command.current_dir(&spec.cwd);
@@ -43,8 +40,9 @@ pub async fn run_command(spec: CommandSpec) -> RawRun {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .process_group(0);
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
     let mut guard = match command.spawn() {
         Ok(child) => GroupGuard(Some(child)),
         Err(err) => return RawRun::failed(format!("cannot start: {err}")),
@@ -113,7 +111,24 @@ impl Drop for GroupGuard {
     }
 }
 
+#[cfg(unix)]
+fn shell_command(line: &str) -> Command {
+    let mut command = Command::new("sh");
+    command.arg("-c").arg(line);
+    command
+}
+
+#[cfg(windows)]
+fn shell_command(line: &str) -> Command {
+    let mut command = Command::new("cmd");
+    command
+        .args(["/d", "/s", "/c"])
+        .raw_arg(format!("\"{line}\""));
+    command
+}
+
 /// SIGTERM to the process group, then SIGKILL after the grace period.
+#[cfg(unix)]
 async fn terminate(child: &mut Child) {
     let Some(pid) = child.id() else {
         return;
@@ -128,6 +143,21 @@ async fn terminate(child: &mut Child) {
     }
 }
 
+/// Windows has no signals: `taskkill /T /F` ends the process tree at once.
+#[cfg(windows)]
+async fn terminate(child: &mut Child) {
+    if let Some(pid) = child.id() {
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+    }
+    let _ = child.kill().await;
+}
+
+#[cfg(unix)]
 async fn signal_group(signal: &str, pid: u32) {
     let _ = Command::new("kill")
         .args([signal, "--", &format!("-{pid}")])
@@ -153,7 +183,7 @@ async fn read_capped(mut reader: impl AsyncRead + Unpin, cap: usize) -> String {
     String::from_utf8_lossy(&kept).into_owned()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
