@@ -21,6 +21,7 @@ const EXTENSIONS: &[Extension] = &[
     ("subagents", pi_ext_subagents::main),
     ("todo", pi_ext_todo::main),
     ("hooks", pi_ext_hooks::main),
+    ("permissions", pi_ext_permissions::main),
     ("claude-marketplace", pi_ext_claude_marketplace::main),
     ("context-include", pi_ext_context_include::main),
     ("web-search", pi_ext_web_search::main),
