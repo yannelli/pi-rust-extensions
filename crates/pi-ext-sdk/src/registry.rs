@@ -1,7 +1,8 @@
 use serde_json::{Map, Value, json};
 
 use crate::handler::{
-    AutocompleteFn, CommandFn, CompleteFn, EventFn, HostFn, RouteFn, ShortcutFn, SurfaceFn, ToolFn,
+    AutocompleteFn, CommandFn, CompleteFn, EventFn, FooterFn, HostFn, RouteFn, ShortcutFn,
+    SurfaceFn, ToolFn,
 };
 use crate::protocol::PROTOCOL_VERSION;
 use crate::spec::{CommandSpec, FlagSpec, ShortcutSpec, ToolSpec};
@@ -38,6 +39,7 @@ pub(crate) struct Registry {
     pub(crate) on_start: Vec<HostFn>,
     pub(crate) on_shutdown: Vec<HostFn>,
     pub(crate) on_surface: Vec<SurfaceFn>,
+    pub(crate) on_footer: Vec<FooterFn>,
 }
 
 impl Registry {
@@ -85,6 +87,9 @@ impl Registry {
         }
         if !self.on_start.is_empty() && !names.iter().any(|name| name == "session_start") {
             names.push("session_start".into());
+        }
+        if !self.on_footer.is_empty() && !names.iter().any(|name| name == "footer_changed") {
+            names.push("footer_changed".into());
         }
         names
     }

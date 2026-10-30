@@ -190,6 +190,6 @@ async fn test(ext: Extension) {
 }
 ```
 
-`tests/common/mod.rs` has a `TestHost` that does this.
+The `test-util` feature exports `pi_ext_sdk::test_util::TestHost`, which does this. `TestHost::start(ext).cwd(..).agent_dir(..)` sets the `initialize` dirs, and `drive` sends a request and answers the extension's host requests by method until the response arrives.
 
 For an end-to-end test under the real pi binary, add `pi-ext-e2e` as a dev-dependency. `Run::new(binary).args([...]).turns([Turn::tool_call(..), Turn::text(..)]).prompt(..).run()` starts a mock OpenAI-compatible provider, installs your binary as a `pi.native` package in a temp agent dir, runs `$PI_BIN --mode json -p <prompt>`, and returns the JSON events, the provider requests, and stderr. The test skips when `PI_BIN` does not exist. See `crates/pi-ext-e2e/README.md`.

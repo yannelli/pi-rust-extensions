@@ -179,6 +179,40 @@ impl AutocompleteRequest {
 pub struct Suggestions {
     pub items: Vec<CompletionItem>,
     pub prefix: String,
+    /// pi adds its own suggestions after `items` when they replace the same `prefix`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub merge: bool,
+}
+
+impl Suggestions {
+    pub fn new(items: Vec<CompletionItem>, prefix: impl Into<String>) -> Self {
+        Self {
+            items,
+            prefix: prefix.into(),
+            merge: false,
+        }
+    }
+
+    /// Keep pi's own suggestions after these items.
+    pub fn merged(mut self) -> Self {
+        self.merge = true;
+        self
+    }
+}
+
+#[cfg(test)]
+mod suggestion_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn merge_is_sent_only_when_set() {
+        let plain = Suggestions::new(vec![CompletionItem::new("@a")], "@");
+        assert_eq!(serde_json::to_value(&plain).unwrap().get("merge"), None);
+        let merged = serde_json::to_value(plain.merged()).unwrap();
+        assert_eq!(merged["merge"], json!(true));
+        assert_eq!(merged["prefix"], json!("@"));
+    }
 }
 
 /// Params of `virtualModel.route`.

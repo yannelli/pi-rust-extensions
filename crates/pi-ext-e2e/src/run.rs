@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,7 @@ pub struct Run {
     pi_args: Vec<String>,
     timeout: Duration,
     pi: PathBuf,
+    files: Vec<(PathBuf, String)>,
 }
 
 impl Run {
@@ -39,6 +40,7 @@ impl Run {
             pi_args: Vec::new(),
             timeout: Duration::from_secs(60),
             pi: pi_bin(),
+            files: Vec::new(),
         }
     }
 
@@ -73,6 +75,13 @@ impl Run {
     /// Extra pi arguments before `-p`, for example `["--native-flag", "on"]`.
     pub fn pi_args<S: Into<String>>(mut self, args: impl IntoIterator<Item = S>) -> Self {
         self.pi_args = args.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// A file written before pi starts. `path` is relative to the run root: `work/...` is in
+    /// the cwd and `agent/...` in the agent dir. Files are written last and replace generated ones.
+    pub fn file(mut self, path: impl Into<PathBuf>, content: impl Into<String>) -> Self {
+        self.files.push((path.into(), content.into()));
         self
     }
 
@@ -153,8 +162,34 @@ impl Run {
         if let (Some(target), Some(extra)) = (settings.as_object_mut(), self.settings.as_object()) {
             target.extend(extra.clone());
         }
-        std::fs::write(root.join("agent/settings.json"), settings.to_string())
+        std::fs::write(root.join("agent/settings.json"), settings.to_string())?;
+        for (path, content) in &self.files {
+            let path = root.join(checked(path)?);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, content)?;
+        }
+        Ok(())
     }
+}
+
+/// `path` when it starts with `work` or `agent` and stays inside the run root.
+fn checked(path: &Path) -> std::io::Result<&Path> {
+    let mut parts = path.components();
+    let root = parts.next().and_then(|part| part.as_os_str().to_str());
+    let inside = parts.all(|part| matches!(part, Component::Normal(_)));
+    if inside && matches!(root, Some("work" | "agent")) && path.components().count() > 1 {
+        return Ok(path);
+    }
+    let message = format!(
+        "Run::file path {} must be under work/ or agent/",
+        path.display()
+    );
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        message,
+    ))
 }
 
 fn base_env(root: &Path) -> Vec<(String, String)> {
@@ -182,4 +217,49 @@ fn reader(stream: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle
         }
         text
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_paths_stay_in_work_or_agent() {
+        for ok in [
+            "work/AGENTS.md",
+            "agent/extensions/a.json",
+            "work/.pi/settings.json",
+        ] {
+            assert!(checked(Path::new(ok)).is_ok(), "{ok}");
+        }
+        for bad in [
+            "/etc/passwd",
+            "work",
+            "pkg/package.json",
+            "work/../x",
+            "agent/../../x",
+            "x/y",
+        ] {
+            assert!(checked(Path::new(bad)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn files_are_written_after_generated_files() {
+        let root = TempDir::new().unwrap();
+        let run = Run::new("/bin/true")
+            .file("work/notes/a.txt", "a")
+            .file("agent/settings.json", "{}");
+        run.write_files(root.path(), "http://127.0.0.1:1").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("work/notes/a.txt")).unwrap(),
+            "a"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("agent/settings.json")).unwrap(),
+            "{}"
+        );
+        let bad = Run::new("/bin/true").file("../escape", "x");
+        assert!(bad.write_files(root.path(), "http://127.0.0.1:1").is_err());
+    }
 }

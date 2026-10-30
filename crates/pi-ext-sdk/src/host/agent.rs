@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use super::{Host, without_nulls};
 use crate::bus::Subscription;
 use crate::error::Result;
+use crate::snapshot::Model;
 
 /// Params of `llm.complete`. Build with `LlmRequest::prompt` or `LlmRequest::messages`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -23,6 +26,9 @@ pub struct LlmRequest {
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Value>,
+    /// Request headers over pi's; a header with the same name replaces pi's.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
 }
 
 impl LlmRequest {
@@ -66,6 +72,11 @@ impl LlmRequest {
         self.reasoning = Some(reasoning.into());
         self
     }
+
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.insert(name.into(), value.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -92,6 +103,9 @@ pub struct ExecRequest {
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u64>,
+    /// Written to the process's standard input, which then closes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdin: Option<String>,
 }
 
 impl ExecRequest {
@@ -110,6 +124,11 @@ impl ExecRequest {
 
     pub fn timeout_ms(mut self, timeout: u64) -> Self {
         self.timeout = Some(timeout);
+        self
+    }
+
+    pub fn stdin(mut self, stdin: impl Into<String>) -> Self {
+        self.stdin = Some(stdin.into());
         self
     }
 }
@@ -144,6 +163,12 @@ impl Host {
     pub async fn is_idle(&self) -> Result<bool> {
         let idle: Option<bool> = self.call_as("ctx.isIdle", json!({})).await?;
         Ok(idle.unwrap_or(true))
+    }
+
+    /// A model of pi's registry in the snapshot shape; `None` when pi does not know it.
+    pub async fn find_model(&self, provider: &str, id: &str) -> Result<Option<Model>> {
+        self.call_as("model.find", json!({ "provider": provider, "id": id }))
+            .await
     }
 
     pub async fn context_usage(&self) -> Result<Option<Value>> {
@@ -200,5 +225,32 @@ impl Host {
     pub async fn unregister_provider(&self, name: &str) -> Result<()> {
         let params = json!({ "name": name });
         self.call("provider.unregister", params).await.map(drop)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exec_stdin_is_optional() {
+        let plain = serde_json::to_value(ExecRequest::new("cat", &[] as &[&str])).unwrap();
+        assert_eq!(plain, json!({ "command": "cat", "args": [] }));
+        let piped = serde_json::to_value(ExecRequest::new("cat", &["-"]).stdin("text")).unwrap();
+        assert_eq!(
+            piped,
+            json!({ "command": "cat", "args": ["-"], "stdin": "text" })
+        );
+    }
+
+    #[test]
+    fn llm_headers_are_optional() {
+        let plain = serde_json::to_value(LlmRequest::prompt("hi")).unwrap();
+        assert_eq!(plain, json!({ "prompt": "hi" }));
+        let request = LlmRequest::prompt("hi")
+            .header("x-trace", "1")
+            .header("x-a", "b");
+        let value = serde_json::to_value(request).unwrap();
+        assert_eq!(value["headers"], json!({ "x-a": "b", "x-trace": "1" }));
     }
 }

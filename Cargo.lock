@@ -929,6 +929,7 @@ name = "pi-ext-sdk"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "pi-ext-sdk",
  "serde",
  "serde_json",
  "tokio",

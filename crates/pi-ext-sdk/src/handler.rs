@@ -24,6 +24,7 @@ pub(crate) type AutocompleteFn =
 pub(crate) type RouteFn = Arc<dyn Fn(RouteRequest, Host) -> BoxFuture<Value> + Send + Sync>;
 pub(crate) type HostFn = Arc<dyn Fn(Host) -> BoxFuture<()> + Send + Sync>;
 pub(crate) type SurfaceFn = Arc<dyn Fn(SurfaceEvent, Host) -> BoxFuture<()> + Send + Sync>;
+pub(crate) type FooterFn = Arc<dyn Fn(Value, Host) -> BoxFuture<()> + Send + Sync>;
 
 pub(crate) fn tool<A, R, F, Fut>(f: F) -> ToolFn
 where
