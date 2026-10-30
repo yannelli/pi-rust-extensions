@@ -11,6 +11,9 @@ const EXTENSIONS: &[Extension] = &[
     ("goal", pi_ext_goal::main),
     ("rewind", pi_ext_rewind::main),
     ("ssh", pi_ext_ssh::main),
+    ("iterm2", pi_ext_iterm2::main),
+    ("ollama", pi_ext_ollama::main),
+    ("statusline", pi_ext_statusline::main),
 ];
 
 fn main() -> ExitCode {

@@ -18,6 +18,9 @@ pi-ext-background-tasks = { path = "../../extensions/background-tasks" }
 pi-ext-goal = { path = "../../extensions/goal" }
 pi-ext-rewind = { path = "../../extensions/rewind" }
 pi-ext-ssh = { path = "../../extensions/ssh" }
+pi-ext-iterm2 = { path = "../../extensions/iterm2" }
+pi-ext-ollama = { path = "../../extensions/ollama" }
+pi-ext-statusline = { path = "../../extensions/statusline" }
 
 [lints]
 workspace = true
