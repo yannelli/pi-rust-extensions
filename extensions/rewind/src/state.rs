@@ -9,6 +9,7 @@ use tokio::sync::{Mutex, MutexGuard};
 use crate::checkpoint::{self, Checkpoint, ENTRY_TYPE};
 use crate::config::Config;
 use crate::git::ShadowRepo;
+use crate::lock::StorageLock;
 
 #[derive(Debug, Clone)]
 pub struct Pending {
@@ -38,7 +39,17 @@ impl Session {
         }
     }
 
+    /// Holds the storage lock while git runs, so other pi processes on this storage wait.
+    pub async fn lock(&self) -> Result<StorageLock> {
+        StorageLock::acquire(&self.storage).await
+    }
+
     pub async fn snapshot(&mut self, message: &str, base: Option<&str>) -> Result<String> {
+        let _lock = self.lock().await?;
+        self.snapshot_locked(message, base).await
+    }
+
+    async fn snapshot_locked(&mut self, message: &str, base: Option<&str>) -> Result<String> {
         self.repo.ensure().await?;
         let commit = self
             .repo
@@ -63,13 +74,14 @@ impl Session {
         if self.pending.as_ref().map(|p| p.user_entry_id.as_str()) == Some(user_entry_id) {
             return Ok(());
         }
-        if let Err(err) = self.finish_turn(host).await {
+        let _lock = self.lock().await?;
+        if let Err(err) = self.finish_turn_locked(host).await {
             warn!("dropped unfinished checkpoint: {err}");
             self.pending = None;
         }
         let base = self.last_commit.clone();
         let before = self
-            .snapshot(&format!("[pi] before:{user_entry_id}"), base.as_deref())
+            .snapshot_locked(&format!("[pi] before:{user_entry_id}"), base.as_deref())
             .await?;
         self.pending = Some(Pending {
             user_entry_id: user_entry_id.to_string(),
@@ -82,12 +94,20 @@ impl Session {
     /// Captures the post-turn state and appends the `pi-checkpoint` entry.
     /// The turn stays pending when a step fails, so the next call retries it.
     pub async fn finish_turn(&mut self, host: &Host) -> Result<Option<Checkpoint>> {
+        if self.pending.is_none() {
+            return Ok(None);
+        }
+        let _lock = self.lock().await?;
+        self.finish_turn_locked(host).await
+    }
+
+    async fn finish_turn_locked(&mut self, host: &Host) -> Result<Option<Checkpoint>> {
         let Some(pending) = self.pending.clone() else {
             return Ok(None);
         };
         let message = format!("[pi] entry:{}", pending.user_entry_id);
         let after = self
-            .snapshot(&message, Some(&pending.before_commit))
+            .snapshot_locked(&message, Some(&pending.before_commit))
             .await?;
         let file_changes = self.repo.numstat(&pending.before_commit, &after).await?;
         let created_at = SystemTime::now()
@@ -120,7 +140,8 @@ impl Session {
 
     /// Writes `commit` into the work tree; rolls back to a safety snapshot on failure.
     pub async fn restore(&mut self, commit: &str) -> Result<()> {
-        let safety = self.snapshot("[pi] safety", None).await?;
+        let _lock = self.lock().await?;
+        let safety = self.snapshot_locked("[pi] safety", None).await?;
         if let Err(err) = self.repo.checkout(commit).await {
             let _ = self.repo.checkout(&safety).await;
             return Err(err);
@@ -131,6 +152,7 @@ impl Session {
 
     /// True when the work tree equals `commit`.
     pub async fn matches(&mut self, commit: &str) -> Result<bool> {
+        let _lock = self.lock().await?;
         self.repo.ensure().await?;
         self.repo
             .stage_all(&self.config.exclude, self.config.max_file_bytes)

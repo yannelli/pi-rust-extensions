@@ -9,6 +9,7 @@ use serde_json::Value;
 use crate::checkpoint;
 use crate::config;
 use crate::git::ShadowRepo;
+use crate::lock::StorageLock;
 use crate::state::{Session, State, latest_after, session_key, sessions_dir, storage_dir};
 
 pub const WARNING_KEY: &str = "pi-rewind-code-restore-warning";
@@ -75,7 +76,7 @@ async fn fork_restore(
     let source = ShadowRepo::new(&source_dir, Path::new("."));
     if source.exists()
         && !session.repo.exists()
-        && let Err(err) = session.repo.clone_from(&source).await
+        && let Err(err) = clone_locked(session, &source, &source_dir).await
     {
         warn!("could not copy checkpoint storage: {}", err);
     }
@@ -89,6 +90,15 @@ async fn fork_restore(
         "before" if session.config.restore_on_fork => intent.before_commit,
         _ => None,
     }
+}
+
+async fn clone_locked(session: &Session, source: &ShadowRepo, source_dir: &Path) -> Result<()> {
+    let _target = session.lock().await?;
+    let _source = StorageLock::acquire(source_dir).await?;
+    if session.repo.exists() {
+        return Ok(());
+    }
+    session.repo.clone_from(source).await
 }
 
 /// `session_compact`: re-reads the diff base from the branch; files and the pending turn stay.
