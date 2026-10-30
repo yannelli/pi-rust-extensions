@@ -4,6 +4,248 @@
   "minPiVersion": "0.7.7",
   "extensions": [
     {
+      "name": "ask-user-question",
+      "displayName": "Ask User Question",
+      "description": "Tabbed questionnaire tool (ask_user_question) for structured answers from the user.",
+      "version": "0.1.0",
+      "args": [
+        "ask-user-question"
+      ],
+      "tags": [
+        "tui",
+        "tool"
+      ]
+    },
+    {
+      "name": "background-tasks",
+      "displayName": "Background Tasks",
+      "description": "Durable background shell jobs with output and task management.",
+      "version": "0.1.0",
+      "args": [
+        "background-tasks"
+      ],
+      "tags": [
+        "shell",
+        "tui"
+      ]
+    },
+    {
+      "name": "chrome",
+      "displayName": "Chrome",
+      "description": "Control Chrome through the DevTools Protocol with session authorization.",
+      "version": "0.1.0",
+      "args": [
+        "chrome"
+      ],
+      "tags": [
+        "browser",
+        "automation"
+      ]
+    },
+    {
+      "name": "claude-marketplace",
+      "displayName": "Claude Marketplace",
+      "description": "Add Claude Code plugin marketplaces and install their commands, skills, agents, hooks, and MCP servers into pi.",
+      "version": "0.1.0",
+      "args": [
+        "claude-marketplace"
+      ],
+      "tags": [
+        "claude",
+        "plugins",
+        "tui"
+      ]
+    },
+    {
+      "name": "computer-use",
+      "displayName": "Computer Use",
+      "description": "Observe desktop windows and send keyboard and pointer input.",
+      "version": "0.1.0",
+      "args": [
+        "computer-use"
+      ],
+      "tags": [
+        "desktop",
+        "automation"
+      ]
+    },
+    {
+      "name": "context-include",
+      "displayName": "Context Include",
+      "description": "Expand @path.md lines in AGENTS.md context files into an extra system prompt section.",
+      "version": "0.1.0",
+      "args": [
+        "context-include"
+      ],
+      "tags": [
+        "context"
+      ]
+    },
+    {
+      "name": "goal",
+      "displayName": "Goal",
+      "description": "Persistent goals, task trees, autonomous continuation, and completion audits.",
+      "version": "0.1.0",
+      "args": [
+        "goal"
+      ],
+      "tags": [
+        "workflow",
+        "tui"
+      ]
+    },
+    {
+      "name": "hooks",
+      "displayName": "Hooks",
+      "description": "Run Claude Code and Codex hooks (PreToolUse, PostToolUse, Stop, and more) from pi, with per-hook trust.",
+      "version": "0.1.0",
+      "args": [
+        "hooks"
+      ],
+      "tags": [
+        "hooks",
+        "claude",
+        "codex",
+        "tui"
+      ]
+    },
+    {
+      "name": "iterm2",
+      "displayName": "iTerm2",
+      "description": "iTerm2 integration: tab color follows the agent state, session badge, status bar user variables, attention requests, and /terminal-setup.",
+      "version": "0.1.0",
+      "args": [
+        "iterm2"
+      ],
+      "tags": [
+        "terminal",
+        "tui"
+      ]
+    },
+    {
+      "name": "lens",
+      "displayName": "Lens",
+      "description": "Post-write formatters, linters, type checks, LSP diagnostics and a read-before-edit guard.",
+      "version": "0.1.0",
+      "args": [
+        "lens"
+      ],
+      "tags": [
+        "diagnostics",
+        "formatting",
+        "lsp",
+        "tui"
+      ]
+    },
+    {
+      "name": "ollama",
+      "displayName": "Ollama",
+      "description": "Discovers models from a local Ollama, registers the ollama provider, and manages models with /ollama.",
+      "version": "0.1.0",
+      "args": [
+        "ollama"
+      ],
+      "tags": [
+        "provider",
+        "models",
+        "tui"
+      ]
+    },
+    {
+      "name": "rewind",
+      "displayName": "Rewind",
+      "description": "Per-turn shadow git checkpoints and conversation restoration.",
+      "version": "0.1.0",
+      "args": [
+        "rewind"
+      ],
+      "tags": [
+        "git",
+        "workflow"
+      ]
+    },
+    {
+      "name": "ssh",
+      "displayName": "SSH",
+      "description": "Reusable SSH profiles, shared connections, remote tools, and remote bash mode.",
+      "version": "0.1.0",
+      "args": [
+        "ssh"
+      ],
+      "tags": [
+        "shell",
+        "remote",
+        "tui"
+      ]
+    },
+    {
+      "name": "statusline",
+      "displayName": "Status line",
+      "description": "Configurable footer status line: builtin presets and themes, command scripts, Claude Code, Cursor, and Codex status lines, and the /statusline editor.",
+      "version": "0.1.0",
+      "args": [
+        "statusline"
+      ],
+      "tags": [
+        "footer",
+        "tui"
+      ]
+    },
+    {
+      "name": "subagents",
+      "displayName": "Subagents",
+      "description": "Delegate tasks to child pi agents (explore, build, advisor, custom) in the foreground, background, or in parallel.",
+      "version": "0.1.0",
+      "args": [
+        "subagents"
+      ],
+      "tags": [
+        "agents",
+        "tui",
+        "tool"
+      ]
+    },
+    {
+      "name": "todo",
+      "displayName": "Todo",
+      "description": "Phased todo plans with dependencies, per-subagent scopes, a widget above the editor, and /todos.",
+      "version": "0.1.0",
+      "args": [
+        "todo"
+      ],
+      "tags": [
+        "tui",
+        "tool"
+      ]
+    },
+    {
+      "name": "typesafe",
+      "displayName": "TypeSafe",
+      "description": "Structured TypeSafe judgments with session controls and usage limits.",
+      "version": "0.1.0",
+      "args": [
+        "typesafe"
+      ],
+      "tags": [
+        "evaluation",
+        "api",
+        "tui"
+      ]
+    },
+    {
+      "name": "web-search",
+      "displayName": "Web Search",
+      "description": "Search the web and read URLs with model-native and search providers.",
+      "version": "0.1.0",
+      "args": [
+        "web-search"
+      ],
+      "tags": [
+        "web",
+        "search"
+      ]
+    },
+    {
       "name": "compactor",
       "displayName": "Compactor",
       "description": "Zero-LLM structured compaction summaries or LLM summaries with an active-work header, plus session recall and context budget tools.",

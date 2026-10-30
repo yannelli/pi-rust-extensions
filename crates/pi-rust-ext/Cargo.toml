@@ -15,6 +15,27 @@ path = "src/main.rs"
 pi-ext-compactor = { path = "../../extensions/compactor" }
 pi-ext-observational-memory = { path = "../../extensions/observational-memory" }
 pi-ext-subscription-router = { path = "../../extensions/subscription-router" }
+pi-ext-lens = { path = "../../extensions/lens" }
+pi-ext-typesafe = { path = "../../extensions/typesafe" }
+pi-ext-background-tasks = { path = "../../extensions/background-tasks" }
+pi-ext-goal = { path = "../../extensions/goal" }
+pi-ext-rewind = { path = "../../extensions/rewind" }
+pi-ext-ssh = { path = "../../extensions/ssh" }
+pi-ext-iterm2 = { path = "../../extensions/iterm2" }
+pi-ext-ollama = { path = "../../extensions/ollama" }
+pi-ext-statusline = { path = "../../extensions/statusline" }
+pi-ext-ask-user-question = { path = "../../extensions/ask-user-question" }
+pi-ext-subagents = { path = "../../extensions/subagents" }
+pi-ext-todo = { path = "../../extensions/todo" }
+pi-ext-hooks = { path = "../../extensions/hooks" }
+pi-ext-claude-marketplace = { path = "../../extensions/claude-marketplace" }
+pi-ext-context-include = { path = "../../extensions/context-include" }
+pi-ext-web-search = { path = "../../extensions/web-search" }
+pi-ext-chrome = { path = "../../extensions/chrome" }
+pi-ext-computer-use = { path = "../../extensions/computer-use" }
+
+[dev-dependencies]
+pi-ext-e2e = { path = "../pi-ext-e2e" }
 
 [lints]
 workspace = true
