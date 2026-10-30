@@ -670,7 +670,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "marketplace-index"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
 ]
@@ -738,7 +738,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pi-ext-ask-user-question"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-background-tasks"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -760,7 +760,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-chrome"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -776,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-claude-marketplace"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "pi-ext-e2e",
@@ -789,7 +789,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-compactor"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-computer-use"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
@@ -818,7 +818,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-context-include"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "pi-ext-e2e",
@@ -831,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-e2e"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-sdk",
  "serde_json",
@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-goal"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-hooks"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "pi-ext-e2e",
@@ -867,7 +867,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-iterm2"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -878,7 +878,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-lens"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-observational-memory"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-ollama"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -915,7 +915,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-rewind"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -926,7 +926,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-sdk"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "pi-ext-sdk",
@@ -938,7 +938,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-ssh"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -950,7 +950,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-statusline"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-subagents"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -972,7 +972,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-subscription-router"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -990,7 +990,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-todo"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-e2e",
  "pi-ext-sdk",
@@ -1001,7 +1001,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-typesafe"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "pi-ext-e2e",
@@ -1014,7 +1014,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ext-web-search"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "pi-ext-sdk",
@@ -1026,7 +1026,7 @@ dependencies = [
 
 [[package]]
 name = "pi-rust-ext"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pi-ext-ask-user-question",
  "pi-ext-background-tasks",
