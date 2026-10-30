@@ -65,7 +65,7 @@ Global: `<agentDir>/ext/chrome.json`. Project: `<cwd>/.pi/ext/chrome.json`. Proj
 | Key | Default | Use |
 | --- | --- | --- |
 | `mode` | `auto` | `connect` uses a running Chrome only. `launch` and `auto` start the managed profile when no Chrome answers. |
-| `host` | `127.0.0.1` | DevTools host. |
+| `host` | `127.0.0.1` | DevTools host. Only loopback hosts (127.0.0.0/8, ::1, localhost) are accepted; the WebSocket URL from `/json/version` must be `ws://` on a loopback host and the same port. |
 | `port` | `9222` | DevTools port. |
 | `chromePath` | Found automatically | Chrome binary. `CHROME_PATH` also works. |
 | `userDataDir` | `<agentDir>/ext/chrome/profile` | Managed profile folder. |

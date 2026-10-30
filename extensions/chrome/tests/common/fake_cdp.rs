@@ -8,54 +8,55 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
-/// A local DevTools endpoint: `/json/version` over HTTP and a CDP WebSocket on a second port.
+/// A local DevTools endpoint: `/json/version` over HTTP and the CDP WebSocket on the same port.
 #[derive(Clone)]
 pub struct FakeCdp {
     pub http_port: u16,
     pub http_hits: Arc<AtomicUsize>,
     pub calls: Arc<Mutex<Vec<Value>>>,
     pub targets: Arc<Mutex<Vec<Value>>>,
+    /// Replaces the `webSocketDebuggerUrl` that `/json/version` returns.
+    pub ws_url: Arc<Mutex<Option<String>>>,
 }
 
 impl FakeCdp {
     pub async fn start() -> Self {
-        let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let ws_port = ws_listener.local_addr().unwrap().port();
-        let http_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let fake = Self {
-            http_port: http_listener.local_addr().unwrap().port(),
+            http_port: listener.local_addr().unwrap().port(),
             http_hits: Arc::default(),
             calls: Arc::default(),
             targets: Arc::new(Mutex::new(vec![json!({
                 "targetId": "USER", "type": "page", "url": "https://user.example/", "title": "User tab", "attached": false
             })])),
+            ws_url: Arc::default(),
         };
-        let hits = fake.http_hits.clone();
-        tokio::spawn(async move {
-            while let Ok((mut stream, _)) = http_listener.accept().await {
-                hits.fetch_add(1, Ordering::SeqCst);
-                let mut buffer = [0u8; 2048];
-                let _ = stream.read(&mut buffer).await;
-                let body = json!({
-                    "Browser": "FakeChrome/1.0",
-                    "webSocketDebuggerUrl": format!("ws://127.0.0.1:{ws_port}/devtools/browser/fake-1")
-                })
-                .to_string();
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
-            }
-        });
         let server = fake.clone();
         tokio::spawn(async move {
-            while let Ok((stream, _)) = ws_listener.accept().await {
+            while let Ok((stream, _)) = listener.accept().await {
                 let server = server.clone();
-                tokio::spawn(async move { server.serve(stream).await });
+                tokio::spawn(async move { server.route(stream).await });
             }
         });
         fake
+    }
+
+    async fn route(self, mut stream: tokio::net::TcpStream) {
+        let mut head = [0u8; 2048];
+        let n = stream.peek(&mut head).await.unwrap_or(0);
+        if !String::from_utf8_lossy(&head[..n]).starts_with("GET /json/version") {
+            return self.serve(stream).await;
+        }
+        self.http_hits.fetch_add(1, Ordering::SeqCst);
+        let _ = stream.read(&mut head).await;
+        let default = format!("ws://127.0.0.1:{}/devtools/browser/fake-1", self.http_port);
+        let ws = self.ws_url.lock().unwrap().clone().unwrap_or(default);
+        let body = json!({ "Browser": "FakeChrome/1.0", "webSocketDebuggerUrl": ws }).to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
     }
 
     async fn serve(self, stream: tokio::net::TcpStream) {

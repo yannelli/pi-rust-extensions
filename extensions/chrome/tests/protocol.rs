@@ -239,6 +239,27 @@ async fn authorized_session_drives_chrome_over_cdp() {
 }
 
 #[tokio::test]
+async fn remote_websocket_url_is_refused() {
+    let Setup { mut pi, fake, .. } = setup().await;
+    *fake.ws_url.lock().unwrap() = Some(format!(
+        "ws://evil.example:{}/devtools/browser/fake-1",
+        fake.http_port
+    ));
+    pi.command("authorize 30m").await;
+    let result = pi
+        .tool("chrome_navigate", json!({ "url": "https://example.com" }))
+        .await;
+    assert_eq!(result["isError"], true);
+    assert!(
+        text(&result).contains("refusing webSocketDebuggerUrl ws://evil.example"),
+        "{result}"
+    );
+    assert_eq!(fake.http_hits.load(Ordering::SeqCst), 1);
+    assert!(fake.methods().is_empty());
+    pi.finish().await;
+}
+
+#[tokio::test]
 async fn reload_restores_grant_of_same_session_only() {
     let Setup { mut pi, .. } = setup().await;
     pi.command("authorize indefinite").await;

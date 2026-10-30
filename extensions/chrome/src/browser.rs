@@ -9,7 +9,31 @@ use crate::config::Config;
 
 const MARKER: &str = "launched.json";
 
+pub fn is_loopback(host: &str) -> bool {
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    bare.eq_ignore_ascii_case("localhost")
+        || bare
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Accepts a DevTools WebSocket URL only on a loopback host and the DevTools `port`.
+pub fn check_ws_url(ws: &str, port: u16) -> Result<()> {
+    let url =
+        reqwest::Url::parse(ws).with_context(|| format!("invalid webSocketDebuggerUrl {ws}"))?;
+    let host = url.host_str().unwrap_or("");
+    if url.scheme() != "ws" || !is_loopback(host) || url.port_or_known_default() != Some(port) {
+        bail!(
+            "refusing webSocketDebuggerUrl {ws}: it must be ws:// on a loopback host and port {port}"
+        );
+    }
+    Ok(())
+}
+
 pub async fn discover(host: &str, port: u16) -> Result<(String, Value)> {
+    if !is_loopback(host) {
+        bail!("refusing DevTools host \"{host}\": use 127.0.0.1, ::1, or localhost");
+    }
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(2))
@@ -28,6 +52,7 @@ pub async fn discover(host: &str, port: u16) -> Result<(String, Value)> {
         .get("webSocketDebuggerUrl")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("{url} has no webSocketDebuggerUrl"))?;
+    check_ws_url(ws, port)?;
     Ok((ws.to_owned(), version))
 }
 
@@ -96,6 +121,12 @@ pub struct LaunchMarker {
 }
 
 pub async fn launch(config: &Config, state_dir: &Path, url: Option<&str>) -> Result<String> {
+    if !is_loopback(&config.host) {
+        bail!(
+            "refusing DevTools host \"{}\": use 127.0.0.1, ::1, or localhost",
+            config.host
+        );
+    }
     let binary = chrome_binary(config)?;
     std::fs::create_dir_all(&config.user_data_dir)
         .with_context(|| format!("{}", config.user_data_dir.display()))?;
@@ -160,6 +191,56 @@ pub fn launched_here(state_dir: &Path, browser_ws: &str, take: bool) -> bool {
 mod tests {
     use super::*;
     use crate::config::ConfigFile;
+
+    #[test]
+    fn only_loopback_endpoints_pass() {
+        for host in [
+            "127.0.0.1",
+            "127.8.0.1",
+            "::1",
+            "[::1]",
+            "localhost",
+            "LOCALHOST",
+        ] {
+            assert!(is_loopback(host), "{host}");
+        }
+        for host in [
+            "10.0.0.5",
+            "example.com",
+            "0.0.0.0",
+            "localhost.example.com",
+            "",
+        ] {
+            assert!(!is_loopback(host), "{host}");
+        }
+        check_ws_url("ws://127.0.0.1:9222/devtools/browser/x", 9222).unwrap();
+        check_ws_url("ws://[::1]:9222/devtools/browser/x", 9222).unwrap();
+        for ws in [
+            "ws://evil.example:9222/devtools/browser/x",
+            "ws://127.0.0.1:9333/devtools/browser/x",
+            "ws://127.0.0.1/devtools/browser/x",
+            "wss://127.0.0.1:9222/devtools/browser/x",
+            "not a url",
+        ] {
+            assert!(check_ws_url(ws, 9222).is_err(), "{ws}");
+        }
+    }
+
+    #[tokio::test]
+    async fn discover_refuses_remote_hosts_without_a_request() {
+        let err = discover("192.0.2.1", 9222).await.unwrap_err().to_string();
+        assert!(err.contains("refusing DevTools host"), "{err}");
+        let state = tempfile::tempdir().unwrap();
+        let file = ConfigFile {
+            host: Some("192.0.2.1".to_owned()),
+            chrome_path: Some("/nonexistent/chrome".to_owned()),
+            ..ConfigFile::default()
+        };
+        let config = Config::resolve(file, state.path());
+        let err = launch(&config, state.path(), None).await.unwrap_err();
+        assert!(err.to_string().contains("refusing DevTools host"), "{err}");
+        assert!(!state.path().join("profile").exists());
+    }
 
     #[test]
     fn launch_args_use_profile_and_port() {
