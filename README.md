@@ -57,6 +57,7 @@ For example, `pi install marketplace:todo`. You can also open `/extensions` in t
 | --- | --- |
 | [`hooks`](extensions/hooks/README.md) | Run Claude Code and Codex hooks (PreToolUse, PostToolUse, Stop, and more) from pi, with per-hook trust. |
 | [`claude-marketplace`](extensions/claude-marketplace/README.md) | Add Claude Code plugin marketplaces and install their commands, skills, agents, hooks, and MCP servers into pi. |
+| [`permissions`](extensions/permissions/README.md) | Allow, ask, and deny rules for pi tool calls, loaded from Claude Code settings, Codex rules files, and pi's own rules, with `/permissions` to pick sources and scope. |
 
 ### Terminal
 

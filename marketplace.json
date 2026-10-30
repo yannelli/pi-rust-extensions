@@ -152,6 +152,21 @@
       ]
     },
     {
+      "name": "permissions",
+      "displayName": "Permissions",
+      "description": "Allow, ask, and deny rules for pi tool calls, loaded from Claude Code settings, Codex rules files, and pi's own rules, with /permissions to pick sources and scope.",
+      "version": "0.1.2",
+      "args": [
+        "permissions"
+      ],
+      "tags": [
+        "permissions",
+        "claude",
+        "codex",
+        "tui"
+      ]
+    },
+    {
       "name": "rewind",
       "displayName": "Rewind",
       "description": "Per-turn shadow git checkpoints and conversation restoration.",
