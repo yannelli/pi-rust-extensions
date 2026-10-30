@@ -108,6 +108,29 @@ fn task_completions(
     (!items.is_empty()).then_some(items)
 }
 
+/// The rest of `/tasks widget ...`, or `None` for a task id.
+fn widget_argument(args: &str) -> Option<&str> {
+    let (word, rest) = split_word(args.trim());
+    (word == "widget").then_some(rest)
+}
+
+async fn set_widget_mode(host: &Host, registry: &Registry, argument: &str) -> Result<()> {
+    let running = registry
+        .tasks()
+        .iter()
+        .filter(|t| t.status.is_running())
+        .count();
+    match ui::widget_mode_for(registry.widget_mode(), running, argument) {
+        Ok(mode) => {
+            registry.set_widget_mode(mode);
+            let _ = ui::refresh(host, registry).await;
+            let mode = format!("{mode:?}").to_lowercase();
+            report(host, format!("Background task widget: {mode}"), false).await
+        }
+        Err(err) => report(host, err, true).await,
+    }
+}
+
 pub fn register(ext: Extension, registry: Arc<Registry>) -> Extension {
     let r = registry;
     let (bg, tasks, tasks2, jobs, logs, kill, clear) = (
@@ -150,10 +173,13 @@ pub fn register(ext: Extension, registry: Arc<Registry>) -> Extension {
             }
         },
     )
-    .command("tasks", "Open the background task manager", move |args, ctx: CommandCtx| {
+    .command("tasks", "Open the background task manager; /tasks widget [collapse|expand|auto] changes the widget", move |args, ctx: CommandCtx| {
         let registry = tasks.clone();
         async move {
             ensure(ctx.host(), ctx.snapshot(), &registry);
+            if let Some(argument) = widget_argument(&args) {
+                return set_widget_mode(ctx.host(), &registry, argument).await;
+            }
             panel::open(ctx.host().clone(), registry, args.trim().to_owned()).await
         }
     })
