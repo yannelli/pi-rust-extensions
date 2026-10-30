@@ -21,6 +21,7 @@ An edit can use a partial read when its unique `oldText` falls within that read.
 External changes and successful writes invalidate the read.
 New files do not need a prior read.
 Guard state uses `lens-read-guard` session entries and follows the selected branch.
+Each entry holds a hash, the length and the read line ranges of each file. Lens still loads older entries that hold the full text.
 
 Config paths, in precedence order:
 

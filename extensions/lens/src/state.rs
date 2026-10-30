@@ -35,10 +35,53 @@ pub struct Guard {
     pub allowed: HashSet<PathBuf>,
 }
 
+/// One read of a file: a hash and the length of the text it saw, and the
+/// line ranges it covered. Entries from older versions hold the full text.
 #[derive(Clone, Deserialize, Serialize)]
+#[serde(from = "ReadEntry")]
 struct Read {
-    text: String,
+    hash: String,
+    len: usize,
     ranges: Vec<(usize, usize)>,
+}
+
+#[derive(Deserialize)]
+struct ReadEntry {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    hash: String,
+    #[serde(default)]
+    len: usize,
+    ranges: Vec<(usize, usize)>,
+}
+
+impl From<ReadEntry> for Read {
+    fn from(entry: ReadEntry) -> Self {
+        let (hash, len) = match entry.text {
+            Some(text) => (hash(&text), text.len()),
+            None => (entry.hash, entry.len),
+        };
+        Self {
+            hash,
+            len,
+            ranges: entry.ranges,
+        }
+    }
+}
+
+impl Read {
+    fn matches(&self, text: &str) -> bool {
+        self.len == text.len() && self.hash == hash(text)
+    }
+}
+
+/// FNV-1a, 64 bits, as hex. Stable across Rust versions and platforms.
+fn hash(text: &str) -> String {
+    let value = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{value:016x}")
 }
 
 impl Guard {
@@ -74,12 +117,14 @@ impl Guard {
             .reads
             .entry(path.to_path_buf())
             .or_insert_with(|| Read {
-                text: text.clone(),
+                hash: String::new(),
+                len: 0,
                 ranges: vec![],
             });
-        if read.text != text {
+        if !read.matches(&text) {
             read.ranges.clear();
-            read.text = text;
+            read.hash = hash(&text);
+            read.len = text.len();
         }
         read.ranges.push(range);
     }
@@ -100,7 +145,7 @@ impl Guard {
         let covered = self
             .reads
             .get(path)
-            .filter(|read| read.text == text)
+            .filter(|read| read.matches(&text))
             .is_some_and(|read| {
                 let mut ranges = read.ranges.clone();
                 ranges.sort_unstable();
@@ -111,7 +156,7 @@ impl Guard {
                     }
                     end = end.max(stop);
                 }
-                if end >= read.text.lines().count().max(1) {
+                if end >= text.lines().count().max(1) {
                     return true;
                 }
                 if tool != "edit" {
@@ -121,12 +166,11 @@ impl Guard {
                     .as_str()
                     .filter(|old| !old.is_empty())
                     .is_some_and(|old| {
-                        let matches: Vec<_> = read.text.match_indices(old).collect();
+                        let matches: Vec<_> = text.match_indices(old).collect();
                         matches.len() == 1
                             && matches.iter().all(|(offset, old)| {
                                 let first =
-                                    read.text[..*offset].bytes().filter(|b| *b == b'\n').count()
-                                        + 1;
+                                    text[..*offset].bytes().filter(|b| *b == b'\n').count() + 1;
                                 let last = first + old.bytes().filter(|b| *b == b'\n').count();
                                 read.ranges
                                     .iter()
