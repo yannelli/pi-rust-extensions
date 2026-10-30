@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
@@ -52,6 +53,13 @@ pub struct Run {
     pub limit_notified: bool,
 }
 
+/// The detached auditor run of a goal; `generation` tells a stale run from the current one.
+#[derive(Debug)]
+pub struct AuditJob {
+    pub generation: u64,
+    pub abort: tokio::task::AbortHandle,
+}
+
 #[derive(Debug, Default)]
 pub struct Inner {
     pub settings: Settings,
@@ -63,6 +71,8 @@ pub struct Inner {
     pub run: Run,
     pub expanded: bool,
     pub trust_notified: bool,
+    pub audits: HashMap<String, AuditJob>,
+    pub audit_generation: u64,
 }
 
 impl Inner {
@@ -119,6 +129,19 @@ impl Inner {
     pub fn tasks_enabled(&self) -> bool {
         !self.settings.disable_tasks
     }
+
+    /// Stops the running audit of the focused goal.
+    pub fn cancel_focused_audit(&mut self) {
+        if let Some(id) = self.focus.clone() {
+            self.cancel_audit(&id);
+        }
+    }
+
+    pub fn cancel_audit(&mut self, goal_id: &str) {
+        if let Some(job) = self.audits.remove(goal_id) {
+            job.abort.abort();
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -154,8 +177,9 @@ impl App {
             inner.unreadable = listing.unreadable.len();
             inner.settings = loaded.settings;
             inner.store = Some(store);
-            for goal in &mut inner.goals {
-                if goal.status == GoalStatus::Auditing {
+            let Inner { goals, audits, .. } = &mut *inner;
+            for goal in goals {
+                if goal.status == GoalStatus::Auditing && !audits.contains_key(&goal.id) {
                     goal.status = GoalStatus::Active;
                 }
             }

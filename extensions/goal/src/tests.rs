@@ -236,9 +236,22 @@ fn scheduler_decisions() {
         decide(Some(&goal), &settings, false, false, 0),
         Decision::BudgetLimited
     );
+    goal.status = GoalStatus::Auditing;
+    assert_eq!(
+        decide(Some(&goal), &settings, false, true, 0),
+        Decision::PauseUser
+    );
+    assert_eq!(
+        decide(Some(&goal), &settings, false, false, 0),
+        Decision::Nothing
+    );
     goal.status = GoalStatus::Paused;
     assert_eq!(
         decide(Some(&goal), &settings, false, false, 0),
+        Decision::Nothing
+    );
+    assert_eq!(
+        decide(Some(&goal), &settings, false, true, 0),
         Decision::Nothing
     );
     assert_eq!(decide(None, &settings, false, false, 0), Decision::Nothing);

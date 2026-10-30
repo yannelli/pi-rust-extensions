@@ -1,6 +1,6 @@
 use pi_ext_sdk::prelude::*;
 
-use crate::app::{AUDIT_MESSAGE, App};
+use crate::app::{AUDIT_MESSAGE, App, AuditJob, Inner};
 use crate::auditor::{self, Verdict};
 use crate::format::truncate_text;
 use crate::scheduler;
@@ -57,7 +57,7 @@ pub async fn create(app: &App, host: &Host, new: NewGoal) -> std::result::Result
 
 /// `update_goal({status: "complete"})`: gate on tasks, then audit in the background.
 pub async fn submit_completion(app: &App, host: &Host, summary: Option<String>) -> ToolResult {
-    let (goal, settings, auditor) = {
+    let inline = {
         let mut inner = app.lock();
         let Some(goal) = inner.focused().cloned() else {
             return ToolResult::error("No focused goal.");
@@ -77,36 +77,66 @@ pub async fn submit_completion(app: &App, host: &Host, summary: Option<String>) 
             g.log("completion requested");
         });
         let goal = inner.focused().cloned().unwrap_or(goal);
-        (
-            goal,
-            inner.settings.clone(),
-            !inner.settings.disable_auditor,
-        )
+        if inner.settings.disable_auditor {
+            Some(goal.id)
+        } else {
+            start_audit(app, &mut inner, host, goal, summary);
+            None
+        }
     };
-    if !auditor {
+    if let Some(goal_id) = inline {
         let verdict = Verdict {
             approved: true,
             report: "Auditor disabled.".into(),
             error: None,
         };
-        finish_audit(app, host, &goal.id, verdict).await;
+        finish_audit(app, host, &goal_id, None, verdict).await;
         return ToolResult::text("Goal complete and archived (auditor disabled). End this turn.");
     }
     let _ = widget::refresh(app, host).await;
-    let (app2, host2) = (app.clone(), host.clone());
-    tokio::spawn(async move {
-        let verdict = auditor::audit(&host2, &goal, summary.as_deref(), &settings).await;
-        finish_audit(&app2, &host2, &goal.id, verdict).await;
-    });
     ToolResult::text(
         "Completion submitted; the independent auditor is checking the evidence. Stop work and end this turn.",
     )
 }
 
-pub async fn finish_audit(app: &App, host: &Host, goal_id: &str, verdict: Verdict) {
+/// Spawns the auditor for `goal` and records it while the caller holds the lock.
+fn start_audit(app: &App, inner: &mut Inner, host: &Host, goal: Goal, summary: Option<String>) {
+    inner.cancel_audit(&goal.id);
+    inner.audit_generation += 1;
+    let generation = inner.audit_generation;
+    let goal_id = goal.id.clone();
+    let settings = inner.settings.clone();
+    let (app, host) = (app.clone(), host.clone());
+    let task = tokio::spawn(async move {
+        let verdict = auditor::audit(&host, &goal, summary.as_deref(), &settings).await;
+        finish_audit(&app, &host, &goal.id, Some(generation), verdict).await;
+    });
+    let abort = task.abort_handle();
+    inner.audits.insert(goal_id, AuditJob { generation, abort });
+}
+
+/// Applies a verdict while the goal still waits on this audit; `generation` is `None` for an
+/// inline verdict. Pause, clear, abort, resume, or a newer audit make the verdict stale.
+pub async fn finish_audit(
+    app: &App,
+    host: &Host,
+    goal_id: &str,
+    generation: Option<u64>,
+    verdict: Verdict,
+) {
     let message = {
         let mut inner = app.lock();
-        let Some(goal) = inner.goals.iter_mut().find(|g| g.id == goal_id) else {
+        if let Some(generation) = generation {
+            if inner.audits.get(goal_id).map(|job| job.generation) != Some(generation) {
+                return;
+            }
+            inner.audits.remove(goal_id);
+        }
+        let Some(goal) = inner
+            .goals
+            .iter_mut()
+            .find(|g| g.id == goal_id && g.status == GoalStatus::Auditing)
+        else {
             return;
         };
         goal.audits += 1;
@@ -177,6 +207,7 @@ pub fn pause_focused(app: &App, reason: StopReason, why: &str) -> Option<Goal> {
         }
         g.clone()
     });
+    inner.cancel_focused_audit();
     inner.run.stopped = true;
     paused
 }
@@ -187,6 +218,7 @@ pub async fn resume(app: &App, host: &Host) -> std::result::Result<Goal, String>
         let mut inner = app.lock();
         inner.run.idle_runs = 0;
         inner.run.limit_notified = false;
+        inner.cancel_focused_audit();
         inner
             .update_focused(|g| {
                 g.set_status(GoalStatus::Active, None);
@@ -213,6 +245,7 @@ pub async fn clear(app: &App, host: &Host) -> Option<Goal> {
     let goal = {
         let mut inner = app.lock();
         let id = inner.focus.clone()?;
+        inner.cancel_focused_audit();
         inner.update_focused(|g| g.log("cleared by user"));
         inner.archive(&id)
     };
