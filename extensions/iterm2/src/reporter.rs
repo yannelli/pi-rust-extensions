@@ -83,10 +83,7 @@ impl Reporter {
 
     /// The enabled features, or `None` outside iTerm2, without a TUI, or when all are off.
     async fn active(&self, host: &Host) -> Option<Features> {
-        let tui = host
-            .init()
-            .is_some_and(|init| init.mode == "tui" && init.has_ui);
-        if !self.terminal.iterm2 || !tui {
+        if !self.terminal.iterm2 || !is_tui(host) {
             return None;
         }
         let loaded = self.load(host).await;
@@ -204,5 +201,17 @@ impl Reporter {
             let _ = host.write_terminal(&badge(""), self.terminal.tmux).await;
         }
         self.sent.lock().expect("sent lock").clear();
+    }
+}
+
+/// The ctx snapshot has the current mode; older hosts send the load-time mode in `initialize`.
+fn is_tui(host: &Host) -> bool {
+    match host.snapshot() {
+        Some(snapshot) if snapshot.mode.is_some() => {
+            snapshot.mode.as_deref() == Some("tui") && snapshot.has_ui
+        }
+        _ => host
+            .init()
+            .is_some_and(|init| init.mode == "tui" && init.has_ui),
     }
 }
