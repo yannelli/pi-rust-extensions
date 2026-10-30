@@ -113,7 +113,7 @@ async fn collect_stderr(stderr: impl AsyncReadExt + Unpin, runs: &Runs, id: &str
     }
 }
 
-/// SIGTERM to the child's process group, then SIGKILL after 2 seconds.
+/// SIGTERM to the child's process group, then SIGKILL after 1 second (inside the SDK cancel window).
 async fn stop(child: &mut Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
@@ -122,7 +122,7 @@ async fn stop(child: &mut Child) {
             .stderr(Stdio::null())
             .status();
     }
-    if tokio::time::timeout(Duration::from_secs(2), child.wait())
+    if tokio::time::timeout(Duration::from_secs(1), child.wait())
         .await
         .is_err()
     {

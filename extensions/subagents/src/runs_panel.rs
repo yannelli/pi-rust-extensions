@@ -144,7 +144,8 @@ fn ordered(app: &App) -> Vec<Run> {
 pub async fn open(app: App, host: Host) -> Result<()> {
     let mut view = RunsView::default();
     let width = |panel: &Panel| panel.width().unwrap_or(100);
-    let mut panel = host.panel(view.render(&ordered(&app), 100)).open().await?;
+    let mut shown = view.render(&ordered(&app), 100);
+    let mut panel = host.panel(shown.clone()).open().await?;
     loop {
         let event = tokio::select! {
             event = panel.next_event() => Some(event),
@@ -165,6 +166,10 @@ pub async fn open(app: App, host: Host) -> Result<()> {
             },
             Some(PanelEvent::Resize(_)) | None => {}
         }
-        panel.set_lines(view.render(&ordered(&app), width(&panel)))?;
+        let lines = view.render(&ordered(&app), width(&panel));
+        if lines != shown {
+            panel.set_lines(lines.clone())?;
+            shown = lines;
+        }
     }
 }
