@@ -106,9 +106,13 @@ impl TestHost {
     }
 
     pub async fn initialize(&mut self) -> Value {
+        self.initialize_with("/home/u/.pi/agent").await
+    }
+
+    pub async fn initialize_with(&mut self, agent_dir: &str) -> Value {
         let params = json!({
             "protocolVersion": 1, "piVersion": "0.8.0", "cwd": "/work",
-            "agentDir": "/home/u/.pi/agent", "extensionPath": "native:test/test",
+            "agentDir": agent_dir, "extensionPath": "native:test/test",
             "platform": "darwin", "mode": "tui", "hasUI": true, "flags": {}
         });
         self.request(0, "initialize", params).await;

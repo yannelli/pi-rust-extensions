@@ -4,7 +4,10 @@ use crate::agents::completion::{CallError, Completer, locale};
 use crate::agents::coverage::pool_metrics;
 use crate::agents::{dropper, reflector};
 use crate::ledger::*;
-use crate::pipeline::{PipelineCtx, branch, stage_tokens, worker_notice};
+use crate::pipeline::{
+    PipelineCtx, append_on_branch, backoff_resume_at, branch, reflector_slot, stage_tokens,
+    start_backoff, worker_notice,
+};
 use crate::runtime::MemoryHost;
 
 pub(crate) type Reflected = (Vec<Reflection>, Option<String>);
@@ -29,6 +32,20 @@ pub(crate) async fn reflector_stage<H: MemoryHost, C: Completer>(
     else {
         return Ok(none);
     };
+    let reflection_coverage_id = latest_coverage_marker_id(&entries, OM_REFLECTIONS_RECORDED);
+    if let Some(resume_at) = backoff_resume_at(
+        ctx,
+        reflector_slot,
+        &reflection_coverage_id,
+        tokens,
+        ctx.config.reflect_after_tokens,
+    ) {
+        ctx.log.log(
+            "reflector.backoff",
+            json!({ "tokens": tokens, "resumeAtTokens": resume_at }),
+        );
+        return Ok(none);
+    }
     worker_notice(
         host,
         ctx,
@@ -39,22 +56,31 @@ pub(crate) async fn reflector_stage<H: MemoryHost, C: Completer>(
     )
     .await;
     let folded = fold_ledger(&entries, None);
-    let reflections =
-        reflector::run_reflector(completer, &folded.reflections, &folded.active_observations)
-            .await?;
-    if reflections.is_empty() {
-        return Ok(none);
-    }
+    let reflected =
+        reflector::run_reflector(completer, &folded.reflections, &folded.active_observations).await;
+    let reflections = match reflected {
+        Ok(reflections) if !reflections.is_empty() => reflections,
+        other => {
+            start_backoff(ctx, reflector_slot, reflection_coverage_id, tokens);
+            return other.map(|_| none);
+        }
+    };
     let data = ReflectionsRecorded {
         reflections,
         covers_up_to_id: observation_coverage_id,
     };
-    host.append(
+    let value = serde_json::to_value(&data).unwrap_or_default();
+    if !append_on_branch(
+        host,
+        ctx,
         OM_REFLECTIONS_RECORDED,
-        serde_json::to_value(&data).unwrap_or_default(),
+        &data.covers_up_to_id,
+        value,
     )
-    .await
-    .map_err(CallError::Model)?;
+    .await?
+    {
+        return Ok(none);
+    }
     Ok((data.reflections, Some(data.covers_up_to_id)))
 }
 
@@ -115,12 +141,15 @@ pub(crate) async fn dropper_stage<H: MemoryHost, C: Completer>(
             observation_ids: dropped,
             covers_up_to_id,
         };
-        host.append(
+        let value = serde_json::to_value(&data).unwrap_or_default();
+        append_on_branch(
+            host,
+            ctx,
             OM_OBSERVATIONS_DROPPED,
-            serde_json::to_value(&data).unwrap_or_default(),
+            &data.covers_up_to_id,
+            value,
         )
-        .await
-        .map_err(CallError::Model)?;
+        .await?;
     }
     Ok(())
 }

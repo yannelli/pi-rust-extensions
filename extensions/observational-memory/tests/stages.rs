@@ -244,6 +244,95 @@ async fn full_pipeline_observes_reflects_and_drops() {
     );
 }
 
+/// Replies like `Scripted`, but first moves the host to another branch (`/tree` mid-run).
+struct Navigating<'a> {
+    host: &'a FakeHost,
+    other_branch: Vec<Value>,
+    reply: String,
+}
+
+impl Completer for Navigating<'_> {
+    async fn complete(&self, _system: &str, _prompt: &str) -> Result<String, String> {
+        *self.host.entries.lock().unwrap() = self.other_branch.clone();
+        Ok(self.reply.clone())
+    }
+}
+
+#[tokio::test]
+async fn observer_skips_append_when_branch_changes_mid_run() {
+    let host = FakeHost::with(conversation(3, 16_000));
+    let other_branch = vec![user("b0", "other branch")];
+    let completer = Navigating {
+        host: &host,
+        other_branch: other_branch.clone(),
+        reply: observer_reply(&["u1"]),
+    };
+    let log = DebugLog::default();
+    let (config, runtime) = (merge(&[], None), Runtime::default());
+    let ctx = PipelineCtx {
+        config: &config,
+        runtime: &runtime,
+        log: &log,
+        has_ui: true,
+        session_identity: Some("s1".into()),
+        memory_context_window: None,
+    };
+    run_pipeline(&host, &completer, &ctx).await;
+    assert_eq!(*host.entries.lock().unwrap(), other_branch);
+}
+
+#[tokio::test]
+async fn observer_error_backs_off_until_more_growth() {
+    let host = FakeHost::with(conversation(3, 16_000));
+    let config = merge(&[json!({ "reflectAfterTokens": 100_000 })], None);
+    let runtime = Runtime::default();
+    run(
+        &host,
+        &Scripted::new(&[Err("rate limited")]),
+        &config,
+        &runtime,
+    )
+    .await;
+    assert!(runtime.state().observer_empty_backoff.is_some());
+
+    let retry = Scripted::new(&[Ok(&observer_reply(&["u1"]))]);
+    run(&host, &retry, &config, &runtime).await;
+    assert_eq!(retry.calls(), 0, "backoff holds without new growth");
+
+    host.entries
+        .lock()
+        .unwrap()
+        .push(user("u3", &"x".repeat(48_000)));
+    run(&host, &retry, &config, &runtime).await;
+    assert_eq!(retry.calls(), 1);
+    assert_eq!(host.appended(OM_OBSERVATIONS_RECORDED).len(), 1);
+}
+
+#[tokio::test]
+async fn empty_or_failing_reflector_backs_off() {
+    let olds = [observation("A fact.", "low", &["u0"])];
+    let mut entries = conversation(3, 30_000);
+    entries.push(observations_entry("m-old", &olds, "u2"));
+    let host = FakeHost::with(entries);
+    let config = merge(&[], None);
+    let runtime = Runtime::default();
+    let empty = Scripted::new(&[Ok(r#"{"reflections": []}"#)]);
+    run(&host, &empty, &config, &runtime).await;
+    assert_eq!(empty.calls(), 1);
+    assert!(runtime.state().reflector_backoff.is_some());
+
+    let again = Scripted::new(&[Err("boom")]);
+    run(&host, &again, &config, &runtime).await;
+    assert_eq!(again.calls(), 0, "no retry on the next turn");
+
+    let failing = Scripted::new(&[Err("boom")]);
+    let fresh = Runtime::default();
+    run(&host, &failing, &config, &fresh).await;
+    assert_eq!(failing.calls(), 1);
+    assert!(fresh.state().reflector_backoff.is_some());
+    assert!(fresh.state().last_reflector_error.is_some());
+}
+
 #[test]
 fn drop_candidates_order_by_coverage_relevance_then_age() {
     let mut a = observation("a", "critical", &["u"]);

@@ -35,11 +35,11 @@ Sources, in order; a later source wins per key:
 
 1. Defaults.
 2. `<agentDir>/ext/observational-memory.json` (global).
-3. `<cwd>/.pi/ext/observational-memory.json` (project). The extension reads it only when pi reports the project as trusted, because `model` selects the provider that receives the transcript. It shows one warning when it ignores the file.
-4. The `observational-memory` key of pi settings (`~/.pi/agent/settings.json` and `.pi/settings.json`, merged by pi). This is where upstream reads its settings.
+3. The `observational-memory` key of pi settings (`~/.pi/agent/settings.json` and `.pi/settings.json`, merged by pi). This is where upstream reads its settings.
+4. `<cwd>/.pi/ext/observational-memory.json` (project). The extension reads it only when pi reports the project as trusted, because `model` selects the provider that receives the transcript. It shows one warning when it ignores the file.
 5. `PI_OBSERVATIONAL_MEMORY_PASSIVE` (`1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off`) sets `passive`.
 
-The extension ignores a value of the wrong type or range and keeps the earlier value.
+The extension ignores a value of the wrong type or range and keeps the earlier value. Token counts accept integer-valued floats such as `10000.0`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -61,7 +61,7 @@ The extension ignores a value of the wrong type or range and keeps the earlier v
 ## Paths
 
 - Debug log: `<agentDir>/ext/observational-memory/debug/<sessionId>.ndjson`, or `<agentDir>/ext/observational-memory/debug.ndjson` when there is no session id. At 10 MB the file moves to `.ndjson.1`.
-- Clipboard: a temporary file in `$TMPDIR/pi-observational-memory/`, removed after the copy.
+- Clipboard: `<agentDir>/ext/observational-memory/clipboard-<random>.txt`, created new with mode 0600 and removed after the copy.
 
 ## Session entries
 
@@ -81,6 +81,8 @@ Compaction `details`: `{ type: "om.folded", version: 1, fullFold, observations, 
 - `agentMaxTurns` has no effect, because each worker makes one completion.
 - Model and credential problems come from `llm.complete` as a worker error. Upstream checks the credentials before the call.
 - pi has no custom tool renderers over the native protocol. `recall` returns plain text; the TUI shows no aligned rows and no collapsed view.
-- The native `exec` call has no stdin. The clipboard copy writes the text to a temporary file and runs `sh -c '<command> < <file>'` (`cmd /C clip < <file>` on Windows).
+- The clipboard copy writes the text to a file and runs `sh -c '<command> < <file> > /dev/null 2>&1'` (`cmd /C clip < <file> > NUL 2>&1` on Windows).
+- Each worker completion times out after 300 s. A failed or empty observer or reflector run waits for another `observeAfterTokens` or `reflectAfterTokens` of growth before it retries.
+- Consolidation and compaction do not overlap: a compaction from `agent_settled` waits for the next `agent_settled` while the workers run, and the workers skip a turn while a compaction runs. A worker drops its result when the branch no longer contains the entries it covered (for example after `/tree`), and the ledger ignores records whose `coversUpToId` is not on the branch.
 - Upstream adds `x-opencode-session` headers for opencode providers. `llm.complete` takes no headers, so the extension does not send them.
 - Config also comes from the two `ext/observational-memory.json` files. The project file needs a trusted project.

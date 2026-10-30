@@ -5,7 +5,7 @@ use crate::agents::observer;
 use crate::config::{Config, resolve_observer_chunk_max_tokens};
 use crate::debug_log::DebugLog;
 use crate::ledger::*;
-use crate::runtime::{EmptyBackoff, MemoryHost, Runtime};
+use crate::runtime::{EmptyBackoff, MemoryHost, RunState, Runtime};
 use crate::serialize::serialize_source_chunk;
 use crate::stages::{dropper_stage, reflector_stage};
 
@@ -81,6 +81,75 @@ pub(crate) async fn branch<H: MemoryHost>(host: &H) -> Result<Vec<Value>, CallEr
     host.branch().await.map_err(CallError::Model)
 }
 
+pub(crate) type BackoffSlot = fn(&mut RunState) -> &mut Option<EmptyBackoff>;
+
+pub(crate) fn observer_slot(state: &mut RunState) -> &mut Option<EmptyBackoff> {
+    &mut state.observer_empty_backoff
+}
+
+pub(crate) fn reflector_slot(state: &mut RunState) -> &mut Option<EmptyBackoff> {
+    &mut state.reflector_backoff
+}
+
+/// The token count where a stage resumes, while its backoff holds; clears a stale backoff.
+pub(crate) fn backoff_resume_at(
+    ctx: &PipelineCtx<'_>,
+    slot: BackoffSlot,
+    coverage_id: &Option<String>,
+    tokens: u64,
+    threshold: u64,
+) -> Option<u64> {
+    let mut state = ctx.runtime.state();
+    let backoff = slot(&mut state);
+    let held = backoff.as_ref().and_then(|b| {
+        let resume_at = b.tokens_at_empty.saturating_add(threshold);
+        (ctx.session_identity == b.session_identity
+            && *coverage_id == b.coverage_id
+            && tokens < resume_at)
+            .then_some(resume_at)
+    });
+    if held.is_none() {
+        *backoff = None;
+    }
+    held
+}
+
+pub(crate) fn start_backoff(
+    ctx: &PipelineCtx<'_>,
+    slot: BackoffSlot,
+    coverage_id: Option<String>,
+    tokens: u64,
+) {
+    *slot(&mut ctx.runtime.state()) = Some(EmptyBackoff {
+        session_identity: ctx.session_identity.clone(),
+        coverage_id,
+        tokens_at_empty: tokens,
+    });
+}
+
+/// Appends a ledger record when `covers_up_to_id` is still on the branch; returns whether it did.
+/// The branch can change during a long completion (`/tree` navigation).
+pub(crate) async fn append_on_branch<H: MemoryHost>(
+    host: &H,
+    ctx: &PipelineCtx<'_>,
+    custom_type: &str,
+    covers_up_to_id: &str,
+    data: Value,
+) -> Result<bool, CallError> {
+    let entries = branch(host).await?;
+    if !entries.iter().any(|e| entry_id(e) == covers_up_to_id) {
+        ctx.log.log(
+            "append.branch_changed",
+            json!({ "customType": custom_type, "coversUpToId": covers_up_to_id }),
+        );
+        return Ok(false);
+    }
+    host.append(custom_type, data)
+        .await
+        .map_err(CallError::Model)?;
+    Ok(true)
+}
+
 /// Observer, then reflector, then dropper; a stage that aborts ends the run.
 pub async fn run_pipeline<H: MemoryHost, C: Completer>(
     host: &H,
@@ -137,20 +206,18 @@ async fn observer_stage<H: MemoryHost, C: Completer>(
         return Ok(Outcome::Continue);
     }
     let coverage_id = latest_coverage_marker_id(&entries, OM_OBSERVATIONS_RECORDED);
-    let backoff = ctx.runtime.state().observer_empty_backoff.clone();
-    if let Some(backoff) = backoff {
-        let resume_at = backoff.tokens_at_empty + config.observe_after_tokens;
-        if ctx.session_identity == backoff.session_identity
-            && coverage_id == backoff.coverage_id
-            && tokens < resume_at
-        {
-            ctx.log.log(
-                "observer.empty_backoff",
-                json!({ "tokens": tokens, "resumeAtTokens": resume_at }),
-            );
-            return Ok(Outcome::Continue);
-        }
-        ctx.runtime.state().observer_empty_backoff = None;
+    if let Some(resume_at) = backoff_resume_at(
+        ctx,
+        observer_slot,
+        &coverage_id,
+        tokens,
+        config.observe_after_tokens,
+    ) {
+        ctx.log.log(
+            "observer.empty_backoff",
+            json!({ "tokens": tokens, "resumeAtTokens": resume_at }),
+        );
+        return Ok(Outcome::Continue);
     }
 
     let last = latest_coverage_index(&entries, OM_OBSERVATIONS_RECORDED);
@@ -208,15 +275,17 @@ async fn observer_stage<H: MemoryHost, C: Completer>(
         chunk: &chunk.text,
         allowed_source_entry_ids: &chunk.source_entry_ids,
     };
-    let observations = observer::run_observer(completer, &input).await?;
+    let observations = match observer::run_observer(completer, &input).await {
+        Ok(observations) => observations,
+        Err(error) => {
+            start_backoff(ctx, observer_slot, coverage_id, tokens);
+            return Err(error);
+        }
+    };
     if observations.is_empty() {
         ctx.log
             .log("observer.empty", json!({ "coversUpToId": covers_up_to_id }));
-        ctx.runtime.state().observer_empty_backoff = Some(EmptyBackoff {
-            session_identity: ctx.session_identity.clone(),
-            coverage_id,
-            tokens_at_empty: tokens,
-        });
+        start_backoff(ctx, observer_slot, coverage_id, tokens);
         worker_notice(host, ctx, "Observational memory: observer found nothing new in this chunk (coverage unchanged; will retry later)".to_owned()).await;
         return Ok(Outcome::Continue);
     }
@@ -225,12 +294,10 @@ async fn observer_stage<H: MemoryHost, C: Completer>(
         observations,
         covers_up_to_id: covers_up_to_id.clone(),
     };
-    host.append(
-        OM_OBSERVATIONS_RECORDED,
-        serde_json::to_value(&data).unwrap_or_default(),
-    )
-    .await
-    .map_err(CallError::Model)?;
+    let data = serde_json::to_value(&data).unwrap_or_default();
+    if !append_on_branch(host, ctx, OM_OBSERVATIONS_RECORDED, &covers_up_to_id, data).await? {
+        return Ok(Outcome::Abort);
+    }
     ctx.log.log(
         "observer.appended",
         json!({ "count": count, "coversUpToId": covers_up_to_id }),

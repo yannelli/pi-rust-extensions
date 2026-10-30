@@ -103,3 +103,16 @@ fn project_config_needs_trust() {
         std::path::Path::new("/w/.pi/ext/observational-memory.json")
     );
 }
+
+#[test]
+fn integer_valued_floats_are_accepted() {
+    let config = merge(
+        &[
+            json!({ "observeAfterTokens": 10000.0, "reflectAfterTokens": 2.5, "agentMaxTokens": 0.0 }),
+        ],
+        None,
+    );
+    assert_eq!(config.observe_after_tokens, 10_000);
+    assert_eq!(config.reflect_after_tokens, 20_000);
+    assert_eq!(config.agent_max_tokens, 32_000);
+}

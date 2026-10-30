@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use pi_ext_sdk::{Host, LlmRequest, NotifyType, Snapshot};
 use serde_json::{Value, json};
@@ -34,7 +35,7 @@ pub fn project_trusted(snapshot: &Snapshot) -> bool {
         == Some(true)
 }
 
-/// Defaults, global file, project file (trusted projects only), then the settings namespace.
+/// Defaults, global file, the settings namespace, then the project file (trusted projects only).
 pub async fn load_config(host: &Host, snapshot: &Snapshot, runtime: &Runtime) -> Config {
     let cwd = if snapshot.cwd.is_empty() {
         host.cwd()
@@ -67,7 +68,7 @@ pub async fn load_config(host: &Host, snapshot: &Snapshot, runtime: &Runtime) ->
         .flatten()
         .unwrap_or(Value::Null);
     let passive = env_passive(std::env::var(PASSIVE_ENV).ok().as_deref());
-    merge(&[global, project, settings], passive)
+    merge(&[global, settings, project], passive)
 }
 
 /// The model the memory workers call and the limits that derive from it.
@@ -124,6 +125,9 @@ pub async fn resolve_memory_model(
     }
 }
 
+/// Bound on one worker completion; upstream has no config key for it.
+pub const COMPLETION_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// `llm.complete` on the memory model.
 pub struct HostCompleter {
     pub host: Host,
@@ -148,11 +152,15 @@ impl Completer for HostCompleter {
     async fn complete(&self, system: &str, prompt: &str) -> Result<String, String> {
         let mut request = self.request.clone().system(system);
         request.prompt = Some(prompt.to_owned());
-        self.host
-            .complete(request)
-            .await
-            .map(|response| response.text)
-            .map_err(|error| error.message().to_owned())
+        match tokio::time::timeout(COMPLETION_TIMEOUT, self.host.complete(request)).await {
+            Ok(result) => result
+                .map(|response| response.text)
+                .map_err(|error| error.message().to_owned()),
+            Err(_) => Err(format!(
+                "llm.complete timed out after {} s",
+                COMPLETION_TIMEOUT.as_secs()
+            )),
+        }
     }
 }
 
