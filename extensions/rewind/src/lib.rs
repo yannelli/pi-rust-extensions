@@ -11,6 +11,7 @@ mod excludes;
 pub mod git;
 mod gitcmd;
 pub mod lifecycle;
+pub mod lock;
 mod nested;
 pub mod rewind;
 pub mod state;

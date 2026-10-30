@@ -8,6 +8,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::{Instant, timeout, timeout_at};
 
 use crate::config::LspServer;
+use crate::group::Group;
 
 #[path = "lsp_wire.rs"]
 mod wire;
@@ -31,16 +32,22 @@ pub async fn diagnostics(
     let text = tokio::fs::read_to_string(&target)
         .await
         .map_err(|e| format!("{}: {e}", target.display()))?;
-    let mut child = Command::new(&server.command)
+    let mut command = Command::new(&server.command);
+    command
         .args(&server.args)
         .current_dir(&abs_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
         .spawn()
         .map_err(|e| format!("failed to start {}: {e}", server.command))?;
+    let mut group = Group::new(child.id());
     let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        group.kill();
         stop(&mut child).await;
         return Err(format!("{}: missing stdio pipes", server.command));
     };
@@ -61,8 +68,11 @@ pub async fn diagnostics(
     };
     if result.is_ok() {
         session.shutdown().await;
-        let _ = timeout(SHUTDOWN_GRACE, child.wait()).await;
+        if let Ok(Ok(_)) = timeout(SHUTDOWN_GRACE, child.wait()).await {
+            group.disarm();
+        }
     }
+    group.kill();
     stop(&mut child).await;
     let source = command_name(&server.command);
     result.map(|items| {

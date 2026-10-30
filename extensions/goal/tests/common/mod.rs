@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -58,6 +59,10 @@ pub struct Host {
     pub calls: Vec<(String, Value)>,
     pub verdict: String,
     pub ctx: Value,
+    /// Methods whose next request stays unanswered until [`Host::release`]; one entry per request.
+    pub hold: Vec<&'static str>,
+    held: Vec<(String, Value)>,
+    responses: HashMap<u64, Value>,
 }
 
 impl Host {
@@ -78,6 +83,9 @@ impl Host {
             calls: Vec::new(),
             verdict: "<approved/>".into(),
             ctx,
+            hold: Vec::new(),
+            held: Vec::new(),
+            responses: HashMap::new(),
         };
         let init = json!({
             "protocolVersion": 1, "piVersion": "0.8.0", "cwd": work, "agentDir": agent,
@@ -117,6 +125,11 @@ impl Host {
             return Some(message);
         };
         self.calls.push((method.clone(), message["params"].clone()));
+        if let Some(index) = self.hold.iter().position(|held| *held == method) {
+            self.hold.remove(index);
+            self.held.push((method, message["id"].clone()));
+            return None;
+        }
         if message.get("id").is_some() {
             let result = default_answer(&method, &message["params"], &self.verdict);
             let reply = json!({ "jsonrpc": "2.0", "id": message["id"], "result": result });
@@ -126,18 +139,36 @@ impl Host {
     }
 
     pub async fn request(&mut self, method: &str, params: Value) -> Value {
+        let id = self.begin(method, params).await;
+        self.finish(id).await
+    }
+
+    /// Sends a request without waiting; [`Host::finish`] returns its result.
+    pub async fn begin(&mut self, method: &str, params: Value) -> u64 {
         self.next_id += 1;
         let id = self.next_id;
         let request = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         self.send(request).await;
-        loop {
-            let message = self.next().await;
-            if let Some(response) = self.handle(message).await
-                && response["id"] == id
-            {
-                assert!(response.get("error").is_none(), "error reply: {response}");
-                return response["result"].clone();
+        id
+    }
+
+    pub async fn finish(&mut self, id: u64) -> Value {
+        let response = loop {
+            if let Some(response) = self.responses.remove(&id) {
+                break response;
             }
+            let message = self.next().await;
+            self.answer(message).await;
+        };
+        assert!(response.get("error").is_none(), "error reply: {response}");
+        response["result"].clone()
+    }
+
+    /// Answers a host request, or keeps a response for [`Host::finish`].
+    async fn answer(&mut self, message: Value) {
+        if let Some(response) = self.handle(message).await {
+            let id = response["id"].as_u64().unwrap_or_default();
+            self.responses.insert(id, response);
         }
     }
 
@@ -167,10 +198,27 @@ impl Host {
             let message = self.next().await;
             let found = message["method"] == method;
             let params = message["params"].clone();
-            self.handle(message).await;
+            self.answer(message).await;
             if found {
                 return params;
             }
+        }
+    }
+
+    /// Answers the oldest held request of `method` with `result`.
+    pub async fn release(&mut self, method: &str, result: Value) {
+        let index = self.held.iter().position(|(name, _)| name == method);
+        let (_, id) = self.held.remove(index.expect("no held request"));
+        self.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+            .await;
+    }
+
+    /// Reads and answers messages until none arrives for `quiet`.
+    pub async fn drain(&mut self, quiet: Duration) {
+        while let Ok(line) = tokio::time::timeout(quiet, self.lines.next_line()).await {
+            let line = line.unwrap().expect("extension closed stdout");
+            let message = serde_json::from_str(&line).unwrap();
+            self.answer(message).await;
         }
     }
 

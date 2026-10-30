@@ -10,6 +10,7 @@ Per-turn git checkpoints of the workspace, and `/rewind` to restore code, conver
 - Snapshots go to a bare shadow repo, `<agentDir>/ext/rewind/sessions/<session file stem>/.git` (`ephemeral-<session id>` without a session file). Git runs with `--git-dir` set to the shadow repo and `--work-tree` set to the session cwd. `GIT_DIR`, `GIT_INDEX_FILE`, and related variables are removed from the environment. The user's `.git`, refs, and index stay unchanged.
 - An unchanged work tree reuses the previous commit. Every turn still gets an entry, so conversation restore works.
 - The shadow repo honors the work tree's `.gitignore` files, the built-in excludes, and the `exclude` and `include` settings. Nested git repos and the storage dir are excluded. Files over `maxFileMB` are not snapshotted.
+- Snapshots, restores, work-tree comparisons, and fork copies share `<storage>/.pi-checkpoint-lock/`. The lock uses numbered files created exclusively and records the holder's PID and timestamp. It expires after 3 minutes without refresh; other processes wait up to 30 seconds before reporting the holder's PID.
 - A restore first takes a safety snapshot, then runs `git reset --hard <commit>` in the shadow repo. Files that are ignored or not snapshotted stay unchanged. When the reset fails, the extension restores the safety snapshot.
 
 ## Commands

@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use crate::identity::{self, Owner};
 use crate::process;
 use crate::task::{self, Status, Task, default_name, resolve_in};
 
@@ -70,7 +71,8 @@ impl Registry {
         let base = self.lock().dir.clone().ok_or("no session directory yet")?;
         let id = task::new_id();
         let dir = base.join(&id);
-        std::fs::create_dir_all(&dir)
+        task::create_private_dir(&base)
+            .and_then(|()| task::create_private_dir(&dir))
             .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let name = options
             .name
@@ -84,6 +86,7 @@ impl Registry {
             cwd: cwd.to_owned(),
             is_agent: options.is_agent,
             pid: None,
+            process_start: None,
             dir,
             started_at: task::now_ms(),
             ended_at: None,
@@ -103,7 +106,10 @@ impl Registry {
             &task.exit_path(),
         );
         match spawned {
-            Ok(pid) => task.pid = Some(pid),
+            Ok(pid) => {
+                task.pid = Some(pid);
+                task.process_start = identity::identity(pid).ok().flatten();
+            }
             Err(err) => {
                 let _ = std::fs::remove_dir_all(&task.dir);
                 return Err(format!("cannot start `{}`: {err}", task.command));
@@ -135,7 +141,13 @@ impl Registry {
 
     /// Stops a running task: TERM to its process group, KILL after a grace period.
     pub async fn stop(&self, query: &str, reason: &str) -> Result<Task, String> {
-        let id = self.resolve(query)?.id;
+        let found = self.resolve(query)?;
+        let id = found.id.clone();
+        if found.status.is_running() && found.pid.is_some() && self.settle_unowned(&found) {
+            let now = self.resolve(&id)?;
+            let detail = now.error.map(|e| format!(": {e}")).unwrap_or_default();
+            return Err(format!("task {id} is {}{detail}", now.status.label()));
+        }
         let task = self
             .update(&id, |t| {
                 let stopped = t.finish(Status::Killed, None);
@@ -149,7 +161,7 @@ impl Registry {
         let Some(pid) = task.pid else {
             return Ok(task);
         };
-        if let Err(err) = process::terminate(pid, KILL_GRACE).await {
+        if let Err(err) = process::terminate(pid, task.process_start.as_deref(), KILL_GRACE).await {
             self.update(&id, |t| {
                 t.error = Some(err.clone());
                 true
@@ -170,32 +182,14 @@ impl Registry {
                     Status::Failed
                 };
                 self.update(&task.id, |t| t.finish(status, Some(code)));
-            } else if task.timed_out(now) {
-                let updated = self.update(&task.id, |t| {
-                    let done = t.finish(Status::TimedOut, None);
-                    t.error = Some(format!(
-                        "timed out after {}s",
-                        t.timeout_seconds.unwrap_or(0)
-                    ));
-                    done
-                });
-                if let (Some(_), Some(pid)) = (updated, task.pid) {
-                    tokio::spawn(async move {
-                        if let Err(err) = process::terminate(pid, KILL_GRACE).await {
-                            pi_ext_sdk::warn!("{err}");
-                        }
-                    });
+            } else {
+                let timed_out = task.timed_out(now);
+                if !timed_out && !check_alive {
+                    continue;
                 }
-            } else if check_alive && !process::is_alive(task.pid).await {
-                let code = task.read_exit_code();
-                self.update(&task.id, |t| match code {
-                    Some(0) => t.finish(Status::Completed, Some(0)),
-                    Some(c) => t.finish(Status::Failed, Some(c)),
-                    None => {
-                        t.error = Some("process ended without an exit status".into());
-                        t.finish(Status::Lost, None)
-                    }
-                });
+                if !self.settle_unowned(&task) && timed_out {
+                    self.time_out(&task);
+                }
             }
         }
         self.lock()
@@ -204,6 +198,60 @@ impl Registry {
             .filter(|t| !t.status.is_running() && t.notify_on_completion && !t.notified)
             .cloned()
             .collect()
+    }
+
+    fn time_out(&self, task: &Task) {
+        let updated = self.update(&task.id, |t| {
+            let done = t.finish(Status::TimedOut, None);
+            t.error = Some(format!(
+                "timed out after {}s",
+                t.timeout_seconds.unwrap_or(0)
+            ));
+            done
+        });
+        if let (Some(_), Some(pid)) = (updated, task.pid) {
+            let identity = task.process_start.clone();
+            tokio::spawn(async move {
+                if let Err(err) = process::terminate(pid, identity.as_deref(), KILL_GRACE).await {
+                    pi_ext_sdk::warn!("{err}");
+                }
+            });
+        }
+    }
+
+    fn mark_ended(&self, task: &Task) {
+        let code = task.read_exit_code();
+        self.update(&task.id, |t| match code {
+            Some(0) => t.finish(Status::Completed, Some(0)),
+            Some(c) => t.finish(Status::Failed, Some(c)),
+            None => {
+                t.error = Some("process ended without an exit status".into());
+                t.finish(Status::Lost, None)
+            }
+        });
+    }
+
+    /// Records the end of a running task whose pid is gone or not its own; true when it did.
+    fn settle_unowned(&self, task: &Task) -> bool {
+        match owner_of(task) {
+            Owner::Same => false,
+            Owner::Gone => {
+                self.mark_ended(task);
+                true
+            }
+            Owner::Other => {
+                self.mark_reused(task);
+                true
+            }
+        }
+    }
+
+    fn mark_reused(&self, task: &Task) {
+        let reason = process::unverified_message(task.pid.unwrap_or_default());
+        self.update(&task.id, |t| {
+            t.error = Some(reason);
+            t.finish(Status::Lost, None)
+        });
     }
 
     pub fn mark_notified(&self, id: &str) {
@@ -230,21 +278,29 @@ impl Registry {
     /// `session_shutdown`: on reload keep tasks that survive reloads, else stop all running tasks.
     pub async fn shutdown(&self, reason: &str) -> usize {
         let reload = reason == "reload";
-        let victims: Vec<Task> = self
-            .running()
-            .into_iter()
-            .filter(|t| !(reload && t.survive_reload))
-            .filter_map(|t| {
-                self.update(&t.id, |t| {
-                    t.notified = true;
-                    t.error = Some(format!("stopped on session {reason}"));
-                    t.finish(Status::Killed, None)
-                })
-            })
-            .collect();
+        let mut victims = Vec::new();
+        for task in self.running() {
+            if reload && task.survive_reload {
+                continue;
+            }
+            if task.pid.is_some() && self.settle_unowned(&task) {
+                continue;
+            }
+            let stopped = self.update(&task.id, |t| {
+                t.notified = true;
+                t.error = Some(format!("stopped on session {reason}"));
+                t.finish(Status::Killed, None)
+            });
+            victims.extend(stopped);
+        }
         let mut stops = tokio::task::JoinSet::new();
-        for pid in victims.iter().filter_map(|t| t.pid) {
-            stops.spawn(process::terminate(pid, SHUTDOWN_GRACE));
+        for task in &victims {
+            if let Some(pid) = task.pid {
+                let identity = task.process_start.clone();
+                stops.spawn(async move {
+                    process::terminate(pid, identity.as_deref(), SHUTDOWN_GRACE).await
+                });
+            }
         }
         while let Some(result) = stops.join_next().await {
             if let Ok(Err(err)) = result {
@@ -256,5 +312,12 @@ impl Registry {
 
     pub fn monitor_once(&self) -> bool {
         !self.monitor_started.swap(true, Ordering::SeqCst)
+    }
+}
+
+fn owner_of(task: &Task) -> Owner {
+    match task.pid {
+        Some(pid) => identity::owner(pid, task.process_start.as_deref()),
+        None => Owner::Gone,
     }
 }

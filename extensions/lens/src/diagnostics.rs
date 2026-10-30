@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -117,4 +117,10 @@ pub fn normalize_path(cwd: &Path, path: &str) -> PathBuf {
         }
     }
     joined
+}
+
+/// True when the normalized `path` lies under the resolved `cwd`.
+pub fn within(cwd: &Path, path: &Path) -> bool {
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    !path.components().any(|part| part == Component::ParentDir) && path.starts_with(cwd)
 }

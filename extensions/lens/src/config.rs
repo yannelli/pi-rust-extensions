@@ -13,10 +13,13 @@ pub struct Config {
     pub read_guard: bool,
     pub auto_detect: bool,
     pub timeout_ms: u64,
+    pub pipeline_timeout_ms: u64,
     pub tools: BTreeMap<String, Toggle>,
     pub languages: BTreeMap<String, Toggle>,
     pub commands: Vec<ToolCommand>,
     pub lsp: LspConfig,
+    #[serde(skip)]
+    pub trusted: bool,
 }
 
 impl Default for Config {
@@ -27,10 +30,12 @@ impl Default for Config {
             read_guard: true,
             auto_detect: true,
             timeout_ms: 30_000,
+            pipeline_timeout_ms: 30_000,
             tools: BTreeMap::new(),
             languages: BTreeMap::new(),
             commands: Vec::new(),
             lsp: LspConfig::default(),
+            trusted: false,
         }
     }
 }
@@ -131,8 +136,9 @@ pub fn load(agent_dir: &Path, cwd: &Path, trusted: bool) -> Result<(Config, bool
         }
         pi_ext_sdk::json::merge_patch(&mut value, &project);
     }
-    let config: Config = serde_json::from_value(value)?;
+    let mut config: Config = serde_json::from_value(value)?;
     config.validate()?;
+    config.trusted = trusted;
     Ok((config, ignored))
 }
 
@@ -140,6 +146,11 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         if !(1..=300_000).contains(&self.timeout_ms) {
             return Err(Error::msg("Lens timeoutMs must be between 1 and 300000"));
+        }
+        if !(1..=600_000).contains(&self.pipeline_timeout_ms) {
+            return Err(Error::msg(
+                "Lens pipelineTimeoutMs must be between 1 and 600000",
+            ));
         }
         for command in &self.commands {
             if command.name.is_empty() || command.language.is_empty() || command.command.is_empty()

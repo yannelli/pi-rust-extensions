@@ -1,7 +1,7 @@
 # SSH
 
 Reuse SSH profiles and OpenSSH ControlMaster connections across pi sessions.
-The remote host needs a POSIX shell and `cat`. Authentication uses the system
+The remote host needs a POSIX shell, `cat`, `dd`, `mktemp`, `ps`, `awk`, `wc`, and `tr`. Authentication uses the system
 SSH client and agent. Batch mode prevents password prompts.
 
 ## Tools and commands
@@ -23,6 +23,8 @@ Remote mode displays the active host in a footer status. It persists in
 A missing or disabled remote profile blocks bash until the user changes modes.
 The built-in bash timeout controls commands in remote mode. Other built-in file
 tools remain local; use `ssh_read` and `ssh_write` for remote files.
+On timeout or cancellation, closing SSH stdin stops the remote command and its descendants.
+Commands use a temporary file for input and reserve SSH stdin for connection lifetime.
 
 ## Configuration
 

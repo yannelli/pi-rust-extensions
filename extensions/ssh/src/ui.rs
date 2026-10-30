@@ -131,9 +131,7 @@ async fn modify(state: &State, host: &Host, name: &str, delete: bool) -> Result<
             .profiles
             .get(name)
             .ok_or_else(|| Error::msg("Unknown SSH profile"))?;
-        let mut profile = profile.clone();
-        profile.enabled = !profile.enabled;
-        document["profiles"][name] = serde_json::to_value(profile)?;
+        document["profiles"][name]["enabled"] = json!(!profile.enabled);
     }
     config::save(&path, &document)?;
     status(state, host).await

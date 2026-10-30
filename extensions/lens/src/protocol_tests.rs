@@ -7,16 +7,18 @@ use tokio::io::{
 
 use super::Project;
 
-struct Host {
+pub(super) struct Host {
     writer: WriteHalf<DuplexStream>,
     lines: Lines<BufReader<ReadHalf<DuplexStream>>>,
     task: tokio::task::JoinHandle<pi_ext_sdk::Result<()>>,
-    calls: Vec<Value>,
+    pub(super) calls: Vec<Value>,
     answers: VecDeque<Value>,
+    pub(super) trusted: bool,
+    pub(super) has_ui: bool,
 }
 
 impl Host {
-    fn new(extension: Extension) -> Self {
+    pub(super) fn new(extension: Extension) -> Self {
         let (host, extension_io) = tokio::io::duplex(65536);
         let (read, write) = tokio::io::split(extension_io);
         let task = tokio::spawn(extension.serve(read, write));
@@ -27,15 +29,29 @@ impl Host {
             task,
             calls: vec![],
             answers: VecDeque::new(),
+            trusted: true,
+            has_ui: false,
         }
     }
 
-    async fn request(&mut self, method: &str, params: Value) -> Value {
-        let request = json!({"jsonrpc":"2.0","id":"test","method":method,"params":params});
+    pub(super) async fn request(&mut self, method: &str, params: Value) -> Value {
+        self.send("test", method, params).await;
+        self.wait("test").await
+    }
+
+    pub(super) async fn send(&mut self, id: &str, method: &str, params: Value) {
+        let request = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
         self.writer
             .write_all(format!("{request}\n").as_bytes())
             .await
             .unwrap();
+    }
+
+    pub(super) async fn wait(&mut self, id: &str) -> Value {
+        let done = |value: &Value| value.get("method").is_none() && value["id"] == id;
+        if let Some(index) = self.calls.iter().position(done) {
+            return self.calls.remove(index)["result"].clone();
+        }
         loop {
             let line =
                 tokio::time::timeout(std::time::Duration::from_secs(5), self.lines.next_line())
@@ -44,9 +60,13 @@ impl Host {
                     .unwrap()
                     .unwrap();
             let value: Value = serde_json::from_str(&line).unwrap();
-            if value["id"] == "test" {
+            if value.get("method").is_none() {
                 assert!(value.get("error").is_none(), "{value}");
-                return value["result"].clone();
+                if done(&value) {
+                    return value["result"].clone();
+                }
+                self.calls.push(value);
+                continue;
             }
             let result = match value["method"].as_str() {
                 Some("session.getBranch") => json!([]),
@@ -67,11 +87,16 @@ impl Host {
         }
     }
 
-    async fn event(&mut self, name: &str, event: Value, project: &Project) -> Value {
-        self.request("event", json!({"name":name,"event":event,"ctx":{"cwd":project.0,"hasUI":false,"isProjectTrusted":true}})).await
+    pub(super) fn event_params(&self, name: &str, event: Value, project: &Project) -> Value {
+        json!({"name":name,"event":event,"ctx":{"cwd":project.0,"hasUI":self.has_ui,"isProjectTrusted":self.trusted}})
     }
 
-    async fn finish(mut self) {
+    pub(super) async fn event(&mut self, name: &str, event: Value, project: &Project) -> Value {
+        let params = self.event_params(name, event, project);
+        self.request("event", params).await
+    }
+
+    pub(super) async fn finish(mut self) {
         self.writer.shutdown().await.unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(5), self.task)
             .await

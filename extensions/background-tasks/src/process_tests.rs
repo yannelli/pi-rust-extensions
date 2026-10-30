@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::registry::Registry;
 use crate::task::{Status, session_dir};
 use crate::tests::{Temp, options, sample, wait_for};
-use crate::{process, ui};
+use crate::{identity, process, ui};
 
 #[tokio::test]
 async fn runs_commands_and_records_exit_codes() {
@@ -122,9 +122,107 @@ async fn shutdown_keeps_reload_survivors_only_on_reload() {
         Status::Killed
     );
     assert!(registry.resolve(&keep.id).unwrap().status.is_running());
-    assert!(process::alive(keep.pid.unwrap()).await);
+    assert!(process::group_alive(keep.pid.unwrap()).await);
     assert_eq!(registry.shutdown("quit").await, 1);
     let keep = registry.resolve(&keep.id).unwrap();
     assert_eq!(keep.status, Status::Killed);
     assert!(keep.notified);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn task_files_are_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let temp = Temp::new();
+    let registry = Registry::default();
+    let sessions = session_dir(&temp.0, Some("s1"));
+    registry.bind(sessions.clone());
+    let task = registry
+        .start(options("echo hi"), &temp.0.display().to_string())
+        .unwrap();
+    let task = wait_for(&registry, &task.id, |t| !t.status.is_running()).await;
+    for dir in [temp.0.join("ext"), sessions, task.dir.clone()] {
+        assert_eq!(mode(&dir), 0o700, "{}", dir.display());
+    }
+    for file in [
+        task.output_path(),
+        task.exit_path(),
+        task.dir.join("task.json"),
+    ] {
+        assert_eq!(mode(&file), 0o600, "{}", file.display());
+    }
+}
+
+/// A live process in its own group that a group signal to its pid would kill.
+#[cfg(unix)]
+fn unrelated_process() -> std::process::Child {
+    use std::os::unix::process::CommandExt;
+    std::process::Command::new("sleep")
+        .arg("30")
+        .process_group(0)
+        .spawn()
+        .unwrap()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn reused_pid_is_never_signaled() {
+    let temp = Temp::new();
+    let dir = session_dir(&temp.0, Some("s1"));
+    let mut child = unrelated_process();
+    let pid = child.id();
+    assert!(identity::identity(pid).unwrap().is_some());
+    let records = [
+        ("old00001", Some(1)),
+        ("old00002", None),
+        ("old00003", None),
+    ];
+    for (id, timeout) in records {
+        let mut task = sample(id, Status::Running);
+        task.dir = dir.join(id);
+        task.pid = Some(pid);
+        task.process_start = (id != "old00002").then(|| "Thu Jan  1 00:00:00 1970".into());
+        task.timeout_seconds = timeout;
+        std::fs::create_dir_all(&task.dir).unwrap();
+        task.save().unwrap();
+    }
+    let registry = Registry::default();
+    registry.bind(dir);
+    let err = registry.stop("old00003", "test").await.unwrap_err();
+    assert!(err.contains("not the task's process"), "{err}");
+    assert_eq!(registry.resolve("old00003").unwrap().status, Status::Lost);
+    registry.poll(false).await;
+    let timed = registry.resolve("old00001").unwrap();
+    assert_eq!(timed.status, Status::Lost);
+    assert!(timed.error.unwrap().contains("not the task's process"));
+    assert!(registry.resolve("old00002").unwrap().status.is_running());
+    registry.poll(true).await;
+    assert_eq!(registry.resolve("old00002").unwrap().status, Status::Lost);
+    let mut legacy = sample("old00004", Status::Running);
+    legacy.dir = registry
+        .resolve("old00001")
+        .unwrap()
+        .dir
+        .with_file_name("old00004");
+    legacy.pid = Some(pid);
+    std::fs::create_dir_all(&legacy.dir).unwrap();
+    legacy.save().unwrap();
+    let registry = Registry::default();
+    registry.bind(legacy.dir.parent().unwrap().to_path_buf());
+    assert_eq!(registry.shutdown("quit").await, 0);
+    assert_eq!(registry.resolve("old00004").unwrap().status, Status::Lost);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "unrelated process was signaled"
+    );
+    assert_eq!(
+        process::terminate(pid, Some("bogus"), Duration::from_millis(10)).await,
+        Err(process::unverified_message(pid))
+    );
+    assert!(child.try_wait().unwrap().is_none());
+    child.kill().unwrap();
+    child.wait().unwrap();
 }

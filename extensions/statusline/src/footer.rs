@@ -53,7 +53,7 @@ impl Footer {
         &self.home
     }
 
-    fn trusted(host: &Host) -> bool {
+    pub(crate) fn trusted(host: &Host) -> bool {
         let snapshot = host.snapshot();
         let extra = snapshot
             .as_ref()
@@ -61,7 +61,7 @@ impl Footer {
         extra.unwrap_or(false)
     }
 
-    /// The global layer, which the editor edits.
+    /// The global layer, including the legacy setting.
     pub fn global_value(host: &Host) -> Option<Value> {
         let agent_dir = host.agent_dir();
         let global = sources::read_object(&sources::global_config_path(&agent_dir));

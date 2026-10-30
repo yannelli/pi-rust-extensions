@@ -44,11 +44,14 @@ DIAGS = [
 note("pid %d" % os.getpid())
 if mode == "exit":
     sys.exit(3)
+if mode == "spawn":
+    import subprocess
+    note("child %d" % subprocess.Popen(["sleep", "30"]).pid)
 while True:
     msg = read()
     method = msg.get("method")
     note("method %s" % method)
-    if mode == "hang":
+    if mode in ("hang", "spawn"):
         continue
     if method == "initialize":
         caps = {"diagnosticProvider": {"interFileDependencies": False}} if mode == "pull" else {}
@@ -205,6 +208,36 @@ async fn timeout_kills_and_reaps_server() {
     assert!(error.contains("timed out"), "{error}");
     assert!(started.elapsed().as_secs() < 3);
     assert!(!alive(&fx.pid()));
+}
+
+async fn assert_child_stops(fx: &Fixture) {
+    let log = fx.log();
+    let child = log
+        .lines()
+        .find_map(|l| l.strip_prefix("child "))
+        .expect("child line");
+    let deadline = Instant::now() + std::time::Duration::from_secs(3);
+    while alive(child) && Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(!alive(child), "server child {child} still alive");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn timeout_and_drop_kill_server_descendants() {
+    let fx = Fixture::new("spawn-timeout");
+    let error = diagnostics(&fx.server("spawn"), &fx.dir, &fx.file, 300)
+        .await
+        .unwrap_err();
+    assert!(error.contains("timed out"), "{error}");
+    assert_child_stops(&fx).await;
+    let fx = Fixture::new("spawn-drop");
+    let server = fx.server("spawn");
+    let call = diagnostics(&server, &fx.dir, &fx.file, 10_000);
+    let limit = std::time::Duration::from_millis(500);
+    assert!(tokio::time::timeout(limit, call).await.is_err());
+    assert_child_stops(&fx).await;
 }
 
 #[tokio::test]

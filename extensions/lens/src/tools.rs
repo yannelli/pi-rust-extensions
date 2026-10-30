@@ -23,29 +23,28 @@ pub(crate) async fn get_diagnostics(
     ctx: ToolCtx,
     state: Arc<Mutex<State>>,
 ) -> Result<ToolResult> {
-    let mut state = state.lock().await;
+    let cwd = ctx.host().cwd();
     let paths: Vec<_> = args["paths"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .map(|path| diagnostics::normalize_path(&ctx.host().cwd(), path))
+        .map(|path| diagnostics::normalize_path(&cwd, path))
         .collect();
     if args["source"] == "lsp" {
-        if !state.config.enabled {
+        let (config, known) = {
+            let state = state.lock().await;
+            let known: Vec<_> = state.findings.keys().cloned().collect();
+            (state.config.clone(), known)
+        };
+        if !config.enabled {
             return Err(Error::msg("Lens is disabled"));
         }
-        if state
-            .config
-            .lsp
-            .servers
-            .iter()
-            .all(|server| !server.enabled)
-        {
+        if config.lsp.servers.iter().all(|server| !server.enabled) {
             return Err(Error::msg("No Lens LSP server is configured"));
         }
         let scan_paths = if paths.is_empty() {
-            state.findings.keys().cloned().collect()
+            known
         } else {
             paths.clone()
         };
@@ -53,15 +52,15 @@ pub(crate) async fn get_diagnostics(
             let Some(language) = detection::language(&path) else {
                 continue;
             };
-            if !state.config.language_enabled(language) {
+            if !config.language_enabled(language) || !diagnostics::within(&cwd, &path) {
                 continue;
             }
-            let root = detection::root(&path, &ctx.host().cwd(), language);
+            let root = detection::root(&path, &cwd, language);
             let mut findings = vec![];
-            for server in &state.config.lsp.servers {
+            for server in &config.lsp.servers {
                 if server.enabled && server.languages.iter().any(|item| item == language) {
                     findings.extend(
-                        lsp::diagnostics(server, &root, &path, state.config.timeout_ms)
+                        lsp::diagnostics(server, &root, &path, config.timeout_ms)
                             .await
                             .map_err(Error::msg)?
                             .into_iter()
@@ -72,11 +71,13 @@ pub(crate) async fn get_diagnostics(
                     );
                 }
             }
+            let mut state = state.lock().await;
             let current = state.findings.entry(path).or_default();
             current.retain(|item| item["kind"] != "lsp");
             current.extend(findings);
         }
     }
+    let state = state.lock().await;
     let findings: Vec<_> = state
         .all_findings()
         .into_iter()

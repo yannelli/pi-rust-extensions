@@ -32,13 +32,36 @@ pub async fn statusline_command(footer: Arc<Footer>, args: String, ctx: CommandC
 }
 
 async fn open_editor(footer: Arc<Footer>, host: Host) -> Result<()> {
-    let agent_dir = host.agent_dir();
-    let save = Box::new(move |value: Value| sources::write_global(&agent_dir, &value));
-    let mut editor = StatusLineEditor::new(
-        Footer::global_value(&host),
-        footer.home().to_path_buf(),
-        save,
-    );
+    let options = if Footer::trusted(&host) {
+        vec!["Global", "Project"]
+    } else {
+        vec!["Global"]
+    };
+    let Some(scope) = host.select("Status line scope", &options).await? else {
+        return Ok(());
+    };
+    let (path, value) = match scope.as_str() {
+        "Global" => (
+            sources::global_config_path(&host.agent_dir()),
+            Footer::global_value(&host),
+        ),
+        "Project" if Footer::trusted(&host) => {
+            let path = sources::project_config_path(&host.cwd());
+            let value = sources::read_object(&path).map(Value::Object);
+            (path, value)
+        }
+        _ => return Ok(()),
+    };
+    let save_path = path.clone();
+    let save_host = host.clone();
+    let save = Box::new(move |value: Value| {
+        if scope == "Project" && !Footer::trusted(&save_host) {
+            return Err("Project is not trusted.".into());
+        }
+        sources::write_config(&save_path, &value)
+    });
+    let mut editor =
+        StatusLineEditor::new(value, footer.home().to_path_buf(), save).with_config_path(path);
     let render = |editor: &StatusLineEditor, width: usize| {
         editor.render(width, &footer.preview(&editor.value, width))
     };

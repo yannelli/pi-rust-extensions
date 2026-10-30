@@ -1,10 +1,13 @@
 mod command;
 mod config;
 mod process;
+mod remote;
 mod ui;
 
 #[cfg(test)]
 mod protocol_tests;
+#[cfg(test)]
+mod remote_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -55,8 +58,9 @@ async fn execute(
     let config = config::load(ctx.host(), &state.warned).await?;
     let profile = command::profile(&config, &args.profile)?;
     let remote = command::remote_command(profile, &args.command, args.cwd.as_deref());
+    let remote = remote::supervised(&remote);
     let process = command::build(&ctx.host().agent_dir(), &config, profile, &remote)?;
-    Ok(process::run(
+    Ok(process::run_remote(
         process,
         input,
         args.timeout,
@@ -132,8 +136,9 @@ pub fn extension() -> Extension {
                     let profile = command::profile(&config, &name)?;
                     let input = ctx.get("input").ok_or_else(|| Error::msg("Missing bash input"))?;
                     let cmd = input.get("command").and_then(Value::as_str).ok_or_else(|| Error::msg("Missing bash command"))?;
-                    let remote = command::remote_command(profile, cmd, input.get("cwd").and_then(Value::as_str));
+                    let remote = remote::supervised(&command::remote_command(profile, cmd, input.get("cwd").and_then(Value::as_str)));
                     let shell = command::shell_line(&ctx.host().agent_dir(), &config, profile, &remote)?;
+                    let shell = remote::heartbeat_pipe(&shell);
                     Ok::<_, Error>(EventReply::patch(json!({"input":{"command":shell,"cwd":null}})))
                 }.await;
                 Ok(result.unwrap_or_else(|error| EventReply::block(format!("Remote SSH mode: {error}"))))

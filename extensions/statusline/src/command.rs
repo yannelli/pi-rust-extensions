@@ -5,13 +5,14 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::config::CommandConfig;
 
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_LINES: usize = 8;
+const MAX_OUTPUT_BYTES: usize = 4096;
 
 fn shell() -> &'static str {
     static SHELL: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
@@ -55,14 +56,30 @@ pub async fn run_command(
             let _ = stdin.shutdown().await;
         });
     }
-    let output = tokio::time::timeout(TIMEOUT, child.wait_with_output())
-        .await
-        .ok()?
-        .ok()?;
-    if !output.status.success() {
+    let mut stdout = child.stdout.take()?;
+    let output = tokio::time::timeout(TIMEOUT, async {
+        let read = async {
+            let mut output = Vec::with_capacity(MAX_OUTPUT_BYTES);
+            let mut buffer = [0; 4096];
+            loop {
+                let count = stdout.read(&mut buffer).await?;
+                if count == 0 {
+                    break;
+                }
+                let keep = count.min(MAX_OUTPUT_BYTES - output.len());
+                output.extend_from_slice(&buffer[..keep]);
+            }
+            Ok::<_, std::io::Error>(output)
+        };
+        tokio::try_join!(child.wait(), read)
+    })
+    .await
+    .ok()?
+    .ok()?;
+    if !output.0.success() {
         return None;
     }
-    Some(output_lines(&String::from_utf8_lossy(&output.stdout)))
+    Some(output_lines(&String::from_utf8_lossy(&output.1)))
 }
 
 /// Output lines without trailing blank lines, tabs as spaces, and at most [`MAX_LINES`].

@@ -91,6 +91,7 @@ pub struct StatusLineEditor {
     layout: Option<(Vec<Vec<Value>>, SettingsList)>,
     save: Save,
     home: PathBuf,
+    config_path: PathBuf,
     pub error: Option<String>,
     pub closed: bool,
 }
@@ -107,6 +108,7 @@ impl StatusLineEditor {
             layout: None,
             save,
             home,
+            config_path: PathBuf::from("~/.pi/agent/ext/statusline.json"),
             error: None,
             closed: false,
         }
@@ -114,6 +116,11 @@ impl StatusLineEditor {
 
     pub fn select_item(&mut self, id: &str) {
         self.list.select_item(id);
+    }
+
+    pub fn with_config_path(mut self, path: PathBuf) -> Self {
+        self.config_path = path;
+        self
     }
 
     pub fn handle_input(&mut self, data: &str) {
@@ -169,8 +176,9 @@ impl StatusLineEditor {
     }
 
     pub fn render(&self, width: usize, preview: &[String]) -> Vec<String> {
-        let mut lines =
-            vec![ThemeColor::Accent.paint("Status line · ~/.pi/agent/ext/statusline.json")];
+        let mut lines = vec![
+            ThemeColor::Accent.paint(&format!("Status line · {}", self.config_path.display())),
+        ];
         if let Some(error) = &self.error {
             lines.push(ThemeColor::Error.paint(error));
         }

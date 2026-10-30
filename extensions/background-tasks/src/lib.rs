@@ -1,6 +1,7 @@
 //! Durable background shell jobs: `bg_run`, `bg_status`, `bg_logs`, `bg_kill`, `/tasks`.
 
 mod command;
+mod identity;
 mod panel;
 mod process;
 mod registry;

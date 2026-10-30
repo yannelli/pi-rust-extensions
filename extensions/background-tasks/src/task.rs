@@ -51,6 +51,9 @@ pub struct Task {
     pub is_agent: bool,
     #[serde(default)]
     pub pid: Option<u32>,
+    /// Start time of `pid` from `ps`, to detect a reused pid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_start: Option<String>,
     pub dir: PathBuf,
     pub started_at: u64,
     #[serde(default)]
@@ -133,9 +136,27 @@ pub fn new_id() -> String {
 }
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, bytes)?;
+    let _ = fs::remove_file(&tmp);
+    let mut options = fs::File::options();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(&tmp)?.write_all(bytes)?;
     fs::rename(tmp, path)
+}
+
+/// Creates `dir` and missing parents with mode 0700 on unix, and sets `dir` itself to 0700.
+pub fn create_private_dir(dir: &Path) -> io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)?;
+    #[cfg(unix)]
+    fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
+    Ok(())
 }
 
 /// Loads every `<dir>/<id>/task.json`, oldest first; unreadable entries are skipped.

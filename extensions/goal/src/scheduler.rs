@@ -32,11 +32,11 @@ pub fn decide(
     let Some(goal) = goal.filter(|_| !drafting) else {
         return Decision::Nothing;
     };
+    if aborted && matches!(goal.status, GoalStatus::Active | GoalStatus::Auditing) {
+        return Decision::PauseUser;
+    }
     if goal.status != GoalStatus::Active {
         return Decision::Nothing;
-    }
-    if aborted {
-        return Decision::PauseUser;
     }
     if goal.budget_reached() {
         return Decision::BudgetLimited;
@@ -109,6 +109,7 @@ pub async fn on_settled(app: &App, host: &Host, aborted: bool) -> Result<()> {
 }
 
 fn pause(inner: &mut crate::app::Inner, reason: StopReason, why: &str) {
+    inner.cancel_focused_audit();
     inner.update_focused(|g| {
         g.set_status(GoalStatus::Paused, Some(reason));
         g.log(format!("paused: {why}"));
