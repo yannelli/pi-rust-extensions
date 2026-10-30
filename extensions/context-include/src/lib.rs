@@ -18,6 +18,7 @@ struct Session {
     config: Config,
     cwd: Option<String>,
     last_scan: Option<Diagnostic>,
+    warned_untrusted: bool,
 }
 
 type Shared = Arc<Mutex<Session>>;
@@ -28,7 +29,20 @@ fn lock(state: &Shared) -> std::sync::MutexGuard<'_, Session> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-async fn load_config(host: &Host, cwd: &str) -> Config {
+/// `isProjectTrusted` from the snapshot, else from `ctx`; unknown means untrusted.
+async fn project_trusted(host: &Host, snapshot: &Snapshot) -> bool {
+    if let Some(trusted) = snapshot
+        .extra
+        .get("isProjectTrusted")
+        .and_then(Value::as_bool)
+    {
+        return trusted;
+    }
+    let answer = host.pi_call("ctx", "isProjectTrusted", Vec::new()).await;
+    answer.ok().and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+async fn load_config(state: &Shared, host: &Host, snapshot: &Snapshot, cwd: &str) -> Config {
     let setting = match host.settings::<Value>("contextInclude").await {
         Ok(value) => value,
         Err(err) => {
@@ -36,7 +50,19 @@ async fn load_config(host: &Host, cwd: &str) -> Config {
             None
         }
     };
-    let project = config::read_file(&config::project_path(cwd.as_ref()));
+    let project_path = config::project_path(cwd.as_ref());
+    let mut project = None;
+    if project_path.is_file() {
+        if project_trusted(host, snapshot).await {
+            project = config::read_file(&project_path);
+        } else if !std::mem::replace(&mut lock(state).warned_untrusted, true) {
+            let message = format!(
+                "context-include ignored {} because the project is not trusted.",
+                project_path.display()
+            );
+            let _ = host.notify_warning(message).await;
+        }
+    }
     let global = config::read_file(&config::global_path(&host.agent_dir()));
     config::select(project, setting, global)
 }
@@ -48,7 +74,7 @@ async fn session_start(state: Shared, ev: EventCtx) -> Result<EventReply> {
     } else {
         cwd
     };
-    let config = load_config(ev.host(), &cwd).await;
+    let config = load_config(&state, ev.host(), ev.snapshot(), &cwd).await;
     let mut session = lock(&state);
     session.config = config;
     session.cwd = Some(cwd);

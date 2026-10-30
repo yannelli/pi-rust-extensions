@@ -254,12 +254,33 @@ impl Scanner {
                 skip(state, "outside allowed roots".into());
                 continue;
             }
-            let text = match std::fs::read(&real) {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            let meta = match std::fs::metadata(&real) {
+                Ok(meta) => meta,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                     skip(state, "file not found".into());
                     continue;
                 }
+                Err(err) => {
+                    skip(state, format!("read error: {err}"));
+                    continue;
+                }
+            };
+            if !meta.is_file() {
+                skip(state, "read error: not a regular file".into());
+                continue;
+            }
+            if (state.bytes + meta.len()) as f64 > self.config.max_bytes {
+                skip(
+                    state,
+                    format!(
+                        "size limit exceeded (would reach {} bytes)",
+                        state.bytes + meta.len()
+                    ),
+                );
+                continue;
+            }
+            let text = match read_at_most(&real, meta.len() + 1) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                 Err(err) => {
                     skip(state, format!("read error: {err}"));
                     continue;
@@ -289,4 +310,14 @@ impl Scanner {
             self.resolve_includes(&real, &text, state, depth + 1);
         }
     }
+}
+
+/// Reads up to `limit` bytes, so a file that grew after the size check stays bounded.
+fn read_at_most(path: &str, limit: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit)
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
 }

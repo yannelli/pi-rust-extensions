@@ -117,6 +117,12 @@ async fn session_start_then_before_agent_start_sets_section() {
     host.finish().await.unwrap();
 }
 
+fn trusted_ctx(cwd: &str) -> Value {
+    let mut ctx = ctx(cwd);
+    ctx["isProjectTrusted"] = json!(true);
+    ctx
+}
+
 #[tokio::test]
 async fn project_file_replaces_setting() {
     let dir = tempfile::tempdir().unwrap();
@@ -137,7 +143,7 @@ async fn project_file_replaces_setting() {
     host.request(
         1,
         "event",
-        json!({ "name": "session_start", "event": start, "ctx": ctx(&root) }),
+        json!({ "name": "session_start", "event": start, "ctx": trusted_ctx(&root) }),
     )
     .await;
     let (id, _) = host.expect_request("settings.get").await;
@@ -157,6 +163,59 @@ async fn project_file_replaces_setting() {
         message.contains("maxDepth: 2\nmaxBytes: 500,000 (488 KB)"),
         "{message}"
     );
+    host.answer(&id, Value::Null).await;
+    host.expect_response(2).await;
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn untrusted_project_file_is_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path())
+        .unwrap()
+        .display()
+        .to_string();
+    std::fs::create_dir_all(format!("{root}/.pi/ext")).unwrap();
+    std::fs::write(
+        format!("{root}/.pi/ext/context-include.json"),
+        r#"{"maxDepth": 2, "allowedRoots": ["/"]}"#,
+    )
+    .unwrap();
+
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    let mut untrusted = ctx(&root);
+    untrusted["isProjectTrusted"] = json!(false);
+    let start = json!({ "type": "session_start", "reason": "startup" });
+    host.request(
+        1,
+        "event",
+        json!({ "name": "session_start", "event": start, "ctx": untrusted }),
+    )
+    .await;
+    let (id, _) = host.expect_request("settings.get").await;
+    host.answer(&id, json!({ "maxDepth": 7 })).await;
+    let (id, params) = host.expect_request("ui.notify").await;
+    assert_eq!(params["type"], "warning");
+    assert!(
+        params["message"]
+            .as_str()
+            .unwrap()
+            .contains("because the project is not trusted"),
+        "{params}"
+    );
+    host.answer(&id, Value::Null).await;
+    host.expect_response(1).await;
+
+    host.request(
+        2,
+        "command.run",
+        json!({ "name": "context-include:status", "args": "", "ctx": ctx(&root) }),
+    )
+    .await;
+    let (id, params) = host.expect_request("ui.notify").await;
+    let message = params["message"].as_str().unwrap();
+    assert!(message.contains("maxDepth: 7\n"), "{message}");
     host.answer(&id, Value::Null).await;
     host.expect_response(2).await;
     host.finish().await.unwrap();

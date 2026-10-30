@@ -1,6 +1,6 @@
 # context-include
 
-Created 2026-10-29. Last updated 2026-10-29.
+Created 2026-10-29. Last updated 2026-10-30.
 
 Rust port of `@d3ara1n/pi-context-include` v3.0.0. Lines such as `@docs/api.md` in loaded context files (`AGENTS.md`) add the referenced Markdown files to the system prompt, recursively.
 
@@ -13,7 +13,7 @@ Run it as `pi-rust-ext context-include`.
 - `~` expands to `$HOME`. Relative paths resolve against the realpath directory of the file that contains the reference.
 - Files are deduplicated by realpath, so cycles and symlinks to the same file load one time. Context files count as visited.
 - Fence: a target under a denied root is skipped, then a target outside every allowed root is skipped. The checks run before the file is read.
-- Size: `maxBytes` is a running total of UTF-8 bytes. A file that goes over it is skipped; later smaller files still load.
+- Size: `maxBytes` is a running total of UTF-8 bytes. The file size is checked before the read, and only regular files are read. A file that goes over it is skipped; later smaller files still load.
 - Depth: context files are depth 0. Files at depth `maxDepth + 1` load, but their references are not scanned.
 - Skip reasons: `already included`, `denied by deniedRoots`, `outside allowed roots`, `file not found`, `read error: ...`, `file is empty`, `size limit exceeded (would reach N bytes)`, `max depth (N) exceeded`.
 - Output: `Additional files included via @-syntax references in the project instructions:` then one `<project_instructions path="...">` block per file. `path` is the resolved path before realpath.
@@ -37,15 +37,15 @@ Invalid numbers (negative, non-finite, not a number) use the defaults. Arrays th
 
 The extension reads config on `session_start` only (`/reload` reads it again). It uses the first source that exists:
 
-1. `<cwd>/.pi/ext/context-include.json` (fields at the top level).
+1. `<cwd>/.pi/ext/context-include.json` (fields at the top level), only when the project is trusted. Otherwise the extension ignores it and shows a warning one time.
 2. The `contextInclude` setting (pi merges `<agentDir>/settings.json` and `<cwd>/.pi/settings.json`).
 3. `<agentDir>/ext/context-include.json`.
 
-A file that does not parse counts as `{}`. The chosen source replaces the others whole; fields do not merge across sources.
+A file that does not parse counts as `{}`. The chosen source replaces the others whole; fields do not merge across sources, except `deniedRoots` of the setting and of `<agentDir>/ext/context-include.json`, which always apply.
 
 ## Differences from upstream
 
 - Upstream reads the `contextInclude` block from the two `settings.json` files itself, and a project block replaces the global block. This port gets the setting through `settings.get`, so the merge rule of pi applies. The two `ext/context-include.json` files are additions.
-- `read error: ...` text comes from the Rust I/O error, for example `read error: Is a directory (os error 21)`.
+- `read error: ...` text comes from the Rust I/O error. A directory, FIFO, or other non-regular file gives `read error: not a regular file`.
 - Relative context-file paths and the `max depth` display path use the session cwd in place of the process cwd.
 - Invalid UTF-8 is replaced with U+FFFD before the size count, as Node `readFile(..., "utf-8")` does.

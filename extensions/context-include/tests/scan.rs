@@ -270,3 +270,36 @@ fn context_file_status_lines() {
     );
     assert_eq!(text, expected);
 }
+
+#[test]
+fn fifo_and_oversized_files_are_skipped_before_reading() {
+    let f = Fixture::new();
+    let status = std::process::Command::new("mkfifo")
+        .arg(f.p("proj/pipe.md"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    f.write("proj/big.md", &"b".repeat(64));
+    f.write("proj/ok.md", "ok");
+    let files = f.agents("@pipe.md\n@big.md\n@ok.md");
+    let scanner = f.scanner(Config {
+        max_bytes: 10.0,
+        ..Config::default()
+    });
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || tx.send(scanner.scan(&files)).unwrap());
+    let out = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("scan blocked on the FIFO");
+    assert_eq!(
+        reasons(&out.diag),
+        [
+            ("pipe.md".into(), "read error: not a regular file".into()),
+            (
+                "big.md".into(),
+                "size limit exceeded (would reach 64 bytes)".into()
+            )
+        ]
+    );
+    assert_eq!(out.diag.included, [(f.p("proj/ok.md"), 2)]);
+}

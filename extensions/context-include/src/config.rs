@@ -62,14 +62,25 @@ pub fn read_file(path: &Path) -> Option<Value> {
 }
 
 /// Order: project ext file, then the `contextInclude` setting, then the global ext file.
+/// `deniedRoots` of the setting and the global file apply whichever source wins.
 pub fn select(
     project_file: Option<Value>,
     setting: Option<Value>,
     global_file: Option<Value>,
 ) -> Config {
     let setting = setting.filter(Value::is_object);
+    let always_denied: Vec<String> = [&setting, &global_file]
+        .into_iter()
+        .flat_map(|source| Config::from_value(source.as_ref()).denied_roots)
+        .collect();
     let chosen = project_file.or(setting).or(global_file);
-    Config::from_value(chosen.as_ref())
+    let mut config = Config::from_value(chosen.as_ref());
+    for root in always_denied {
+        if !config.denied_roots.contains(&root) {
+            config.denied_roots.push(root);
+        }
+    }
+    config
 }
 
 pub fn project_path(cwd: &Path) -> std::path::PathBuf {
@@ -120,6 +131,16 @@ mod tests {
             DEFAULT_MAX_DEPTH
         );
         assert_eq!(select(None, None, None), Config::default());
+    }
+
+    #[test]
+    fn global_denied_roots_survive_a_project_file() {
+        let p = Some(json!({ "deniedRoots": ["/p"], "allowedRoots": ["/"] }));
+        let s = Some(json!({ "deniedRoots": ["/s"] }));
+        let g = Some(json!({ "deniedRoots": ["/g", "/p"] }));
+        let config = select(p, s, g);
+        assert_eq!(config.denied_roots, ["/p", "/s", "/g"]);
+        assert_eq!(config.allowed_roots, Some(vec!["/".to_owned()]));
     }
 
     #[test]
