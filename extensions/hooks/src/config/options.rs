@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde_json::{Map, Value};
@@ -45,6 +46,8 @@ pub struct Options {
     pub pi: bool,
     pub scope: ScopeOption,
     pub trust_all: bool,
+    /// Hashes from the `disabled` lists of both files.
+    pub disabled: BTreeSet<String>,
 }
 
 impl Default for Options {
@@ -55,6 +58,7 @@ impl Default for Options {
             pi: true,
             scope: ScopeOption::Both,
             trust_all: false,
+            disabled: BTreeSet::new(),
         }
     }
 }
@@ -75,6 +79,10 @@ impl Options {
             }
             if let Some(trust_all) = layer.get("trustAll").and_then(Value::as_bool) {
                 options.trust_all = trust_all;
+            }
+            if let Some(list) = layer.get("disabled").and_then(Value::as_array) {
+                let hashes = list.iter().filter_map(Value::as_str).map(str::to_owned);
+                options.disabled.extend(hashes);
             }
         }
         options

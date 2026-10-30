@@ -53,7 +53,7 @@ pub fn read_toml(path: &Path) -> Option<Value> {
     }
 }
 
-fn table_to_json(table: &Table) -> Value {
+pub fn table_to_json(table: &Table) -> Value {
     let map: Map<String, Value> = table
         .iter()
         .filter_map(|(key, item)| item_to_json(item).map(|v| (key.to_owned(), v)))

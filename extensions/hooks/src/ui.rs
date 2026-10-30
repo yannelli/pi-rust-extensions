@@ -1,283 +1,301 @@
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use pi_ext_sdk::prelude::*;
 
 use crate::config::{ScopeOption, write_option};
-use crate::model::{HookDef, Scope, Source};
+use crate::manage::{self, EVENTS};
+use crate::model::{Scope, Source};
+use crate::panel::{Action, Row, TrustChange, View, run_text, sort_rows};
 use crate::runtime::Runtime;
-use crate::trust::LastRun;
 
-const HELP: &str =
-    "up/down move  enter actions  s sources  c scope  t trustAll  g/p config file  q close";
-
-enum Action {
-    Hook(Box<HookDef>),
+enum Dialog {
+    Add(Scope),
     Sources,
-    Scope,
+    LoadScope,
 }
 
 pub async fn hooks_command(rt: Arc<Runtime>, args: String, ctx: CommandCtx) -> Result<()> {
     let (host, snap) = (ctx.host(), ctx.snapshot());
     rt.reload(host, snap).await;
     if args.trim() == "list" || !host.has_ui() {
-        return host
-            .notify_info(listing(&rt, &sorted(&rt), None, Scope::Global).join("\n"))
-            .await;
+        return host.notify_info(listing(&rt, &rows(&rt)).join("\n")).await;
     }
-    let mut selected = 0usize;
-    let mut target = Scope::Global;
+    let trusted = project_trusted(snap);
+    let mut view = View::new(trusted);
+    let mut select: Option<String> = None;
     loop {
-        let hooks = sorted(&rt);
-        selected = selected.min(hooks.len().saturating_sub(1));
-        let render = |selected: usize, target: Scope| listing(&rt, &hooks, Some(selected), target);
-        let mut panel = host.panel(render(selected, target)).open().await?;
-        let action = loop {
-            let key = match panel.next_event().await {
-                PanelEvent::Key(key) => key,
+        let mut rows = rows(&rt);
+        view.trust_all = rt.trust_all();
+        if let Some(hash) = select.take() {
+            view.select_hash(&rows, &hash);
+        }
+        view.clamp(&rows);
+        let mut width = snap.terminal_width.map_or(100, |w| w as usize);
+        let mut panel = host.panel(view.render(&rows, width)).open().await?;
+        width = panel.width().unwrap_or(width);
+        let dialog = loop {
+            match panel.next_event().await {
                 PanelEvent::Closed => return Ok(()),
-                PanelEvent::Resize(_) => {
-                    panel.set_lines(render(selected, target))?;
-                    continue;
-                }
-            };
-            match key.char() {
-                _ if key.is_cancel() => break None,
-                _ if key.is("up") => selected = selected.saturating_sub(1),
-                _ if key.is("down") => selected = (selected + 1).min(hooks.len().saturating_sub(1)),
-                _ if key.is("enter") && !hooks.is_empty() => {
-                    break Some(Action::Hook(Box::new(hooks[selected].clone())));
-                }
-                Some('s') => break Some(Action::Sources),
-                Some('c') => break Some(Action::Scope),
-                Some('t') => {
-                    let on = !rt
-                        .lock()
-                        .loaded
-                        .as_ref()
-                        .is_some_and(|l| l.options.trust_all);
-                    set_option(&rt, host, snap, Scope::Global, "trustAll", json!(on)).await;
-                }
-                Some('g') => target = Scope::Global,
-                Some('p') => target = Scope::Project,
-                _ => {}
+                PanelEvent::Resize(w) => width = w,
+                PanelEvent::Key(key) => match view.key(&key, &rows) {
+                    Action::Close => break None,
+                    Action::Redraw => {}
+                    Action::Add(scope) => break Some(Dialog::Add(scope)),
+                    Action::Sources => break Some(Dialog::Sources),
+                    Action::LoadScope => break Some(Dialog::LoadScope),
+                    action => {
+                        view.status = apply(&rt, host, snap, trusted, &rows, action).await;
+                        rows = self::rows(&rt);
+                        view.trust_all = rt.trust_all();
+                        view.clamp(&rows);
+                    }
+                },
             }
-            panel.set_lines(render(selected, target))?;
+            panel.set_lines(view.render(&rows, width))?;
         };
         let _ = panel.close(Value::Null).await;
-        match action {
-            None => return Ok(()),
-            Some(Action::Hook(def)) => hook_menu(&rt, host, snap, &def).await?,
-            Some(Action::Sources) => {
-                let options = rt
-                    .lock()
-                    .loaded
-                    .as_ref()
-                    .map(|l| l.options.clone())
-                    .unwrap_or_default();
-                let labels: Vec<String> = Source::ALL
-                    .iter()
-                    .map(|s| format!("{}: {}", s.name(), on_off(options.source_on(*s))))
-                    .collect();
-                if let Some(choice) = host.select("Toggle which source?", &labels).await? {
-                    let source = Source::ALL
-                        .iter()
-                        .find(|s| choice.starts_with(s.name()))
-                        .copied();
-                    if let Some(source) = source {
-                        let key = format!("sources/{}", source.name());
-                        set_option(
-                            &rt,
-                            host,
-                            snap,
-                            target,
-                            &key,
-                            json!(!options.source_on(source)),
-                        )
-                        .await;
-                    }
+        let Some(dialog) = dialog else {
+            return Ok(());
+        };
+        view.status = match dialog {
+            Dialog::Add(scope) => match add_dialog(&rt, host, snap, trusted, scope).await? {
+                Some(Ok(hash)) => {
+                    select = Some(hash);
+                    Some(format!("Added a {} hook", scope.name()))
                 }
-            }
-            Some(Action::Scope) => {
-                if let Some(choice) = host
+                Some(Err(err)) => Some(format!("Cannot add: {err:#}")),
+                None => None,
+            },
+            Dialog::Sources => sources_dialog(&rt, host, snap).await?,
+            Dialog::LoadScope => {
+                let choice = host
                     .select("Load hooks from", &["global", "project", "both"])
-                    .await?
-                {
-                    set_option(&rt, host, snap, target, "scope", json!(choice)).await;
+                    .await?;
+                match choice {
+                    Some(choice) => set_option(&rt, host, snap, "scope", json!(choice)).await,
+                    None => None,
                 }
             }
-        }
+        };
     }
 }
 
-async fn hook_menu(rt: &Arc<Runtime>, host: &Host, snap: &Snapshot, def: &HookDef) -> Result<()> {
-    let disabled = rt.is_disabled(&def.hash);
-    let toggle = if disabled { "Enable" } else { "Disable" };
-    let options = [
-        "Trust always",
-        "Allow once",
-        "Untrust",
-        "Deny",
-        toggle,
-        "Show last output",
-    ];
-    let Some(choice) = host.select(&def.trust_text(), &options).await? else {
-        return Ok(());
-    };
-    match choice.as_str() {
-        "Trust always" => rt.update_trust(host, |t| t.trust(&def.hash)),
-        "Allow once" => {
-            rt.lock().once_allowed.insert(def.hash.clone());
-        }
-        "Untrust" => {
-            rt.update_trust(host, |t| t.untrust(&def.hash));
-            rt.lock().once_allowed.remove(&def.hash);
-        }
-        "Deny" => rt.update_trust(host, |t| t.deny(&def.hash)),
-        "Show last output" => {
-            let text = match rt.last_run(&def.hash) {
-                Some(run) => format!(
-                    "{}\n\nstdout:\n{}\n\nstderr:\n{}",
-                    run_text(&run),
-                    run.stdout,
-                    run.stderr
-                ),
-                None => "This hook has not run yet.".to_owned(),
-            };
-            host.editor(&format!("Last output: {def}"), Some(&text))
-                .await?;
-        }
-        _ => {
-            rt.update_trust(host, |t| {
-                t.toggle_disabled(&def.hash);
-            });
-        }
-    }
-    rt.reload(host, snap).await;
-    Ok(())
+fn project_trusted(snap: &Snapshot) -> bool {
+    snap.extra
+        .get("isProjectTrusted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
-async fn set_option(
+fn rows(rt: &Runtime) -> Vec<Row> {
+    let mut rows: Vec<Row> = rt
+        .hooks()
+        .into_iter()
+        .map(|def| {
+            let enabled = !rt.is_disabled(&def.hash);
+            let (trust, last) = (rt.trust_level(&def.hash), rt.last_run(&def.hash));
+            Row::new(def, enabled, trust, last)
+        })
+        .collect();
+    sort_rows(&mut rows);
+    rows
+}
+
+/// The pi options file that holds the `disabled` list of `scope`.
+fn scope_file(rt: &Runtime, scope: Scope) -> Option<PathBuf> {
+    let state = rt.lock();
+    let loaded = state.loaded.as_ref()?;
+    Some(match scope {
+        Scope::Global => loaded.global_file.clone(),
+        Scope::Project => loaded.project_file.clone(),
+    })
+}
+
+/// Runs a row action, reloads hooks, and returns the status line.
+async fn apply(
     rt: &Arc<Runtime>,
     host: &Host,
     snap: &Snapshot,
-    target: Scope,
-    key: &str,
-    value: Value,
-) {
-    let file = {
-        let state = rt.lock();
-        let loaded = state.loaded.as_ref();
-        let pick = |l: &crate::config::Loaded| {
-            if target == Scope::Global {
-                l.global_file.clone()
-            } else {
-                l.project_file.clone()
-            }
-        };
-        loaded.map(pick)
-    };
-    let Some(file) = file else {
-        return;
-    };
-    if let Err(err) = write_option(&file, key, value) {
-        let _ = host
-            .notify_error(format!("hooks: cannot write {}: {err}", file.display()))
-            .await;
+    trusted: bool,
+    rows: &[Row],
+    action: Action,
+) -> Option<String> {
+    if action == Action::TrustAll {
+        let on = !rt
+            .lock()
+            .loaded
+            .as_ref()
+            .is_some_and(|l| l.options.trust_all);
+        return set_option(rt, host, snap, "trustAll", json!(on)).await;
     }
-    rt.reload(host, snap).await;
-}
-
-fn sorted(rt: &Runtime) -> Vec<HookDef> {
-    let mut hooks = rt.hooks();
-    hooks.sort_by(|a, b| (&a.event, a.source, a.scope).cmp(&(&b.event, b.source, b.scope)));
-    hooks
-}
-
-fn on_off(on: bool) -> &'static str {
-    if on { "on" } else { "off" }
-}
-
-fn run_text(run: &LastRun) -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let age = now.saturating_sub(run.at);
-    let ago = match age {
-        0..60 => format!("{age}s ago"),
-        60..3600 => format!("{}m ago", age / 60),
-        3600..86400 => format!("{}h ago", age / 3600),
-        _ => format!("{}d ago", age / 86400),
+    let hash = match &action {
+        Action::Toggle(h) | Action::Remove(h) | Action::Trust(h, _) => h.clone(),
+        _ => return None,
     };
-    let exit = run
-        .exit
-        .map_or("no exit".to_owned(), |c| format!("exit {c}"));
-    format!("{exit} {} {}ms {ago}", run.result, run.duration_ms)
+    let row = rows.iter().find(|r| r.def.hash == hash)?;
+    let def = &row.def;
+    let name = format!("{} {}", def.event, row.matcher());
+    let file = scope_file(rt, def.scope)?;
+    let result = match action {
+        Action::Toggle(_) if row.enabled => manage::set_disabled(&file, def, true, trusted)
+            .map(|()| format!("Disabled {name}; saved in {}", file.display())),
+        Action::Toggle(_) => manage::set_disabled(&file, def, false, trusted).map(|()| {
+            let legacy = rt
+                .lock()
+                .trust
+                .as_ref()
+                .is_some_and(|t| t.disabled.contains(&hash));
+            if legacy {
+                rt.update_trust(host, |t| {
+                    t.disabled.remove(&hash);
+                });
+            }
+            format!("Enabled {name}")
+        }),
+        Action::Remove(_) => manage::remove(def, trusted).and_then(|()| {
+            manage::set_disabled(&file, def, false, trusted)?;
+            rt.update_trust(host, |t| {
+                t.untrust(&hash);
+                t.disabled.remove(&hash);
+            });
+            Ok(format!("Removed {name} from {}", def.file.display()))
+        }),
+        Action::Trust(_, change) => {
+            match change {
+                TrustChange::Always => rt.update_trust(host, |t| t.trust(&hash)),
+                TrustChange::Once => {
+                    rt.lock().once_allowed.insert(hash.clone());
+                }
+                TrustChange::Untrust => {
+                    rt.update_trust(host, |t| t.untrust(&hash));
+                    rt.lock().once_allowed.remove(&hash);
+                }
+                TrustChange::Deny => rt.update_trust(host, |t| t.deny(&hash)),
+            }
+            Ok(format!("{name}: {}", rt.trust_level(&hash).name()))
+        }
+        _ => return None,
+    };
+    rt.reload(host, snap).await;
+    Some(result.unwrap_or_else(|err| format!("Error: {err:#}")))
 }
 
-/// The `/hooks` lines; `selected` marks a row in the panel.
-pub fn listing(
-    rt: &Runtime,
-    hooks: &[HookDef],
-    selected: Option<usize>,
-    target: Scope,
-) -> Vec<String> {
+/// Asks for event, matcher, and command; `None` when the user cancels.
+async fn add_dialog(
+    rt: &Arc<Runtime>,
+    host: &Host,
+    snap: &Snapshot,
+    trusted: bool,
+    scope: Scope,
+) -> Result<Option<anyhow::Result<String>>> {
+    let Some(event) = host.select("Hook event", &EVENTS).await? else {
+        return Ok(None);
+    };
+    let matcher_title = "Matcher: tool name, a|b list, or regex (empty matches all)";
+    let Some(matcher) = host.input(matcher_title, Some("Bash")).await? else {
+        return Ok(None);
+    };
+    let Some(command) = host.input("Command to run", Some("./hook.sh")).await? else {
+        return Ok(None);
+    };
+    let Some(file) = scope_file(rt, scope) else {
+        return Ok(None);
+    };
+    let added = manage::add(&file, scope, trusted, &event, Some(&matcher), &command);
+    let added = added.map(|def| {
+        rt.update_trust(host, |t| t.trust(&def.hash));
+        def.hash
+    });
+    rt.reload(host, snap).await;
+    Ok(Some(added))
+}
+
+async fn sources_dialog(rt: &Arc<Runtime>, host: &Host, snap: &Snapshot) -> Result<Option<String>> {
     let options = rt
         .lock()
         .loaded
         .as_ref()
         .map(|l| l.options.clone())
         .unwrap_or_default();
-    let flag = rt.lock().flag_trust_all;
+    let labels: Vec<String> = Source::ALL
+        .iter()
+        .map(|s| format!("{}: {}", s.name(), on_off(options.source_on(*s))))
+        .collect();
+    let Some(choice) = host.select("Toggle which source?", &labels).await? else {
+        return Ok(None);
+    };
+    let Some(source) = Source::ALL
+        .into_iter()
+        .find(|s| choice.starts_with(s.name()))
+    else {
+        return Ok(None);
+    };
+    let key = format!("sources/{}", source.name());
+    let on = json!(!options.source_on(source));
+    Ok(set_option(rt, host, snap, &key, on).await)
+}
+
+/// Writes one key of the global options file and reloads.
+async fn set_option(
+    rt: &Arc<Runtime>,
+    host: &Host,
+    snap: &Snapshot,
+    key: &str,
+    value: Value,
+) -> Option<String> {
+    let file = scope_file(rt, Scope::Global)?;
+    let status = match write_option(&file, key, value.clone()) {
+        Ok(()) => format!("Set {key} = {value} in {}", file.display()),
+        Err(err) => format!("Error: cannot write {}: {err}", file.display()),
+    };
+    rt.reload(host, snap).await;
+    Some(status)
+}
+
+fn on_off(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
+}
+
+/// The `/hooks list` text.
+fn listing(rt: &Runtime, rows: &[Row]) -> Vec<String> {
+    let options = rt
+        .lock()
+        .loaded
+        .as_ref()
+        .map(|l| l.options.clone())
+        .unwrap_or_default();
+    let flag = if rt.lock().flag_trust_all {
+        " (flag on)"
+    } else {
+        ""
+    };
     let mut lines = vec![format!(
-        "Hooks  claude {}  codex {}  pi {}  scope {}  trustAll {}{}  config file {}",
+        "Hooks  claude {}  codex {}  pi {}  load {}  trustAll {}{flag}",
         on_off(options.claude),
         on_off(options.codex),
         on_off(options.pi),
         ScopeOption::name(options.scope),
         on_off(options.trust_all),
-        if flag { " (flag on)" } else { "" },
-        target.name()
     )];
-    if selected.is_some() {
-        lines.push(HELP.to_owned());
-    }
-    if hooks.is_empty() {
+    if rows.is_empty() {
         lines.push("No hooks found.".to_owned());
     }
+    let mut sorted: Vec<&Row> = rows.iter().collect();
+    sorted.sort_by_key(|r| (&r.def.event, r.def.source, r.def.scope));
     let mut event = "";
-    for (index, def) in hooks.iter().enumerate() {
-        if def.event != event {
-            event = &def.event;
-            lines.push(if selected.is_some() {
-                style::bold(event)
-            } else {
-                event.to_owned()
-            });
+    for row in sorted {
+        if row.def.event != event {
+            event = &row.def.event;
+            lines.push(event.to_owned());
         }
-        let marker = if selected == Some(index) { ">" } else { " " };
-        let mut state = rt.trust_level(&def.hash).name().to_owned();
-        if rt.is_disabled(&def.hash) {
-            state.push_str(", disabled");
-        }
-        let last = rt
-            .last_run(&def.hash)
-            .map_or("never run".to_owned(), |run| run_text(&run));
-        let matcher = def
-            .matcher
-            .as_deref()
-            .filter(|m| !m.is_empty())
-            .unwrap_or("*");
-        let line = format!(
-            " {marker} [{}] {matcher}  {}  ({state})  {last}",
-            def.label(),
-            def.summary()
-        );
-        lines.push(if selected == Some(index) {
-            style::inverse(&line)
-        } else {
-            line
-        });
+        let state = if row.enabled { "" } else { ", disabled" };
+        let last = row.last.as_ref().map_or("never run".into(), run_text);
+        let (label, matcher) = (row.def.label(), row.matcher());
+        let (summary, trust) = (row.def.summary(), row.trust.name());
+        lines.push(format!(
+            "   [{label}] {matcher}  {summary}  ({trust}{state})  {last}"
+        ));
     }
     lines
 }
