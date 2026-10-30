@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="pi-rust-extensions banner" src="docs/assets/pi-rust-extensions-banner.svg" width="100%">
+</p>
+
 # pi-rust-extensions
 
 Extensions for [pi-rust](https://github.com/yannelli/pi-rust), written in Rust.
