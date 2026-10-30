@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::env::{Dirs, Scope};
 use crate::jsonfile;
+use crate::source::check_name;
 
 /// `<scopeRoot>/ext/claude-marketplace/state.json`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -74,6 +75,8 @@ pub fn plugin_id(plugin: &str, marketplace: &str) -> String {
 pub fn split_id(id: &str) -> Result<(&str, &str)> {
     match id.rsplit_once('@') {
         Some((plugin, marketplace)) if !plugin.is_empty() && !marketplace.is_empty() => {
+            check_name("plugin", plugin)?;
+            check_name("marketplace", marketplace)?;
             Ok((plugin, marketplace))
         }
         _ => anyhow::bail!("expected <plugin>@<marketplace>, got \"{id}\""),

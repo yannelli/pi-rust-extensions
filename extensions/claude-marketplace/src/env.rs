@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::source::{check_name, ensure_inside};
+
 pub const NAME: &str = "claude-marketplace";
 
 /// Paths the extension reads from the process environment unless a test sets them.
@@ -137,15 +139,21 @@ impl Dirs {
         self.state_dir.join("sources")
     }
 
-    pub fn plugin_clone(&self, marketplace: &str, plugin: &str) -> PathBuf {
-        self.state_dir
-            .join("plugin-clones")
-            .join(marketplace)
-            .join(plugin)
+    pub fn plugin_clone(&self, marketplace: &str, plugin: &str) -> Result<PathBuf> {
+        self.plugin_dir("plugin-clones", marketplace, plugin)
     }
 
-    pub fn plugin_data(&self, marketplace: &str, plugin: &str) -> PathBuf {
-        self.state_dir.join("data").join(marketplace).join(plugin)
+    pub fn plugin_data(&self, marketplace: &str, plugin: &str) -> Result<PathBuf> {
+        self.plugin_dir("data", marketplace, plugin)
+    }
+
+    fn plugin_dir(&self, kind: &str, marketplace: &str, plugin: &str) -> Result<PathBuf> {
+        check_name("marketplace", marketplace)?;
+        check_name("plugin", plugin)?;
+        let base = self.state_dir.join(kind);
+        let dir = base.join(marketplace).join(plugin);
+        ensure_inside(&base, &dir)?;
+        Ok(dir)
     }
 
     pub fn prompts(&self) -> PathBuf {

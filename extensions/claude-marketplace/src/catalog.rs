@@ -48,6 +48,10 @@ impl Catalog {
                 pi_ext_sdk::warn!("skipping a marketplace entry without a name");
                 continue;
             };
+            if let Err(err) = check_name("plugin", name) {
+                pi_ext_sdk::warn!("skipping marketplace entry: {err}");
+                continue;
+            }
             let text = |key: &str| raw.get(key).and_then(Value::as_str).map(str::to_owned);
             let source = match raw.get("source") {
                 Some(source) => parse_plugin(source),

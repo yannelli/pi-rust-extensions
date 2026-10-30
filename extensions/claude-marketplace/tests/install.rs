@@ -86,7 +86,7 @@ fn install_and_uninstall_user_scope() {
     assert_eq!(groups[1]["plugin"], "fmt@acme");
     assert_eq!(groups[1]["matcher"], "Bash");
     assert_eq!(groups[1]["pluginRoot"], root.display().to_string());
-    let data = dirs.plugin_data("acme", "fmt");
+    let data = dirs.plugin_data("acme", "fmt").unwrap();
     assert_eq!(groups[1]["pluginData"], data.display().to_string());
     let command = format!("{}/scripts/check.sh ${{UNKNOWN}}", root.display());
     assert_eq!(groups[1]["hooks"][0]["command"], command);
@@ -139,7 +139,11 @@ fn project_scope_needs_trust_and_substitutes_project_dir() {
     let agent = read(&fx.project.join(".pi/ext/subagents/agents/lint-linter.md"));
     assert!(agent.contains("tools: grep, ls\n"), "{agent}");
     let hooks = read_json(&fx.project.join(".pi/ext/hooks.json"));
-    let data = dirs.plugin_data("acme", "lint").display().to_string();
+    let data = dirs
+        .plugin_data("acme", "lint")
+        .unwrap()
+        .display()
+        .to_string();
     assert_eq!(
         hooks["hooks"]["Stop"][0]["hooks"][0]["command"],
         format!("echo {data}")

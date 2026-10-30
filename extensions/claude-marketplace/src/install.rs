@@ -6,7 +6,7 @@ use crate::catalog::{Catalog, Entry};
 use crate::config::Config;
 use crate::env::{Dirs, Env, Scope};
 use crate::plugin::{self, Resolved};
-use crate::source::{PluginSource, contained};
+use crate::source::{PluginSource, contained, ensure_inside};
 use crate::stage::{Target, remove_path, stage_commands, stage_skills};
 use crate::state::{PluginRecord, State, split_id};
 use crate::{RELOAD, agents, git, hooks, market, mcp};
@@ -29,7 +29,7 @@ pub fn materialize(entry: &Entry, catalog: &Catalog, dirs: &Dirs) -> Result<Path
             sha,
             subdir,
         } => {
-            let clone = dirs.plugin_clone(&catalog.name, &entry.name);
+            let clone = dirs.plugin_clone(&catalog.name, &entry.name)?;
             let incoming = clone.with_file_name(format!(".{}.incoming", entry.name));
             remove_path(&incoming)?;
             if let Err(err) = git::clone(url, &incoming, git_ref.as_deref(), sha.as_deref()) {
@@ -53,8 +53,13 @@ pub fn materialize(entry: &Entry, catalog: &Catalog, dirs: &Dirs) -> Result<Path
 
 /// Removes the staged files, hook groups, and MCP servers of a record.
 pub fn unstage(record: &PluginRecord, dirs: &Dirs, id: &str) -> Result<()> {
+    let bases = [dirs.prompts(), dirs.skills(), dirs.agents()];
     for file in &record.files {
-        remove_path(file)?;
+        if bases.iter().any(|base| ensure_inside(base, file).is_ok()) {
+            remove_path(file)?;
+        } else {
+            pi_ext_sdk::warn!("not removing {}: outside the staging dirs", file.display());
+        }
     }
     hooks::remove(&dirs.hooks_file(), id)?;
     mcp::remove(&dirs.mcp_file(), id)
@@ -75,7 +80,7 @@ fn stage_all(
     mp: &str,
 ) -> Result<Staged> {
     let dirs = env.dirs(scope);
-    let data_dir = dirs.plugin_data(mp, &resolved.name);
+    let data_dir = dirs.plugin_data(mp, &resolved.name)?;
     std::fs::create_dir_all(&data_dir)?;
     let target = Target {
         dirs: &dirs,
@@ -206,8 +211,8 @@ pub fn uninstall(env: &Env, id: &str, scope: Option<Scope>) -> Result<String> {
     env.require(scope)?;
     let dirs = env.dirs(scope);
     unstage(&record, &dirs, id)?;
-    remove_path(&dirs.plugin_clone(&record.marketplace, &record.plugin))?;
-    remove_path(&dirs.plugin_data(&record.marketplace, &record.plugin))?;
+    remove_path(&dirs.plugin_clone(&record.marketplace, &record.plugin)?)?;
+    remove_path(&dirs.plugin_data(&record.marketplace, &record.plugin)?)?;
     let mut state = State::load(&dirs)?;
     state.plugins.remove(id);
     state.save(&dirs)?;

@@ -8,7 +8,9 @@ use anyhow::{Context, Result, bail};
 const TIMEOUT: Duration = Duration::from_secs(300);
 
 fn run(args: &[&str], dir: Option<&Path>) -> Result<String> {
+    use std::os::unix::process::CommandExt;
     let mut command = Command::new("git");
+    command.process_group(0);
     if let Some(dir) = dir {
         command.arg("-C").arg(dir);
     }
@@ -30,6 +32,7 @@ fn run(args: &[&str], dir: Option<&Path>) -> Result<String> {
             break status;
         }
         if Instant::now() > deadline {
+            kill_group(child.id());
             let _ = child.kill();
             let _ = child.wait();
             bail!("git {} timed out after {TIMEOUT:?}", args.join(" "));
@@ -42,6 +45,22 @@ fn run(args: &[&str], dir: Option<&Path>) -> Result<String> {
         bail!("git {} failed: {}", args.join(" "), stderr.trim());
     }
     Ok(stdout)
+}
+
+fn kill_group(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{pid}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// A commit id from a marketplace file: 4 to 64 hex digits.
+pub fn check_sha(sha: &str) -> Result<()> {
+    if !(4..=64).contains(&sha.len()) || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("invalid commit sha \"{sha}\": expected 4 to 64 hex digits");
+    }
+    Ok(())
 }
 
 fn read_all(stream: Option<impl Read>) -> String {
@@ -59,6 +78,9 @@ fn path_str(path: &Path) -> Result<&str> {
 
 /// Clones `url` into `dest`. With `sha` the clone is full so the commit can be checked out.
 pub fn clone(url: &str, dest: &Path, git_ref: Option<&str>, sha: Option<&str>) -> Result<()> {
+    if let Some(sha) = sha {
+        check_sha(sha)?;
+    }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -67,13 +89,17 @@ pub fn clone(url: &str, dest: &Path, git_ref: Option<&str>, sha: Option<&str>) -
     if sha.is_none() {
         args.extend(["--depth", "1"]);
     }
-    if let Some(git_ref) = git_ref {
-        args.extend(["--branch", git_ref]);
+    let branch = git_ref.map(|git_ref| format!("--branch={git_ref}"));
+    if let Some(branch) = &branch {
+        args.push(branch);
     }
     args.extend(["--", url, dest_str]);
     run(&args, None)?;
     if let Some(sha) = sha {
-        run(&["checkout", "--quiet", "--detach", sha], Some(dest))?;
+        run(
+            &["checkout", "--quiet", "--detach", "--end-of-options", sha],
+            Some(dest),
+        )?;
     }
     Ok(())
 }

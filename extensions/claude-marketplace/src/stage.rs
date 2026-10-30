@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 
 use crate::env::Dirs;
 use crate::frontmatter::{Doc, substitute};
+use crate::source::ensure_inside;
 
 pub const COMMAND_SEPARATOR: &str = if cfg!(windows) { "." } else { ":" };
 
@@ -112,6 +113,7 @@ pub fn stage_commands(
                 parts.join(COMMAND_SEPARATOR)
             );
             let dest = dir.join(format!("{name}.md"));
+            ensure_inside(&dir, &dest)?;
             if files.contains(&dest) {
                 continue;
             }
@@ -160,6 +162,7 @@ pub fn stage_skills(target: &Target, paths: &[PathBuf], files: &mut Vec<PathBuf>
             };
             let staged = target.prefixed(name);
             let dest = base.join(&staged);
+            ensure_inside(&base, &dest)?;
             if files.contains(&dest) {
                 continue;
             }

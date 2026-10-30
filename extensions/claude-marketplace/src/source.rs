@@ -168,6 +168,27 @@ pub fn contained(root: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(joined)
 }
 
+/// Fails unless `path` stays under `base`, following symlinks in the parts that exist.
+pub fn ensure_inside(base: &Path, path: &Path) -> Result<()> {
+    let leaves = || anyhow::anyhow!("{} leaves {}", path.display(), base.display());
+    let rel = path.strip_prefix(base).map_err(|_| leaves())?;
+    if rel.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return Err(leaves());
+    }
+    let Ok(real_base) = base.canonicalize() else {
+        return Ok(());
+    };
+    let existing = path
+        .ancestors()
+        .find(|p| std::fs::symlink_metadata(p).is_ok())
+        .unwrap_or(base);
+    let real = existing.canonicalize().map_err(|_| leaves())?;
+    if !real.starts_with(&real_base) {
+        return Err(leaves());
+    }
+    Ok(())
+}
+
 /// Marketplace and plugin names become file names, so they must be plain.
 pub fn check_name(kind: &str, name: &str) -> Result<()> {
     let ok = !name.is_empty()

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 use crate::frontmatter::{Doc, substitute};
+use crate::source::ensure_inside;
 use crate::stage::{Target, markdown_files};
 
 /// Claude Code tool name to pi tool name; other names stay.
@@ -53,6 +54,7 @@ pub fn stage_agents(target: &Target, paths: &[PathBuf], files: &mut Vec<PathBuf>
             let Some(name) = parts.last() else { continue };
             let staged = target.prefixed(name);
             let dest = dir.join(format!("{staged}.md"));
+            ensure_inside(&dir, &dest)?;
             if files.contains(&dest) {
                 continue;
             }
