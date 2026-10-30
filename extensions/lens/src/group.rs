@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::process::Stdio;
 
 /// Kills a child's process group, so a timeout or cancel also stops its descendants.

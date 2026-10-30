@@ -6,6 +6,7 @@ use crate::browser::{check_url, executable, launch_args, pick_port};
 use crate::config::ManagedBrowser;
 use crate::page::page_roots;
 use crate::page_act::{key_event, modifier_bit};
+#[cfg(target_os = "macos")]
 use crate::platform::macos;
 
 #[test]
@@ -70,9 +71,11 @@ fn browser_keys_and_pages() {
 }
 
 #[cfg(target_os = "macos")]
-#[test]
-fn swift_helper_typechecks() {
-    if !crate::platform::run::which("xcrun") {
+#[tokio::test]
+async fn swift_helper_typechecks() {
+    use crate::platform::{Cmd, run};
+
+    if !run::which("xcrun") {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
@@ -81,15 +84,12 @@ fn swift_helper_typechecks() {
         std::fs::write(dir.path().join(name), text).unwrap();
         args.push(dir.path().join(name).display().to_string());
     }
-    let output = std::process::Command::new("/usr/bin/timeout")
-        .arg("600")
-        .arg("xcrun")
-        .args(&args)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = run::run(
+        &Cmd::new("xcrun", &args),
+        std::time::Duration::from_secs(600),
+        &pi_ext_sdk::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(output.ok(), "{}", output.stderr);
 }

@@ -1,7 +1,9 @@
 use super::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(unix)]
 use std::time::Duration;
+#[cfg(unix)]
 use tokio_util::sync::CancellationToken;
 
 pub(crate) struct Temp(pub PathBuf);

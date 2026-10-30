@@ -1,5 +1,7 @@
 //! Protocol-level runs against a fake `pi` that replays a scripted JSON event stream.
 
+#![cfg(unix)]
+
 mod common;
 
 use std::time::Duration;

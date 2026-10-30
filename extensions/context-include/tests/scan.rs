@@ -85,6 +85,7 @@ fn includes_recursively_with_output_format() {
     assert_eq!(out.diag.included[1], (f.p("proj/b.md"), 1));
 }
 
+#[cfg(unix)]
 #[test]
 fn dedupes_cycles_and_symlinks() {
     let f = Fixture::new();
@@ -105,6 +106,7 @@ fn dedupes_cycles_and_symlinks() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn relative_refs_resolve_from_realpath_dir() {
     let f = Fixture::new();

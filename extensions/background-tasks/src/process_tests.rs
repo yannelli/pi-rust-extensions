@@ -1,9 +1,11 @@
 use std::time::Duration;
 
+#[cfg(unix)]
+use crate::identity;
 use crate::registry::Registry;
 use crate::task::{Status, session_dir};
 use crate::tests::{Temp, options, sample, wait_for};
-use crate::{identity, process, ui};
+use crate::{process, ui};
 
 #[tokio::test]
 async fn runs_commands_and_records_exit_codes() {

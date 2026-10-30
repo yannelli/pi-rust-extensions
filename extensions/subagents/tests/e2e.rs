@@ -1,5 +1,7 @@
 //! The subagents extension under the real pi binary, with `PI_BIN` pointing at a fake child pi.
 
+#![cfg(unix)]
+
 mod common;
 
 use pi_ext_e2e::{Run, TempDir, Turn, cargo_bin, json, pi_bin_or_skip};
