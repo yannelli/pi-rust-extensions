@@ -1,6 +1,9 @@
 //! Shared runtime state and helpers used by hooks, commands, and tools.
 
 use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use pi_ext_sdk::{DeliverAs, Host, Snapshot};
@@ -82,16 +85,36 @@ pub fn now_ms() -> u64 {
     chrono::Utc::now().timestamp_millis().max(0) as u64
 }
 
-/// Writes the last plan to `compactor-debug.json` in the temp dir when `debug` is on.
-pub fn debug_dump(config: &Config, data: Value) {
+/// Writes the last plan to `<agentDir>/ext/compactor/debug.json` (mode 0600) when `debug` is on.
+pub fn debug_dump(host: &Host, config: &Config, data: Value) {
     if !config.debug {
         return;
     }
-    let path = std::env::temp_dir().join("compactor-debug.json");
+    let path = debug_path(&host.agent_dir());
     let text = serde_json::to_string_pretty(&data).unwrap_or_default();
-    if let Err(err) = std::fs::write(&path, text) {
+    if let Err(err) = write_private(&path, &text) {
         pi_ext_sdk::warn!("cannot write {}: {err}", path.display());
     }
+}
+
+pub fn debug_path(agent_dir: &Path) -> PathBuf {
+    agent_dir.join("ext").join("compactor").join("debug.json")
+}
+
+/// Replaces `path` with a new file; a symlink at `path` is removed, not followed.
+pub fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    match std::fs::remove_file(path) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err),
+        _ => {}
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)?.write_all(text.as_bytes())
 }
 
 /// Counts a compaction and announces it on the `pi.events` bus.

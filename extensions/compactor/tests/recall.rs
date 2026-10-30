@@ -134,3 +134,25 @@ fn noise_filter_drops_wrappers() {
     ];
     assert!(recall_blocks(&entries).is_empty());
 }
+
+#[test]
+fn huge_page_and_offset_do_not_overflow() {
+    let page = Some(u64::MAX as f64 * 4.0);
+    let text = recall(RecallInput {
+        page,
+        ..query("main")
+    });
+    assert!(text.starts_with("No matches for \"main\""), "{text}");
+    let touched = recall(RecallInput {
+        mode: Some("touched".into()),
+        page,
+        ..RecallInput::default()
+    });
+    assert!(touched.ends_with("files touched:\n\n"), "{touched}");
+    let max = u64::MAX;
+    let drill = recall(query(&format!("#3:main.rs:{max}:{max}")));
+    assert!(
+        drill.starts_with(&format!("Offset {max} is beyond")),
+        "{drill}"
+    );
+}

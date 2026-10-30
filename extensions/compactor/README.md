@@ -33,11 +33,11 @@ Rust port of `@pi-unipi/compactor` 3.0.0 for pi-rust (`pi-rust-ext compactor`). 
 3. For manual `/compact`: `piCompact`, when it is not `follow`.
 4. `method`.
 
-When the vcc plan cannot cut (no messages, or 2 or fewer), the extension cancels the compaction. An `overflow` compaction goes to pi's summarizer instead. When the `llm` call fails, or the preparation is a split turn, pi's own summarizer runs.
+An `overflow` compaction goes to pi's summarizer before any method is chosen. When the vcc plan cannot cut (no messages, or 2 or fewer), the extension cancels the compaction. When the `llm` call fails, or the preparation is a split turn, pi's own summarizer runs.
 
 ## Events
 
-`session_before_compact`, `session_compact` (appends a `unipi-compaction` card entry when `notify` is on or a command ran), `context` (removes the old `compactor-auto-continue` and `unipi-compactor-resume` custom messages), `input` (origin marks for extension-sent user text, `/unipi:compact-then`), `turn_end` (the `percent` trigger and steered compact-then as boundary compaction drafts), `agent_end` and `agent_settled` (follow-up compact-then), `session_start` (state reset).
+`session_before_compact`, `session_compact` (appends a `unipi-compaction` card entry when `notify` is on or a command ran), `context` (removes the old `compactor-auto-continue` and `unipi-compactor-resume` custom messages), `input` (origin marks for extension-sent user text, `/unipi:compact-then`), `turn_end` (the `percent` trigger and steered compact-then as boundary compaction drafts), `agent_end` and `agent_settled` (follow-up compact-then; a steered compact-then still queued is cancelled), `session_start` (state reset).
 
 Other extensions can add `[Active Work]` blocks: emit `{ "id": "<id>", "text": "<text>" }` on the `pi.events` channel `compactor:active-work`. Empty text removes the block. After each compaction the extension emits `unipi:compactor:compacted` with `{ method, summarized, kept, tokensBefore, tokensAfter, tokensSaved }`.
 
@@ -58,7 +58,7 @@ Paths: global `<agentDir>/ext/compactor.json`, project `<cwd>/.pi/ext/compactor.
 | `cooldownMs` | `60000` | Minimum time between `percent` triggers |
 | `repeatMinGrowthTokens` | `4000` | Growth needed to trigger again while usage stays above the threshold |
 | `llmInstructions` | `""` | Extra instructions for model summaries |
-| `debug` | `false` | Writes the last plan to `compactor-debug.json` in the temp directory (also `UNIPI_COMPACTOR_DEBUG=1`) |
+| `debug` | `false` | Writes the last plan to `<agentDir>/ext/compactor/debug.json` (mode 0600). Read from the global config only (also `UNIPI_COMPACTOR_DEBUG=1`) |
 
 Legacy keys: `method: "jev"` reads as `vcc`. `overrideDefaultCompaction: false` sets `method: "llm"`. `autoCompaction.enabled: true` sets `trigger: "percent"`. `autoCompaction.{thresholdPercent, notify, cooldownMs, repeatMinGrowthTokens}` fill the same keys. A legacy `sections` object of booleans sets `summarySections` when the layer has no `summarySections` array. These keys fill only keys that the layer does not set.
 
@@ -69,5 +69,6 @@ Legacy keys: `method: "jev"` reads as `vcc`. `overrideDefaultCompaction: false` 
 - Origin marks (`compactor-origin`) use a 64-bit FNV-1a key. Marks that upstream wrote (SHA-256) do not match, so the known-pattern filter handles those sessions.
 - Recall hits show the session entry index (`#N`), which `expand` and drill-down accept. Upstream shows the block index. `expand` returns all blocks of an entry. `scope: "all"` searches `session.getEntries` (all branches).
 - Regex queries use the Rust `regex` crate: no lookaround or backreferences (such queries search as literal text), and no search time limit is necessary.
-- Active work comes from the `compactor:active-work` channel. Upstream reads goal, ralph, and kanboard providers from `@pi-unipi/core`.
+- Active work comes from the `compactor:active-work` channel. Upstream reads goal, ralph, and kanboard providers from `@pi-unipi/core`. No marketplace extension publishes on that channel, so `[Active Work]` stays empty until one emits `{ "id": "<id>", "text": "<text>" }` there (an empty `text` removes the block).
+- A steered `/unipi:compact-then` that is still queued when the run ends is cancelled with a notice; it does not carry over to the next run.
 - Not available over the native protocol: the `unipi-compaction` entry renderer (the card entry is data only), the info-screen group, the unipi bus `MODULE_READY` event, the `compactor` skill directory, and the `tool_result` diff width clamp (the extension does not know the terminal width). The `/unipi:compact-then` autocomplete item shows only after `/unipi:compact-t` or `/compact-t`, because a native suggestion list replaces pi's list.

@@ -79,7 +79,7 @@ fn touched_output(blocks: &[Block], page: usize, cwd: &str) -> String {
         return "No file operations found in session history.".into();
     }
     let total_pages = touched.len().div_ceil(PAGE_SIZE);
-    let start = (page - 1) * PAGE_SIZE;
+    let start = page.saturating_sub(1).saturating_mul(PAGE_SIZE);
     let header = if total_pages > 1 {
         format!("Page {page}/{total_pages} ({} total files)", touched.len())
     } else {
@@ -228,7 +228,7 @@ pub fn vcc_recall(blocks: &[Block], input: &RecallInput, cwd: &str) -> String {
     let total_pages = hits.len().div_ceil(PAGE_SIZE);
     let page_hits: Vec<Hit> = hits
         .iter()
-        .skip((page - 1) * PAGE_SIZE)
+        .skip(page.saturating_sub(1).saturating_mul(PAGE_SIZE))
         .take(PAGE_SIZE)
         .cloned()
         .collect();
