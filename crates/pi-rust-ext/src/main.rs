@@ -4,7 +4,11 @@ use std::process::ExitCode;
 
 type Extension = (&'static str, fn() -> ExitCode);
 
-const EXTENSIONS: &[Extension] = &[];
+const EXTENSIONS: &[Extension] = &[
+    ("web-search", pi_ext_web_search::main),
+    ("chrome", pi_ext_chrome::main),
+    ("computer-use", pi_ext_computer_use::main),
+];
 
 fn main() -> ExitCode {
     let name = std::env::args().nth(1).unwrap_or_default();

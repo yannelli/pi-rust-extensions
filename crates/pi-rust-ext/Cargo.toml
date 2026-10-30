@@ -12,6 +12,12 @@ name = "pi-rust-ext"
 path = "src/main.rs"
 
 [dependencies]
+pi-ext-web-search = { path = "../../extensions/web-search" }
+pi-ext-chrome = { path = "../../extensions/chrome" }
+pi-ext-computer-use = { path = "../../extensions/computer-use" }
+
+[dev-dependencies]
+pi-ext-e2e = { path = "../pi-ext-e2e" }
 
 [lints]
 workspace = true

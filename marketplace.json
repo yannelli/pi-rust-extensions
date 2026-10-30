@@ -2,5 +2,18 @@
   "schemaVersion": 1,
   "protocolVersion": 1,
   "minPiVersion": "0.7.7",
-  "extensions": []
+  "extensions": [
+    {
+      "name": "web-search", "displayName": "Web Search", "description": "Search the web and read URLs with model-native and search providers.",
+      "version": "0.1.0", "args": ["web-search"], "tags": ["web", "search"]
+    },
+    {
+      "name": "chrome", "displayName": "Chrome", "description": "Control Chrome through the DevTools Protocol with session authorization.",
+      "version": "0.1.0", "args": ["chrome"], "tags": ["browser", "automation"]
+    },
+    {
+      "name": "computer-use", "displayName": "Computer Use", "description": "Observe desktop windows and send keyboard and pointer input.",
+      "version": "0.1.0", "args": ["computer-use"], "tags": ["desktop", "automation"]
+    }
+  ]
 }
