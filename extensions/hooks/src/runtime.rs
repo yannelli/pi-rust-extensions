@@ -207,7 +207,7 @@ impl Runtime {
             }
             return false;
         }
-        let title = format!("Run untrusted hook?\n{def}");
+        let title = format!("Run untrusted hook?\n{}", def.trust_text());
         match host
             .select(&title, &["Allow once", "Always allow", "Deny"])
             .await

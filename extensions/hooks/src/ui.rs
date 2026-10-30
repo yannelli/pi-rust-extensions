@@ -56,7 +56,7 @@ pub async fn hooks_command(rt: Arc<Runtime>, args: String, ctx: CommandCtx) -> R
                         .loaded
                         .as_ref()
                         .is_some_and(|l| l.options.trust_all);
-                    set_option(&rt, host, snap, target, "trustAll", json!(on)).await;
+                    set_option(&rt, host, snap, Scope::Global, "trustAll", json!(on)).await;
                 }
                 Some('g') => target = Scope::Global,
                 Some('p') => target = Scope::Project,
@@ -121,7 +121,7 @@ async fn hook_menu(rt: &Arc<Runtime>, host: &Host, snap: &Snapshot, def: &HookDe
         toggle,
         "Show last output",
     ];
-    let Some(choice) = host.select(&def.to_string(), &options).await? else {
+    let Some(choice) = host.select(&def.trust_text(), &options).await? else {
         return Ok(());
     };
     match choice.as_str() {

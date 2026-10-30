@@ -190,3 +190,28 @@ fn pi_native_plugin_fields() {
     assert_eq!(loaded.hooks[0].label(), "pi/global plugin fmt@acme");
     assert_eq!(loaded.hooks[0].timeout().as_secs(), 30);
 }
+
+#[test]
+fn trusted_project_cannot_set_trust_all() {
+    let f = fixture();
+    write(
+        &f.cwd.join(".pi/ext/hooks.json"),
+        r#"{"trustAll":true,"hooks":{}}"#,
+    );
+    assert!(!load_with(&f, true).options.trust_all);
+    write(&f.agent.join("ext/hooks.json"), r#"{"trustAll":true}"#);
+    assert!(load_with(&f, true).options.trust_all);
+}
+
+#[test]
+fn claude_settings_in_home_load_once() {
+    let mut f = fixture();
+    f.paths.claude_dir = f.cwd.join(".claude");
+    write(&f.paths.claude_dir.join("settings.json"), &hooks_json("cg"));
+    write(
+        &f.cwd.join(".claude/settings.local.json"),
+        &hooks_json("cl"),
+    );
+    let loaded = load_with(&f, true);
+    assert_eq!(commands(&loaded), ["claude/global:cg", "claude/project:cl"]);
+}

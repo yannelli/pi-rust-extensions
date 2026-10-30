@@ -1,6 +1,6 @@
 # hooks
 
-Created 2026-10-29. Last updated 2026-10-29.
+Created 2026-10-29. Last updated 2026-10-30.
 
 Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both tools and a pi-native hooks file, maps pi events onto hook events, runs the matching handlers, and applies their decisions to pi. The contract it follows is `research/hooks.md` (Claude Code and Codex docs read 2026-10-29).
 
@@ -12,7 +12,7 @@ Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both 
 | `/hooks list` | Shows the listing as a notification. |
 | `--hooks-trust-all` | Runs every hook without a trust prompt for this run (like Codex `--dangerously-bypass-hook-trust`). |
 
-Panel keys: up/down move, enter opens the actions of the selected hook (Trust always, Allow once, Untrust, Deny, Disable/Enable, Show last output), `s` turns a source on or off, `c` sets the scope, `t` toggles `trustAll`, `g`/`p` select the global or project options file that `s`, `c`, and `t` write, `q` or Esc closes.
+Panel keys: up/down move, enter opens the actions of the selected hook (Trust always, Allow once, Untrust, Deny, Disable/Enable, Show last output), `s` turns a source on or off, `c` sets the scope, `t` toggles `trustAll` in the global options file, `g`/`p` select the global or project options file that `s` and `c` write, `q` or Esc closes.
 
 The extension registers no tools.
 
@@ -40,7 +40,7 @@ In `<agentDir>/ext/hooks.json` and `<cwd>/.pi/ext/hooks.json` (same file as the 
 | --- | --- | --- |
 | `sources.claude`, `sources.codex`, `sources.pi` | `true` | Turn a source on or off. |
 | `scope` | `"both"` | `global`, `project`, or `both`: which files load. |
-| `trustAll` | `false` | Run all hooks without trust prompts. |
+| `trustAll` | `false` | Run all hooks without trust prompts. Read from the global options file only; a project file's `trustAll` is ignored. |
 
 ## Trust
 
@@ -101,10 +101,10 @@ All events: `session_id`, `transcript_path` (session file or `null`), `cwd`, `ho
 
 ## Handlers
 
-- `command`: `sh -c <command>`, or exec form without a shell when `args` is set. Stdin is the event JSON; the cwd is the session cwd. `timeout` in seconds (default 600; Codex SessionEnd and Interrupt default 1, at most 3). On timeout the process group gets SIGTERM, then SIGKILL after 5 seconds. Stdout is capped at 1 MB and stderr at 64 KB. Env: the extension env plus `CLAUDE_PROJECT_DIR`, the plugin vars, and `CLAUDE_ENV_FILE` for SessionStart. Codex `commandWindows` is ignored; `shell: "powershell"` is skipped with a log line.
+- `command`: `sh -c <command>`, or exec form without a shell when `args` is set. Stdin is the event JSON; the cwd is the session cwd. `timeout` in seconds, at most 86400 (default 600; Codex SessionEnd and Interrupt default 1, at most 3). On timeout or when the hook is cancelled, the process group gets SIGTERM, then SIGKILL after 5 seconds. Stdout is capped at 1 MB and stderr at 64 KB. Env: the extension env plus `CLAUDE_PROJECT_DIR`, the plugin vars, and `CLAUDE_ENV_FILE` for SessionStart. Codex `commandWindows` is ignored; `shell: "powershell"` is skipped with a log line.
 - `async: true`: runs in the background (8 at a time), cannot block, and only records its result. `asyncRewake: true`: same, and exit 2 sends stderr to the model as a `hooks-rewake` follow-up message that starts a turn.
 - `onFailure: "block"` (Claude and pi): a nonzero exit other than 2, or a timeout, blocks on events where exit 2 blocks.
-- `http` (Claude and pi): POSTs the event JSON to `url` with `headers`. `$VAR` and `${VAR}` in headers expand only for names in `allowedEnvVars`; other names become empty. A 2xx body is read like stdout; other statuses are non-blocking errors. Default timeout 600 seconds.
+- `http` (Claude and pi): POSTs the event JSON to `url` with `headers`. `$VAR` and `${VAR}` in headers expand only for names in `allowedEnvVars`; other names become empty. The trust prompt shows the header templates and the `allowedEnvVars` names. A 2xx body is read like stdout; other statuses are non-blocking errors. Default timeout 600 seconds.
 - `prompt` (Claude and pi): asks the session model (or `model`) through `llm.complete` with the prompt, `$ARGUMENTS` replaced by the event JSON (appended when there is no placeholder). The reply must hold `{ "ok": bool, "reason"? }` or `{ "decision", "reason" }`; `ok: false` blocks with the reason. Default timeout 30 seconds.
 - `once: true`: runs once per session. `statusMessage`: shown as the `hooks` status while the handlers run.
 

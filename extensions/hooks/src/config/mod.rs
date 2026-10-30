@@ -40,7 +40,13 @@ pub fn load(input: &LoadInput) -> Loaded {
         ..Loaded::default()
     };
     let global_doc = read_json(&global_file).unwrap_or(Value::Null);
-    let project_doc = project_layer(input, &project_file, &mut loaded).and_then(|p| read_json(&p));
+    let mut project_doc =
+        project_layer(input, &project_file, &mut loaded).and_then(|p| read_json(&p));
+    if let Some(Value::Object(doc)) = project_doc.as_mut()
+        && doc.remove("trustAll").is_some()
+    {
+        pi_ext_sdk::info!("hooks: ignoring trustAll in {}", project_file.display());
+    }
     let layers: Vec<&Value> = [Some(&global_doc), project_doc.as_ref()]
         .into_iter()
         .flatten()
@@ -55,6 +61,9 @@ pub fn load(input: &LoadInput) -> Loaded {
         if scoped(Scope::Project) {
             for name in ["settings.json", "settings.local.json"] {
                 let path = root.join(".claude").join(name);
+                if same_path(&path, &files[0].1) {
+                    continue;
+                }
                 if let Some(path) = project_layer(input, &path, &mut loaded) {
                     files.push((Scope::Project, path));
                 }

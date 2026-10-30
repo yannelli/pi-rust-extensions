@@ -45,9 +45,12 @@ pub async fn run_command(spec: CommandSpec) -> RawRun {
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .process_group(0);
-    let mut child = match command.spawn() {
-        Ok(child) => child,
+    let mut guard = match command.spawn() {
+        Ok(child) => GroupGuard(Some(child)),
         Err(err) => return RawRun::failed(format!("cannot start: {err}")),
+    };
+    let Some(child) = guard.0.as_mut() else {
+        return RawRun::failed("child vanished");
     };
     if let Some(mut stdin) = child.stdin.take() {
         let input = spec.stdin.into_bytes();
@@ -67,13 +70,14 @@ pub async fn run_command(spec: CommandSpec) -> RawRun {
         Ok(Ok(status)) => (status.code(), None),
         Ok(Err(err)) => (None, Some(format!("wait failed: {err}"))),
         Err(_) => {
-            terminate(&mut child).await;
+            terminate(child).await;
             (
                 None,
                 Some(format!("timed out after {}s", spec.timeout.as_secs_f64())),
             )
         }
     };
+    guard.0 = None;
     let collect = |task: Option<tokio::task::JoinHandle<String>>| async move {
         let task = task?;
         let abort = task.abort_handle();
@@ -92,6 +96,20 @@ pub async fn run_command(spec: CommandSpec) -> RawRun {
         stdout,
         stderr,
         error,
+    }
+}
+
+/// Stops the process group when the hook future is dropped (cancelled) before the child exits.
+struct GroupGuard(Option<Child>);
+
+impl Drop for GroupGuard {
+    fn drop(&mut self) {
+        let Some(mut child) = self.0.take() else {
+            return;
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move { terminate(&mut child).await });
+        }
     }
 }
 
@@ -172,6 +190,39 @@ mod tests {
         assert_eq!(run.code, None);
         assert!(run.error.unwrap().starts_with("timed out"));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn cancel_kills_the_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let script = format!("sleep 30 & echo $! > {}; wait", pid_file.display());
+        let task = tokio::spawn(run_command(spec(&script, 60)));
+        let pid = loop {
+            if let Ok(text) = std::fs::read_to_string(&pid_file)
+                && text.ends_with('\n')
+            {
+                break text.trim().to_owned();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        task.abort();
+        let _ = task.await;
+        let alive = || async {
+            Command::new("kill")
+                .args(["-0", &pid])
+                .stderr(Stdio::null())
+                .status()
+                .await
+                .is_ok_and(|s| s.success())
+        };
+        for _ in 0..100 {
+            if !alive().await {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("grandchild {pid} still runs after cancel");
     }
 
     #[tokio::test]

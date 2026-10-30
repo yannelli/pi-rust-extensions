@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+const MAX_TIMEOUT_SECS: f64 = 86_400.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
@@ -120,7 +122,8 @@ impl HookDef {
             .handler
             .get("timeout")
             .and_then(Value::as_f64)
-            .filter(|s| *s > 0.0);
+            .filter(|s| *s > 0.0)
+            .map(|s| s.min(MAX_TIMEOUT_SECS));
         if codex_short {
             secs = secs.map(|s| s.min(3.0));
         }
@@ -145,6 +148,30 @@ impl HookDef {
             other => format!("{other} (unsupported)"),
         };
         text.replace('\n', " ")
+    }
+
+    /// The listing line plus what an http hook sends: header templates and allowed env var names.
+    pub fn trust_text(&self) -> String {
+        let mut text = self.to_string();
+        if self.kind() != "http" {
+            return text;
+        }
+        if let Some(headers) = self.handler.get("headers").and_then(Value::as_object) {
+            for (name, value) in headers {
+                let value = value.as_str().unwrap_or_default().replace('\n', " ");
+                text.push_str(&format!("\n  header {name}: {value}"));
+            }
+        }
+        let vars: Vec<&str> = self
+            .handler
+            .get("allowedEnvVars")
+            .and_then(Value::as_array)
+            .map(|names| names.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        if !vars.is_empty() {
+            text.push_str(&format!("\n  sends env vars: {}", vars.join(", ")));
+        }
+        text
     }
 
     pub fn label(&self) -> String {
@@ -215,6 +242,48 @@ mod tests {
         assert_ne!(h, trust_hash("/f.json", "PreToolUse", None, &a));
         let c = json!({ "type": "command", "command": "y", "timeout": 3 });
         assert_ne!(h, trust_hash("/f.json", "PreToolUse", Some("Bash"), &c));
+    }
+
+    #[test]
+    fn http_trust_covers_headers_and_env_vars() {
+        let handler = json!({ "type": "http", "url": "https://h.example/x",
+            "headers": { "Authorization": "Bearer $TOKEN" }, "allowedEnvVars": ["TOKEN"] });
+        let def = HookDef::new(
+            Source::Claude,
+            Scope::Global,
+            "/f".into(),
+            "Stop",
+            None,
+            handler.clone(),
+        );
+        let text = def.trust_text();
+        assert!(
+            text.contains("header Authorization: Bearer $TOKEN"),
+            "{text}"
+        );
+        assert!(text.contains("sends env vars: TOKEN"), "{text}");
+        let mut other = handler.clone();
+        other["allowedEnvVars"] = json!(["TOKEN", "AWS_SECRET_ACCESS_KEY"]);
+        assert_ne!(def.hash, trust_hash("/f", "Stop", None, &other));
+        let mut other = handler;
+        other["headers"]["X-Key"] = json!("$AWS_SECRET_ACCESS_KEY");
+        assert_ne!(def.hash, trust_hash("/f", "Stop", None, &other));
+    }
+
+    #[test]
+    fn huge_timeouts_are_clamped() {
+        for timeout in [json!(1e300), json!(f64::MAX)] {
+            let handler = json!({ "command": "x", "timeout": timeout });
+            let def = HookDef::new(
+                Source::Claude,
+                Scope::Global,
+                "/f".into(),
+                "Stop",
+                None,
+                handler,
+            );
+            assert_eq!(def.timeout().as_secs(), 86_400);
+        }
     }
 
     #[test]
