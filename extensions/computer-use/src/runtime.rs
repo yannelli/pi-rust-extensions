@@ -16,6 +16,7 @@ pub struct Runtime {
     browser: Mutex<Option<Managed>>,
     pub live: tokio::sync::Mutex<()>,
     trust_noted: AtomicBool,
+    input_allowed: AtomicBool,
 }
 
 pub type Shared = Arc<Runtime>;
@@ -31,6 +32,15 @@ impl Runtime {
 
     pub fn browser(&self) -> MutexGuard<'_, Option<Managed>> {
         lock(&self.browser)
+    }
+
+    /// True after the user allowed desktop input in this session.
+    pub fn input_allowed(&self) -> bool {
+        self.input_allowed.load(Ordering::SeqCst)
+    }
+
+    pub fn set_input_allowed(&self, allowed: bool) {
+        self.input_allowed.store(allowed, Ordering::SeqCst);
     }
 
     pub fn config(&self) -> Config {
@@ -65,6 +75,23 @@ pub fn state_dir(host: &Host) -> PathBuf {
     host.agent_dir().join("ext").join("computer-use")
 }
 
+/// `<state>/captures`, created or reset to mode 0700 so other users cannot read screenshots.
+pub fn captures_dir(state: &std::path::Path) -> std::io::Result<PathBuf> {
+    let dir = state.join("captures");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)?;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 /// Reads `isProjectTrusted` from the snapshot, then from `ctx`; unknown means untrusted.
 pub async fn project_trusted(host: &Host, snapshot: Option<&Snapshot>) -> bool {
     let from_snapshot = snapshot
@@ -78,4 +105,21 @@ pub async fn project_trusted(host: &Host, snapshot: Option<&Snapshot>) -> bool {
         .ok()
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn captures_dir_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let state = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(state.path().join("captures")).unwrap();
+        let open = std::fs::Permissions::from_mode(0o777);
+        std::fs::set_permissions(state.path().join("captures"), open).unwrap();
+        let dir = super::captures_dir(state.path()).unwrap();
+        assert_eq!(dir, state.path().join("captures"));
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
 }

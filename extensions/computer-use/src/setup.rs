@@ -8,7 +8,7 @@ use crate::backend::{Backend, Kind};
 use crate::platform::linux::pick_capturer;
 use crate::platform::run::{run, run_ok, which};
 use crate::platform::{Os, detect, macos, unsupported_message};
-use crate::runtime::state_dir;
+use crate::runtime::{captures_dir, state_dir};
 
 const GRANT: &str = "Grant Accessibility and Screen Recording to the app that runs pi (for example, your terminal) in System Settings > Privacy & Security. Screen Recording lets the agent see windows. Accessibility lets the agent read and operate controls.";
 const RECHECK: &str = "Recheck (restarts helper)";
@@ -24,6 +24,28 @@ const KINDS: [(&str, &str, &str); 2] = [
         "Open Screen Recording Settings (missing)",
     ),
 ];
+
+pub const INPUT_NEEDS_UI: &str = "act_ui needs an interactive session: pi-computer-use asks once per session before it sends mouse and keyboard input to the desktop. Start pi in interactive mode.";
+pub const INPUT_DECLINED: &str =
+    "Desktop input is not allowed in this session. Call act_ui again to be asked again.";
+
+/// Asks once per session before the first desktop input action; refuses without a UI.
+pub async fn confirm_input(host: &Host, allowed: bool, app: &str, window: &str) -> Result<()> {
+    if allowed {
+        return Ok(());
+    }
+    if !host.has_ui() {
+        return Err(Error::msg(INPUT_NEEDS_UI));
+    }
+    let message = format!(
+        "The agent wants to send mouse and keyboard input to {app} ({window}). Allow desktop input for the rest of this session?"
+    );
+    if host.confirm("Allow desktop input?", &message).await? {
+        Ok(())
+    } else {
+        Err(Error::msg(INPUT_DECLINED))
+    }
+}
 
 pub fn non_interactive_error() -> String {
     format!(
@@ -78,7 +100,7 @@ pub fn options(missing: &[&str]) -> Vec<String> {
 
 /// Checks tools and permissions; prompts through the UI when something is missing.
 pub async fn ensure_ready(host: &Host, cancel: &CancellationToken) -> Result<Backend> {
-    let scratch = std::env::temp_dir().join("pi-computer-use");
+    let scratch = captures_dir(&state_dir(host))?;
     let kind = match detect() {
         Os::Unsupported(os) => return Err(Error::msg(unsupported_message(os))),
         Os::Linux { wayland } => {

@@ -126,6 +126,11 @@ impl Live<'_> {
         let outcomes = if base.target.page_id.is_some() {
             crate::page_act::act(&base, &args.actions, self.cancel).await?
         } else {
+            let allowed = self.rt.input_allowed();
+            let target = &base.target;
+            crate::setup::confirm_input(self.host, allowed, &target.app, &target.window_title)
+                .await?;
+            self.rt.set_input_allowed(true);
             let backend = crate::setup::ensure_ready(self.host, self.cancel).await?;
             let mac = matches!(backend.kind, Kind::MacOs { .. });
             let planner = Planner {

@@ -189,3 +189,58 @@ async fn search_requires_a_predicate() {
     );
     host.finish().await.unwrap();
 }
+
+async fn restore_state(host: &mut TestHost) {
+    let mut ev_ctx = ctx();
+    ev_ctx["isProjectTrusted"] = json!(false);
+    let event =
+        json!({ "name": "session_start", "event": { "type": "session_start" }, "ctx": ev_ctx });
+    host.request(1, "event", event).await;
+    let (id, _) = host.expect_request("session.getBranch").await;
+    host.answer(&id, json!([observation_entry()])).await;
+    host.expect_response(1).await;
+}
+
+fn press_save() -> Value {
+    json!({ "stateId": "s-restored", "actions": [{ "action": "press", "ref": "@e2" }] })
+}
+
+#[tokio::test]
+async fn desktop_input_is_refused_without_ui() {
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    restore_state(&mut host).await;
+    let mut params = execute("c2", "act_ui", press_save());
+    params["ctx"]["hasUI"] = json!(false);
+    host.request(2, "tool.execute", params).await;
+    let response = host.expect_response(2).await;
+    assert_eq!(response["result"]["isError"], true);
+    assert!(
+        text(&response).starts_with("act_ui needs an interactive session"),
+        "{response}"
+    );
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn desktop_input_asks_once_and_honors_decline() {
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    restore_state(&mut host).await;
+    host.request(2, "tool.execute", execute("c2", "act_ui", press_save()))
+        .await;
+    let (id, params) = host.expect_request("ui.confirm").await;
+    assert_eq!(params["title"], "Allow desktop input?");
+    assert!(
+        params["message"].as_str().unwrap().contains("Notes"),
+        "{params}"
+    );
+    host.answer(&id, json!(false)).await;
+    let response = host.expect_response(2).await;
+    assert_eq!(response["result"]["isError"], true);
+    assert!(
+        text(&response).starts_with("Desktop input is not allowed in this session."),
+        "{response}"
+    );
+    host.finish().await.unwrap();
+}

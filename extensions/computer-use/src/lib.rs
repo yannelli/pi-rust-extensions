@@ -129,7 +129,12 @@ pub fn extension() -> Extension {
     );
     for event in ["session_start", "session_tree", "session_compact"] {
         let rt = rt.clone();
-        ext = ext.on(event, move |ev: EventCtx| replay(rt.clone(), ev));
+        ext = ext.on(event, move |ev: EventCtx| {
+            if event == "session_start" {
+                rt.set_input_allowed(false);
+            }
+            replay(rt.clone(), ev)
+        });
     }
     let command_rt = rt.clone();
     ext.command(

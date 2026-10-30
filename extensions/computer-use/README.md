@@ -13,7 +13,7 @@ This extension lets the agent see and operate desktop windows and a managed Chro
 | `search_ui` | `stateId`, `text`, `role`, `capability` | Ranks matches in the saved outline: exact, prefix, substring, then fuzzy. Returns a maximum of 12. |
 | `expand_ui` | `stateId`, `ref`, `depth` (1 to 8, default 3) | Shows the subtree of one ref. |
 | `inspect_ui` | `stateId`, `ref` | Shows the fields, frame, actions, and capabilities of one ref. |
-| `act_ui` | `stateId`, `actions` (1 to 20), `expect` (optional) | Runs `press`, `click`, `setText`, `typeText`, `keypress`, `scroll`, `drag`, and `moveMouse`. Returns the next state and the outline changes. |
+| `act_ui` | `stateId`, `actions` (1 to 20), `expect` (optional) | Runs `press`, `click`, `setText`, `typeText`, `keypress`, `scroll`, `drag`, and `moveMouse`. Returns the next state and the outline changes. The first desktop `act_ui` of a session asks for confirmation; without a UI, desktop `act_ui` is refused. |
 | `read_text` | `ref`, `offset`, `stateId` | Reads one page of `@e` text (4000 characters) or of `@o` output (16 KiB). An `@o` ref needs no `stateId`. |
 | `wait_for` | `stateId`, `ref` or `scopeRef`, `text`, `role`, `value`, `until`, `timeoutMs` | Observes again every 500 ms until the condition is true or the time limit (default 10000 ms) ends. |
 | `launch_browser` | `url` (optional) | Starts the managed browser with a DevTools port, or uses the browser that runs. Returns an observed `browser_page` state. |
@@ -74,7 +74,7 @@ Other environment variables:
 ## Paths
 
 - State: `<agentDir>/ext/computer-use/` (helper builds, `browser-chrome/` and `browser-helium/` profiles).
-- Temporary screenshots: `<tmp>/pi-computer-use/`. The extension deletes each file after it reads it.
+- Temporary screenshots: `<agentDir>/ext/computer-use/captures/` (mode 0700). The extension deletes each file after it reads it.
 
 ## Session replay
 
