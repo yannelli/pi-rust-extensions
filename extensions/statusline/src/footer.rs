@@ -120,6 +120,14 @@ impl Footer {
         self.lock().extras.project = project;
     }
 
+    /// Uses `snapshot` until an event brings a newer ctx.
+    pub fn seed(&self, snapshot: &pi_ext_sdk::Snapshot) {
+        let mut state = self.lock();
+        if state.ctx.is_none() {
+            state.ctx = Some(snapshot.clone());
+        }
+    }
+
     /// Records an event's ctx and what it says about compaction and the cache.
     pub fn observe(&self, ev: &EventCtx) {
         let mut state = self.lock();
@@ -192,6 +200,9 @@ impl Footer {
             .is_some_and(|init| init.mode == "tui" && init.has_ui);
         if !tui {
             return;
+        }
+        if let Some(snapshot) = host.snapshot() {
+            self.seed(&snapshot);
         }
         let width = host.surface_width("footer").unwrap_or(DEFAULT_WIDTH);
         let lines = {

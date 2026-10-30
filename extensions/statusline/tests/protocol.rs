@@ -159,3 +159,27 @@ async fn an_untrusted_project_cannot_switch_to_a_command() {
     assert!(!marker.exists());
     host.finish().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_choice_shows_before_any_event_arrives() {
+    let dirs = Dirs::new("choice");
+    let mut host = TestHost::start(extension(PathBuf::from("/nonexistent-home")));
+    host.initialize_in(dirs.cwd().to_str().unwrap(), dirs.agent().to_str().unwrap())
+        .await;
+    let params = json!({ "name": "statusline", "args": "minimal", "ctx": ctx(&dirs.cwd(), false) });
+    host.request(1, "command.run", params).await;
+    let mut seen = Seen::default();
+    let shown = |seen: &Seen| seen.responded && !seen.footers.is_empty();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        pump(&mut host, &mut seen, 1, shown),
+    )
+    .await
+    .expect("the chosen status line reaches the footer");
+    assert!(
+        strip(&seen.footers[0][0]).contains("gpt-5"),
+        "{:?}",
+        seen.footers
+    );
+    host.finish().await.unwrap();
+}

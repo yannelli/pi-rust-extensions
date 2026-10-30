@@ -12,6 +12,7 @@ use crate::sources;
 
 pub async fn statusline_command(footer: Arc<Footer>, args: String, ctx: CommandCtx) -> Result<()> {
     let host = ctx.host().clone();
+    footer.seed(ctx.snapshot());
     let choice = args.trim();
     if choice.is_empty() || choice == "edit" {
         return open_editor(footer, host).await;
