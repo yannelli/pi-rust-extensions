@@ -63,11 +63,34 @@ async fn collect(
 }
 
 pub async fn run(
+    command: Command,
+    input: Option<String>,
+    seconds: u64,
+    cancel: CancellationToken,
+    ctx: Option<ToolCtx>,
+) -> Result<Output> {
+    run_inner(command, input, seconds, cancel, ctx, false).await
+}
+
+pub async fn run_remote(
+    command: Command,
+    input: Option<String>,
+    seconds: u64,
+    cancel: CancellationToken,
+    ctx: Option<ToolCtx>,
+) -> Result<Output> {
+    let input = input.unwrap_or_default();
+    let framed = format!("{}\n{input}", input.len());
+    run_inner(command, Some(framed), seconds, cancel, ctx, true).await
+}
+
+async fn run_inner(
     mut command: Command,
     input: Option<String>,
     seconds: u64,
     cancel: CancellationToken,
     ctx: Option<ToolCtx>,
+    keep_open: bool,
 ) -> Result<Output> {
     if seconds == 0 {
         return Err(Error::msg("timeout must be greater than zero"));
@@ -90,12 +113,14 @@ pub async fn run(
         .stderr
         .take()
         .ok_or_else(|| Error::msg("SSH stderr unavailable"))?;
-    let stdin = child.stdin.take();
+    let mut stdin = child.stdin.take();
     let communicate = async {
         let write = async {
-            if let (Some(mut stdin), Some(input)) = (stdin, input) {
-                stdin.write_all(input.as_bytes()).await?;
-                stdin.shutdown().await?;
+            if let (Some(writer), Some(input)) = (stdin.as_mut(), input) {
+                writer.write_all(input.as_bytes()).await?;
+            }
+            if !keep_open {
+                drop(stdin.take());
             }
             Ok::<_, Error>(())
         };
@@ -114,6 +139,7 @@ pub async fn run(
             Err(_) => Err(Error::msg(format!("SSH command timed out after {seconds}s"))),
         }
     };
+    drop(stdin);
     match output {
         Ok(((stdout, stderr, truncated), status)) => Ok(Output {
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
@@ -122,8 +148,14 @@ pub async fn run(
             truncated,
         }),
         Err(error) => {
-            child.kill().await?;
-            child.wait().await?;
+            if !keep_open
+                || tokio::time::timeout(Duration::from_secs(1), child.wait())
+                    .await
+                    .is_err()
+            {
+                child.kill().await?;
+                child.wait().await?;
+            }
             Err(error)
         }
     }
