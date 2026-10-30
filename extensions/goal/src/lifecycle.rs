@@ -3,6 +3,7 @@ use pi_ext_sdk::prelude::*;
 use crate::app::{AUDIT_MESSAGE, App, AuditJob, Inner};
 use crate::auditor::{self, Verdict};
 use crate::format::truncate_text;
+use crate::prompts::pending_tasks;
 use crate::scheduler;
 use crate::state::{Goal, GoalStatus, GoalTask, StopReason};
 use crate::widget;
@@ -64,10 +65,9 @@ pub async fn submit_completion(app: &App, host: &Host, summary: Option<String>) 
         };
         let gating = goal.gating_pending();
         if !gating.is_empty() {
-            let ids: Vec<&str> = gating.iter().map(|t| t.id.as_str()).collect();
             return ToolResult::error(format!(
-                "TASK GATE: resolve pending tasks before completion: {}",
-                ids.join(", ")
+                "TASK GATE: the goal stays open until these tasks are complete or skipped with a reason: {}. Finish them with update_goal_task, then request completion again.",
+                pending_tasks(&gating)
             ));
         }
         inner.run.stopped = true;
@@ -167,10 +167,9 @@ pub async fn finish_audit(
                 ),
             };
             goal.set_status(status, verdict.error.as_ref().map(|_| StopReason::Agent));
-            goal.log(if verdict.error.is_some() {
-                "auditor failed"
-            } else {
-                "auditor disapproved"
+            goal.log(match &verdict.error {
+                Some(error) => format!("auditor failed: {}", truncate_text(error, 200)),
+                None => "auditor disapproved".into(),
             });
             let goal = goal.clone();
             let auto = goal.auto_continue && status == GoalStatus::Active;
@@ -235,7 +234,7 @@ pub async fn resume(app: &App, host: &Host) -> std::result::Result<Goal, String>
     if goal.budget_reached() {
         return Err("The token budget is used up; /goal-tweak raises it.".into());
     }
-    scheduler::send_continuation(host, &goal.id)
+    scheduler::send_continuation(app, host, &goal.id)
         .await
         .map_err(|e| e.message().to_owned())?;
     Ok(goal)

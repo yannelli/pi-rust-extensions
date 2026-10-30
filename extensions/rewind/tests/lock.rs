@@ -63,12 +63,15 @@ async fn second_holder_waits_then_gets_the_lock() {
 #[tokio::test]
 async fn stale_lock_is_taken_over_and_fresh_lock_is_kept() {
     let dir = TestDir::new("lock-stale");
-    write_generation(dir.path(), 0, &format!("99999 {}\n", now_ms()));
-    assert!(
-        StorageLock::acquire_with(dir.path(), SHORT, STALE_AFTER)
-            .await
-            .is_err()
-    );
+    let mut other = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    write_generation(dir.path(), 0, &format!("{} {}\n", other.id(), now_ms()));
+    let held = StorageLock::acquire_with(dir.path(), SHORT, STALE_AFTER).await;
+    let _ = other.kill();
+    let _ = other.wait();
+    assert!(held.is_err());
     let old = now_ms() - 10 * 60 * 1000;
     write_generation(dir.path(), 0, &format!("99999 {old}\n"));
     let _lock = StorageLock::acquire_with(dir.path(), SHORT, STALE_AFTER)
@@ -137,6 +140,17 @@ fn one_of_many_stale_takers_wins() {
             .collect();
         assert_eq!(locks.len(), 1, "round {round}: {} holders", locks.len());
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fresh_lock_of_an_exited_process_is_taken_over() {
+    let dir = TestDir::new("lock-exited");
+    let mut gone = std::process::Command::new("true").spawn().unwrap();
+    gone.wait().unwrap();
+    write_generation(dir.path(), 0, &format!("{} {}\n", gone.id(), now_ms()));
+    let lock = StorageLock::acquire_with(dir.path(), SHORT, STALE_AFTER).await;
+    assert!(lock.is_ok());
 }
 
 #[tokio::test]
@@ -215,4 +229,21 @@ fn paused_taker_cannot_claim_an_obsolete_generation() {
     assert!(!is_free(dir.path()));
     drop(newer);
     assert!(is_free(dir.path()));
+}
+
+#[tokio::test]
+async fn git_lock_files_of_a_killed_run_do_not_block_checkpoints() {
+    let work = TestDir::new("lock-git-work");
+    let storage = TestDir::new("lock-git-storage");
+    std::fs::write(work.path().join("a.txt"), "one\n").unwrap();
+    let mut session = Session::new(Config::default(), storage.path().to_path_buf(), work.path());
+    let first = session.snapshot("first", None).await.unwrap();
+    let git_dir = storage.path().join(".git");
+    for lock in ["index.lock", "HEAD.lock"] {
+        std::fs::write(git_dir.join(lock), "").unwrap();
+    }
+    std::fs::write(work.path().join("a.txt"), "two\n").unwrap();
+    let second = session.snapshot("second", Some(&first)).await.unwrap();
+    assert_ne!(first, second);
+    assert!(!git_dir.join("index.lock").exists());
 }

@@ -113,7 +113,7 @@ async fn direct(app: &App, host: &Host, mut objective: String, sisyphus: bool) -
             ))
             .await?;
             if host.is_idle().await.unwrap_or(true) {
-                scheduler::send_continuation(host, &goal.id).await?;
+                scheduler::send_continuation(app, host, &goal.id).await?;
             }
             Ok(())
         }
