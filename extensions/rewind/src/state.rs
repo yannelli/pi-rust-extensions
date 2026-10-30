@@ -25,6 +25,8 @@ pub struct Session {
     pub pending: Option<Pending>,
     pub last_commit: Option<String>,
     pub tree_target: Option<Option<String>>,
+    /// The user entry whose pre-turn checkpoint failed; its later assistant messages skip it.
+    pub failed_turn: Option<String>,
 }
 
 impl Session {
@@ -36,12 +38,15 @@ impl Session {
             pending: None,
             last_commit: None,
             tree_target: None,
+            failed_turn: None,
         }
     }
 
     /// Holds the storage lock while git runs, so other pi processes on this storage wait.
     pub async fn lock(&self) -> Result<StorageLock> {
-        StorageLock::acquire(&self.storage).await
+        let lock = StorageLock::acquire(&self.storage).await?;
+        self.repo.clear_stale_locks();
+        Ok(lock)
     }
 
     pub async fn snapshot(&mut self, message: &str, base: Option<&str>) -> Result<String> {
@@ -71,9 +76,11 @@ impl Session {
         user_entry_id: &str,
         prompt: &str,
     ) -> Result<()> {
-        if self.pending.as_ref().map(|p| p.user_entry_id.as_str()) == Some(user_entry_id) {
+        let started = self.pending.as_ref().map(|p| p.user_entry_id.as_str());
+        if started == Some(user_entry_id) || self.failed_turn.as_deref() == Some(user_entry_id) {
             return Ok(());
         }
+        self.failed_turn = Some(user_entry_id.to_string());
         let _lock = self.lock().await?;
         if let Err(err) = self.finish_turn_locked(host).await {
             warn!("dropped unfinished checkpoint: {err}");
@@ -83,6 +90,7 @@ impl Session {
         let before = self
             .snapshot_locked(&format!("[pi] before:{user_entry_id}"), base.as_deref())
             .await?;
+        self.failed_turn = None;
         self.pending = Some(Pending {
             user_entry_id: user_entry_id.to_string(),
             prompt: prompt.to_string(),

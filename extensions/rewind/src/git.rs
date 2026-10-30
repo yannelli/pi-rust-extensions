@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use pi_ext_sdk::{Error, Result, bail};
+use pi_ext_sdk::{Error, Result, bail, info};
 use serde::{Deserialize, Serialize};
 
-use crate::gitcmd::{path_str, run_git};
+use crate::gitcmd::{failure, git_output, path_str, run_git};
 use crate::nested;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -84,7 +84,7 @@ impl ShadowRepo {
         self.configure().await
     }
 
-    pub async fn git(&self, args: &[&str]) -> Result<String> {
+    fn full_args<'a>(&'a self, args: &[&'a str]) -> Result<Vec<&'a str>> {
         let mut full = vec![
             "--git-dir",
             path_str(&self.git_dir)?,
@@ -92,7 +92,11 @@ impl ShadowRepo {
             path_str(&self.work_tree)?,
         ];
         full.extend_from_slice(args);
-        run_git(Some(&self.work_tree), &full).await
+        Ok(full)
+    }
+
+    pub async fn git(&self, args: &[&str]) -> Result<String> {
+        run_git(Some(&self.work_tree), &self.full_args(args)?).await
     }
 
     pub async fn write_exclude(&self, patterns: &[String]) -> Result<()> {
@@ -124,9 +128,39 @@ impl ShadowRepo {
             .iter()
             .map(|path| format!(":(exclude,literal){path}"))
             .collect();
-        let mut args = vec!["add", "-A", "--", "."];
+        let mut args = vec!["add", "-A", "--ignore-errors", "--", "."];
         args.extend(excludes.iter().map(String::as_str));
-        self.git(&args).await.map(drop)
+        let full = self.full_args(&args)?;
+        let output = git_output(Some(&self.work_tree), &full).await?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let unreadable = unreadable_files(&String::from_utf8_lossy(&output.stderr));
+        match unreadable {
+            Some(paths) => {
+                info!("checkpoint skipped unreadable files: {}", paths.join(", "));
+                Ok(())
+            }
+            None => bail!("{}", failure(&full, &output)),
+        }
+    }
+
+    /// Removes git lock files of a killed git run. Callers hold the storage lock, so no
+    /// other shadow git command is running.
+    pub fn clear_stale_locks(&self) {
+        let mut paths = vec![
+            self.git_dir.join("index.lock"),
+            self.git_dir.join("HEAD.lock"),
+        ];
+        if let Ok(entries) = std::fs::read_dir(self.git_dir.join("refs").join("heads")) {
+            let refs = entries.flatten().map(|entry| entry.path());
+            paths.extend(refs.filter(|path| path.extension().is_some_and(|ext| ext == "lock")));
+        }
+        for path in paths {
+            if std::fs::remove_file(&path).is_ok() {
+                info!("removed stale {}", path.display());
+            }
+        }
     }
 
     async fn oversized(&self, max_bytes: Option<u64>) -> Result<Vec<String>> {
@@ -219,6 +253,23 @@ impl ShadowRepo {
     }
 }
 
+/// Paths `git add --ignore-errors` could not read, or `None` when it failed for another reason.
+fn unreadable_files(stderr: &str) -> Option<Vec<String>> {
+    let mut paths = Vec::new();
+    for line in stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if let Some(path) = line.strip_prefix("error: unable to index file ") {
+            paths.push(path.trim_matches('\'').to_string());
+        } else if !line.starts_with("error: open(") && !line.starts_with("warning: ") {
+            return None;
+        }
+    }
+    (!paths.is_empty()).then_some(paths)
+}
+
 pub fn parse_numstat(out: &str) -> Vec<FileChange> {
     out.lines()
         .filter_map(|line| {
@@ -250,6 +301,16 @@ mod tests {
         assert_eq!(changes[0].path, "src/a.rs");
         assert_eq!((changes[0].added, changes[0].removed), (3, 1));
         assert_eq!((changes[1].added, changes[1].removed), (0, 0));
+    }
+
+    #[test]
+    fn accepts_only_unreadable_file_errors() {
+        let skipped = "error: open(\"secret.txt\"): Permission denied\nerror: unable to index file 'secret.txt'\n";
+        assert_eq!(unreadable_files(skipped), Some(vec!["secret.txt".into()]));
+        let locked = "fatal: Unable to create '/s/.git/index.lock': File exists.\n";
+        assert_eq!(unreadable_files(locked), None);
+        assert_eq!(unreadable_files(&format!("{skipped}{locked}")), None);
+        assert_eq!(unreadable_files(""), None);
     }
 
     #[test]
