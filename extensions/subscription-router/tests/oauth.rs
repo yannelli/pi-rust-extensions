@@ -105,24 +105,57 @@ fn parses_pasted_codes() {
     assert_eq!(pasted_code(None, "s").unwrap_err(), "Login cancelled");
 }
 
+async fn get(url: String) -> u16 {
+    reqwest::get(url).await.unwrap().status().as_u16()
+}
+
+async fn still_waiting(server: &mut callback::CallbackServer) -> bool {
+    let wait = tokio::time::timeout(std::time::Duration::from_millis(200), server.wait());
+    wait.await.is_err()
+}
+
 #[tokio::test]
 async fn callback_server_returns_the_code() {
     let mut server = callback::start(0, "/auth/callback", "st").await.unwrap();
     let base = format!("http://127.0.0.1:{}", server.port);
-    let client = reqwest::Client::new();
-    let wrong = client.get(format!("{base}/other")).send().await.unwrap();
-    assert_eq!(wrong.status(), 404);
-    let ok = client
-        .get(format!("{base}/auth/callback?code=xyz&state=st"))
-        .send()
+    assert_eq!(get(format!("{base}/other")).await, 404);
+    assert_eq!(
+        get(format!("{base}/auth/callback?code=xyz&state=st")).await,
+        200
+    );
+    assert_eq!(server.wait().await.unwrap(), "xyz");
+}
+
+#[tokio::test]
+async fn callback_server_rejects_missing_or_wrong_state_and_keeps_listening() {
+    let mut server = callback::start(0, "/cb", "good").await.unwrap();
+    let base = format!("http://127.0.0.1:{}/cb", server.port);
+    let idle = tokio::net::TcpStream::connect(("127.0.0.1", server.port))
         .await
         .unwrap();
-    assert_eq!(ok.status(), 200);
-    assert_eq!(server.wait().await.unwrap(), "xyz");
-    let mut mismatch = callback::start(0, "/cb", "good").await.unwrap();
-    let url = format!("http://127.0.0.1:{}/cb?code=1&state=bad", mismatch.port);
-    assert_eq!(client.get(url).send().await.unwrap().status(), 400);
-    assert_eq!(mismatch.wait().await.unwrap_err(), "State mismatch");
+    assert_eq!(get(format!("{base}?code=1")).await, 400);
+    assert_eq!(get(format!("{base}?code=1&state=bad")).await, 400);
+    assert_eq!(get(format!("{base}?error=access_denied")).await, 400);
+    assert_eq!(get(format!("{base}?state=good")).await, 400);
+    assert!(still_waiting(&mut server).await);
+    assert_eq!(get(format!("{base}?code=ok&state=good")).await, 200);
+    assert_eq!(server.wait().await.unwrap(), "ok");
+    drop(idle);
+    let mut denied = callback::start(0, "/cb", "good").await.unwrap();
+    let url = format!(
+        "http://127.0.0.1:{}/cb?error=access_denied&state=good",
+        denied.port
+    );
+    assert_eq!(get(url).await, 400);
+    assert_eq!(
+        denied.wait().await.unwrap_err(),
+        "OAuth error: access_denied"
+    );
+    let timeout = std::time::Duration::from_millis(50);
+    let mut idle = callback::start_with_timeout(0, "/cb", "s", timeout)
+        .await
+        .unwrap();
+    assert_eq!(idle.wait().await.unwrap_err(), "Login timed out");
 }
 
 fn form(body: &str) -> Vec<(String, String)> {
@@ -186,8 +219,8 @@ async fn anthropic_refresh_posts_json_and_reports_errors() {
     );
 }
 
-#[test]
-fn account_store_writes_private_file_and_numbers_slots() {
+#[tokio::test]
+async fn account_store_writes_private_file_and_numbers_slots() {
     let dir = common::temp_dir("accounts");
     let path = dir.join("ext/subscription-router/accounts.json");
     let store = AccountStore::load(path.clone());
@@ -200,9 +233,11 @@ fn account_store_writes_private_file_and_numbers_slots() {
     };
     store
         .upsert(Account::new(Family::Codex, 2, credential.clone()))
+        .await
         .unwrap();
     store
         .upsert(Account::new(Family::Anthropic, 2, credential))
+        .await
         .unwrap();
     assert_eq!(store.next_slot(Family::Codex), 3);
     let reloaded = AccountStore::load(path.clone());
@@ -225,6 +260,6 @@ fn account_store_writes_private_file_and_numbers_slots() {
             0o600
         );
     }
-    assert!(reloaded.remove("openai-codex-2").unwrap());
+    assert!(reloaded.remove("openai-codex-2").await.unwrap());
     assert_eq!(AccountStore::load(path).list().len(), 1);
 }

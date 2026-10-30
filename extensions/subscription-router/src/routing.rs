@@ -9,7 +9,7 @@ use pi_ext_sdk::prelude::*;
 
 use crate::config::{ModelRef, Profile, ROUTER_PROVIDER, THINKING_LEVELS};
 use crate::fsutil::{iso_seconds, now_ms};
-use crate::router::{FailedRequest, Pick, RouteError, RouteInput, Routed, can_wait};
+use crate::router::{FailedRequest, Pick, RouteError, RouteInput, Routed, route_wait};
 use crate::state::{DECISION_ENTRY, HostEnv, State, current_model, lock};
 
 pub fn definition(profile: &Profile) -> Value {
@@ -36,7 +36,8 @@ async fn record(host: &Host, state: &State, routed: &Routed) {
     }
 }
 
-/// Routes one request; with policy `wait` an exhausted chain sleeps until the earliest reset.
+/// Routes one request. An exhausted chain fails, or sleeps once until the earliest reset when
+/// [`route_wait`] allows it.
 pub async fn route(state: Arc<State>, request: RouteRequest, host: Host) -> Result<Value> {
     let Some(profile) = state.config().profile(&request.id).cloned() else {
         bail!("subscription-router: unknown profile {}", request.id);
@@ -58,8 +59,8 @@ pub async fn route(state: Arc<State>, request: RouteRequest, host: Host) -> Resu
             }
             Err(RouteError::Exhausted { message, reset_at }) => {
                 let now = now_ms();
-                let reset = reset_at
-                    .filter(|_| !waited && can_wait(profile.exhaustion.as_ref(), reset_at, now));
+                let reset =
+                    route_wait(profile.exhaustion.as_ref(), reset_at, now).filter(|_| !waited);
                 let Some(reset) = reset else {
                     bail!("{message}")
                 };
