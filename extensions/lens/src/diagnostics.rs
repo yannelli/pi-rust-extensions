@@ -13,8 +13,42 @@ fn absolute(root: &Path, path: &str) -> String {
     .into_owned()
 }
 
+pub const MAX_FINDINGS: usize = 200;
+pub const MAX_MESSAGE_BYTES: usize = 4 * 1024;
+
 pub fn finding(path: &Path, source: &str, severity: &str, message: &str) -> Value {
-    json!({"path":path, "line":1, "column":1, "source":source, "severity":severity, "message":message})
+    json!({"path":path, "line":1, "column":1, "source":source, "severity":severity, "message":clip(message, MAX_MESSAGE_BYTES)})
+}
+
+/// Cuts `text` to at most `max` bytes on a character boundary.
+pub fn clip(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_owned();
+    }
+    let mut end = max.saturating_sub(3);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &text[..end])
+}
+
+/// Keeps the first [`MAX_FINDINGS`] findings of one source, clips their messages,
+/// and adds one finding that counts the rest.
+pub fn cap(mut findings: Vec<Value>, path: &Path, source: &str) -> Vec<Value> {
+    let total = findings.len();
+    findings.truncate(MAX_FINDINGS);
+    for item in &mut findings {
+        if let Some(message) = item["message"].as_str()
+            && message.len() > MAX_MESSAGE_BYTES
+        {
+            item["message"] = json!(clip(message, MAX_MESSAGE_BYTES));
+        }
+    }
+    if total > MAX_FINDINGS {
+        let rest = format!("{} more findings not shown", total - MAX_FINDINGS);
+        findings.push(finding(path, source, "warning", &rest));
+    }
+    findings
 }
 
 pub fn parse(source: &str, output: &str, root: &Path, file: &Path) -> Vec<Value> {

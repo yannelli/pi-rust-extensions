@@ -150,7 +150,13 @@ async fn timeout_kills_grandchildren_and_the_pipeline_has_a_total_cap() {
         ..Default::default()
     };
     let started = Instant::now();
-    let findings = pipeline::run(&config, &project.0, &file).await;
+    let findings = pipeline::run(
+        &config,
+        &project.0,
+        &file,
+        &crate::pipeline::Runner::default(),
+    )
+    .await;
     assert!(started.elapsed() < Duration::from_secs(2), "{findings:?}");
     let messages: Vec<_> = findings
         .iter()

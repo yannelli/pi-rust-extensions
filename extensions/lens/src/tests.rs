@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::json;
 
-use crate::{config, detection, diagnostics, state::Guard};
+use crate::pipeline::Runner;
+use crate::state::{Guard, small_text};
+use crate::{config, detection, diagnostics};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -64,35 +66,76 @@ fn guard_tracks_partial_reads_and_external_changes() {
     let mut guard = Guard::default();
     assert!(
         guard
-            .block_reason(&path, "edit", &json!({"oldText":"first"}))
+            .block_reason(
+                &path,
+                small_text(&path),
+                "edit",
+                &json!({"oldText":"first"})
+            )
             .is_some()
     );
     guard.record(
         &path,
+        small_text(&path),
         &json!({"offset":2,"limit":1}),
         &[json!({"text":"second"})],
     );
     assert!(
         guard
-            .block_reason(&path, "edit", &json!({"oldText":"second"}))
+            .block_reason(
+                &path,
+                small_text(&path),
+                "edit",
+                &json!({"oldText":"second"})
+            )
             .is_none()
     );
     assert!(
         guard
-            .block_reason(&path, "edit", &json!({"oldText":"first"}))
+            .block_reason(
+                &path,
+                small_text(&path),
+                "edit",
+                &json!({"oldText":"first"})
+            )
             .is_some()
     );
-    assert!(guard.block_reason(&path, "write", &json!({})).is_some());
-    guard.record(&path, &json!({}), &[json!({"text":"first\nsecond\nthird"})]);
-    assert!(guard.block_reason(&path, "write", &json!({})).is_none());
-    project.write("a.py", "changed\n");
-    assert!(guard.block_reason(&path, "write", &json!({})).is_some());
-    guard.allowed.insert(path.clone());
-    assert!(guard.block_reason(&path, "write", &json!({})).is_none());
-    assert!(guard.block_reason(&path, "write", &json!({})).is_some());
     assert!(
         guard
-            .block_reason(&project.0.join("new.py"), "write", &json!({}))
+            .block_reason(&path, small_text(&path), "write", &json!({}))
+            .is_some()
+    );
+    guard.record(
+        &path,
+        small_text(&path),
+        &json!({}),
+        &[json!({"text":"first\nsecond\nthird"})],
+    );
+    assert!(
+        guard
+            .block_reason(&path, small_text(&path), "write", &json!({}))
+            .is_none()
+    );
+    project.write("a.py", "changed\n");
+    assert!(
+        guard
+            .block_reason(&path, small_text(&path), "write", &json!({}))
+            .is_some()
+    );
+    guard.allowed.insert(path.clone());
+    assert!(
+        guard
+            .block_reason(&path, small_text(&path), "write", &json!({}))
+            .is_none()
+    );
+    assert!(
+        guard
+            .block_reason(&path, small_text(&path), "write", &json!({}))
+            .is_some()
+    );
+    assert!(
+        guard
+            .block_reason(&project.0.join("new.py"), None, "write", &json!({}))
             .is_none()
     );
 }
@@ -176,7 +219,7 @@ async fn fake_pipeline_formats_then_lints_and_clears_findings() {
         trusted: true,
         ..Default::default()
     };
-    let findings = crate::pipeline::run(&config, &project.0, &file).await;
+    let findings = crate::pipeline::run(&config, &project.0, &file, &Runner::default()).await;
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "formatted\n");
     assert_eq!(
@@ -185,7 +228,7 @@ async fn fake_pipeline_formats_then_lints_and_clears_findings() {
     );
     project.write("diagnostics.json", "[]");
     assert!(
-        crate::pipeline::run(&config, &project.0, &file)
+        crate::pipeline::run(&config, &project.0, &file, &Runner::default())
             .await
             .is_empty()
     );
@@ -195,7 +238,7 @@ async fn fake_pipeline_formats_then_lints_and_clears_findings() {
         .insert("python".to_owned(), config::Toggle { enabled: false });
     project.write("order", "");
     assert!(
-        crate::pipeline::run(&config, &project.0, &file)
+        crate::pipeline::run(&config, &project.0, &file, &Runner::default())
             .await
             .is_empty()
     );
@@ -224,7 +267,7 @@ async fn timeout_becomes_a_finding() {
         args: vec![],
         enabled: true,
     });
-    let findings = crate::pipeline::run(&config, &project.0, &file).await;
+    let findings = crate::pipeline::run(&config, &project.0, &file, &Runner::default()).await;
     assert!(
         findings[0]["message"]
             .as_str()
@@ -238,3 +281,6 @@ mod protocol;
 
 #[path = "trust_tests.rs"]
 mod trust;
+
+#[path = "hang_tests.rs"]
+mod hang;

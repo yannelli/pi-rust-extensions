@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::Config;
+use crate::pipeline::Runner;
+
+pub const MAX_GUARD_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Default)]
 pub struct State {
@@ -12,6 +15,17 @@ pub struct State {
     pub findings: BTreeMap<PathBuf, Vec<Value>>,
     pub guard: Guard,
     pub warned_trust: bool,
+    pub runner: Runner,
+}
+
+/// Text of a regular file of at most [`MAX_GUARD_BYTES`]. Lens does not open
+/// FIFOs, devices or large files, because a read can block or use much memory.
+pub fn small_text(path: &Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_GUARD_BYTES {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -28,13 +42,11 @@ struct Read {
 }
 
 impl Guard {
-    pub fn record(&mut self, path: &Path, input: &Value, content: &[Value]) {
-        let Ok(text) = std::fs::read_to_string(path) else {
+    /// `text` is the current file text from [`small_text`].
+    pub fn record(&mut self, path: &Path, text: Option<String>, input: &Value, content: &[Value]) {
+        let Some(text) = text else {
             return;
         };
-        if text.len() > 2 * 1024 * 1024 {
-            return;
-        }
         let start = input["offset"].as_u64().unwrap_or(1).max(1) as usize;
         let total = text.lines().count().max(1);
         let output = content
@@ -72,15 +84,23 @@ impl Guard {
         read.ranges.push(range);
     }
 
-    pub fn block_reason(&mut self, path: &Path, tool: &str, input: &Value) -> Option<String> {
-        if self.allowed.remove(path) || !path.exists() {
+    /// `text` is the current file text from [`small_text`]. Missing, large,
+    /// special and non-UTF-8 files have none and pass without a check.
+    pub fn block_reason(
+        &mut self,
+        path: &Path,
+        text: Option<String>,
+        tool: &str,
+        input: &Value,
+    ) -> Option<String> {
+        if self.allowed.remove(path) {
             return None;
         }
-        let text = std::fs::read_to_string(path).ok();
+        let text = text?;
         let covered = self
             .reads
             .get(path)
-            .filter(|read| Some(&read.text) == text.as_ref())
+            .filter(|read| read.text == text)
             .is_some_and(|read| {
                 let mut ranges = read.ranges.clone();
                 ranges.sort_unstable();
