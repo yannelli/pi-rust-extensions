@@ -161,6 +161,7 @@ mod tests {
         assert_eq!(label("5h", Some(300)), "5h");
         assert_eq!(label("Weekly", Some(10080)), "wk");
         assert_eq!(label("Weekly Opus", Some(10080)), "wk Opus");
+        assert_eq!(label("Weekly Grok Build", Some(10080)), "wk Grok Build");
         assert_eq!(label("Primary", Some(300)), "5h");
         assert_eq!(label("Secondary", Some(1440)), "1d");
         assert_eq!(label("Primary", None), "Primary");

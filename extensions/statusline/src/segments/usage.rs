@@ -15,7 +15,13 @@ pub use format::{format_duration, format_percent, format_usage, parse_utc_ms, ro
 
 use crate::themes::Role;
 
-const PROVIDERS: &[&str] = &["anthropic", "openai-codex", "cursor", "google-antigravity"];
+const PROVIDERS: &[&str] = &[
+    "anthropic",
+    "openai-codex",
+    "cursor",
+    "xai",
+    "google-antigravity",
+];
 const TICK: Duration = Duration::from_secs(2);
 const REFRESH: Duration = Duration::from_secs(90);
 const AFTER_RUN: Duration = Duration::from_secs(5);
@@ -153,6 +159,7 @@ mod tests {
     #[test]
     fn only_known_providers_have_usage() {
         assert_eq!(usage_provider("openai-codex"), Some("openai-codex"));
+        assert_eq!(usage_provider("xai"), Some("xai"));
         assert_eq!(usage_provider("openrouter"), None);
         assert_eq!(lookup("openrouter"), None);
         assert_eq!(segment_text("openrouter", false), None);

@@ -25,7 +25,7 @@ In a project that is not trusted, `command` and the `command`, `claude`, and `cu
 
 ## Usage segments
 
-`usage` and `usageReset` show the subscription limits of the current model's provider (`anthropic`, `openai-codex`, `cursor`, `google-antigravity`) from pi's `usage.get`, as `/usage` shows them. Add them in `/statusline` under "Modules / order", or in `segments`.
+`usage` and `usageReset` show the subscription limits of the current model's provider (`anthropic`, `openai-codex`, `cursor`, `xai`, `google-antigravity`) from pi's `usage.get`, as `/usage` shows them. Add them in `/statusline` under "Modules / order", or in `segments`.
 
 | Segment | Example |
 | --- | --- |
