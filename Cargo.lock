@@ -618,6 +618,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "pi-ext-ask-user-question"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-background-tasks"
 version = "0.1.0"
 dependencies = [
@@ -727,6 +738,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-subagents"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "pi-ext-todo"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-typesafe"
 version = "0.1.0"
 dependencies = [
@@ -743,6 +776,7 @@ dependencies = [
 name = "pi-rust-ext"
 version = "0.1.0"
 dependencies = [
+ "pi-ext-ask-user-question",
  "pi-ext-background-tasks",
  "pi-ext-goal",
  "pi-ext-iterm2",
@@ -751,6 +785,8 @@ dependencies = [
  "pi-ext-rewind",
  "pi-ext-ssh",
  "pi-ext-statusline",
+ "pi-ext-subagents",
+ "pi-ext-todo",
  "pi-ext-typesafe",
 ]
 
