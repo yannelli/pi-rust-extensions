@@ -135,3 +135,24 @@ fn progress_folds_event_stream() {
     assert_eq!(progress.output(), "partial");
     assert_eq!(progress.apply_line("not json"), Effect::None);
 }
+
+#[test]
+fn disallowed_tools_leave_the_child_tool_list() {
+    let mut explore = builtin_agents().remove(0);
+    explore.disallowed_tools = vec!["grep".into(), "ls".into()];
+    let spec = args_of(&explore, &Overrides::default(), "t");
+    assert_eq!(flag(&spec.args, "--tools"), Some("read,find,todo"));
+
+    let mut build = builtin_agents().remove(1);
+    build.disallowed_tools = vec!["bash".into(), "write".into()];
+    let spec = args_of(&build, &Overrides::default(), "t");
+    assert_eq!(
+        flag(&spec.args, "--exclude-tools"),
+        Some("subagent,bash,write")
+    );
+
+    explore.disallowed_tools = explore.tools.clone().unwrap();
+    let spec = args_of(&explore, &Overrides::default(), "t");
+    assert!(spec.args.contains(&"--no-tools".to_owned()));
+    assert_eq!(flag(&spec.args, "--tools"), None);
+}

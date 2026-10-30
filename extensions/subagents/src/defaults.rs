@@ -61,6 +61,7 @@ fn builtin(name: &str, description: &str, prompt: &str, tools: Option<Vec<String
         description: description.to_owned(),
         prompt: prompt.to_owned(),
         tools,
+        disallowed_tools: Vec::new(),
         model: None,
         thinking: None,
         max_turns: None,

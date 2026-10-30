@@ -168,6 +168,11 @@ impl Runs {
         .unwrap_or(false)
     }
 
+    pub fn any_running(&self) -> bool {
+        let state = self.inner.lock().expect("runs lock");
+        state.runs.iter().any(|run| run.status == Status::Running)
+    }
+
     pub fn cancel_all(&self) {
         for run in self.inner.lock().expect("runs lock").runs.iter() {
             run.cancel.cancel();

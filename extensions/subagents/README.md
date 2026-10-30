@@ -14,18 +14,19 @@ Runs tasks in child pi processes. Three built-in agents: `explore` (read-only se
 | `tasks` | `[{ agent?, task, model?, thinking?, cwd? }]`: tasks that run in parallel (`maxParallel` at a time). |
 | `async` | `true` runs in the background. The tool returns the run ids at once. A `subagent-result` message comes when the runs finish (`deliverAs: followUp`, `triggerTurn: true`). |
 | `model`, `thinking` | Override for this call. |
-| `cwd` | Child working directory, relative to the session cwd. |
+| `cwd` | Child working directory, relative to the session cwd. A path that resolves outside the session cwd is refused. |
 
-Foreground runs send `tool.update` with each child tool call and the tail of the child's text. Background runs show in the widget `subagents` below the editor. The result `details` is `{ runs: [{ id, agent, task, status, background, model, turns, tools, usage, output, exitCode, durationMs }] }`. An abort of the tool call kills the child's process group.
+Foreground runs send `tool.update` with each child tool call and the tail of the child's text. Background runs show in the widget `subagents` below the editor. The result `details` is `{ runs: [{ id, agent, task, status, background, model, turns, tools, usage, output, exitCode, durationMs }] }`. An abort of the tool call kills the child's process group. On shutdown the extension cancels all runs and waits up to 1.4 seconds, so the group gets SIGKILL 1 second after SIGTERM.
 
 ## Child process
 
-`<pi> --mode json -p --no-session [--model <m>] [--thinking <t>] (--tools <list> | --no-tools | --exclude-tools subagent) (--append-system-prompt | --system-prompt) <prompt> [--max-turns <n>] [extraArgs] -- <task>`, in the session cwd.
+`<pi> --mode json -p --no-session [--model <m>] [--thinking <t>] (--tools <list> | --no-tools | --exclude-tools subagent[,<disallowedTools>]) (--append-system-prompt | --system-prompt) <prompt> [--max-turns <n>] [extraArgs] -- <task>`, in the session cwd.
 
 - Model and thinking level: the call override, else the agent's `model`, else the parent session's current model. When neither the call nor the agent sets a model, the child also gets the parent's thinking level, unless the agent or call sets one.
 - The pi binary: config `piBin`, else `$PI_BIN`, else the parent process when its file name starts with `pi`, else `pi` on `PATH`.
 - Env: `PI_TODO_SCOPE=<run id>`, `PI_SUBAGENT_RUN_ID=<run id>`, `PI_SUBAGENT_AGENT=<name>`.
 - Todo scopes: each child `todo` tool result is sent on the `pi.events` channel `todo:scope` as `{ scope, label, status, state }`, with `status` `running`, `completed`, `failed`, or `cancelled` and `state` the child's todo `details` (or `null`). The `todo` extension shows these scopes.
+- Lifecycle: `subagents:start` `{ agentId, agentType }` when a run starts and `subagents:stop` `{ agentId, agentType, status, lastAssistantMessage }` when it ends, on `pi.events`. The `hooks` extension runs SubagentStart and SubagentStop hooks from them.
 
 ## Agent files
 
@@ -36,6 +37,7 @@ Built-in defaults, then `<agentDir>/ext/subagents/agents/*.md`, then `<cwd>/.pi/
 name: reviewer
 description: Reviews a diff and lists bugs.
 tools: Read, Grep, Glob   # Claude names map to read, grep, find; `all` gives every tool
+disallowedTools: Bash     # removed from the child's tools
 model: inherit            # or provider/id; inherit, sonnet, opus, haiku use the session model
 thinking: high            # pi only
 maxTurns: 20              # pi only

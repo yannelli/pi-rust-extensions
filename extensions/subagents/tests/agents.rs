@@ -177,3 +177,12 @@ fn edit_file_updates_existing_definition() {
     let fresh = registry::edit_file(&dir, "build", |fm| fm.body = "B".into()).unwrap();
     assert!(fresh.ends_with("build.md"));
 }
+
+#[test]
+fn reads_disallowed_tools() {
+    let text = "---\nname: rev\ndisallowedTools: Bash, Write\n---\nReview.\n";
+    let mut agents = Vec::new();
+    merge_file(&mut agents, Path::new("/g/rev.md"), text, Source::Global);
+    assert_eq!(agents[0].disallowed_tools, ["bash", "write"]);
+    assert_eq!(agents[0].tools, None);
+}

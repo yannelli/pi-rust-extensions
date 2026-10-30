@@ -12,6 +12,9 @@ use crate::runs::{Runs, Status};
 use crate::stream::Effect;
 
 const STDERR_CAP: usize = 16 * 1024;
+const KILL_GRACE: Duration = Duration::from_secs(1);
+/// How long shutdown waits for cancelled runs: above `KILL_GRACE`, below the SDK's 1.5 s limit.
+pub const SHUTDOWN_WAIT: Duration = Duration::from_millis(1400);
 
 pub async fn execute(
     spec: &ChildSpec,
@@ -113,7 +116,7 @@ async fn collect_stderr(stderr: impl AsyncReadExt + Unpin, runs: &Runs, id: &str
     }
 }
 
-/// SIGTERM to the child's process group, then SIGKILL after 1 second (inside the SDK cancel window).
+/// SIGTERM to the child's process group, then SIGKILL after `KILL_GRACE` (inside the SDK cancel window).
 async fn stop(child: &mut Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
@@ -122,7 +125,7 @@ async fn stop(child: &mut Child) {
             .stderr(Stdio::null())
             .status();
     }
-    if tokio::time::timeout(Duration::from_secs(1), child.wait())
+    if tokio::time::timeout(KILL_GRACE, child.wait())
         .await
         .is_err()
     {

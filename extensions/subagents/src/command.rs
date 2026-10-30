@@ -72,17 +72,22 @@ pub fn build(input: ChildInput<'_>) -> ChildSpec {
     if let Some(thinking) = &thinking {
         args.extend(["--thinking".into(), thinking.clone()]);
     }
+    let mut denied: Vec<&str> = vec!["subagent"];
+    denied.extend(agent.disallowed_tools.iter().map(String::as_str));
     match &agent.tools {
-        Some(tools) if tools.is_empty() => args.push("--no-tools".into()),
         Some(tools) => {
             let tools: Vec<&str> = tools
                 .iter()
                 .map(String::as_str)
-                .filter(|t| *t != "subagent")
+                .filter(|t| !denied.contains(t))
                 .collect();
-            args.extend(["--tools".into(), tools.join(",")]);
+            if tools.is_empty() {
+                args.push("--no-tools".into());
+            } else {
+                args.extend(["--tools".into(), tools.join(",")]);
+            }
         }
-        None => args.extend(["--exclude-tools".into(), "subagent".into()]),
+        None => args.extend(["--exclude-tools".into(), denied.join(",")]),
     }
     if !agent.prompt.trim().is_empty() {
         let flag = match agent.prompt_mode {

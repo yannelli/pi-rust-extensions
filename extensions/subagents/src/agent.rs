@@ -38,6 +38,8 @@ pub struct AgentDef {
     pub prompt: String,
     /// `None` gives the child every tool except `subagent`.
     pub tools: Option<Vec<String>>,
+    /// Removed from the child's tools (Claude `disallowedTools`).
+    pub disallowed_tools: Vec<String>,
     /// `provider/id`; `None` inherits the parent session's model and thinking level.
     pub model: Option<String>,
     pub thinking: Option<String>,
@@ -79,6 +81,7 @@ pub struct AgentPatch {
     pub description: Option<String>,
     pub prompt: Option<String>,
     pub tools: Option<Option<Vec<String>>>,
+    pub disallowed_tools: Option<Vec<String>>,
     pub model: Option<Option<String>>,
     pub thinking: Option<Option<String>>,
     pub max_turns: Option<u32>,
@@ -97,6 +100,9 @@ impl AgentPatch {
             description: fm.text("description"),
             prompt: Some(fm.body.clone()).filter(|body| !body.is_empty()),
             tools,
+            disallowed_tools: fm
+                .get("disallowedTools")
+                .map(|value| map_tools(&value.as_list())),
             model: fm.get("model").map(|value| model_value(&value.as_text())),
             thinking: fm.get("thinking").map(|value| {
                 let level = value.as_text().trim().to_ascii_lowercase();
@@ -124,6 +130,9 @@ impl AgentPatch {
         }
         if let Some(tools) = self.tools {
             agent.tools = tools;
+        }
+        if let Some(disallowed) = self.disallowed_tools {
+            agent.disallowed_tools = disallowed;
         }
         if let Some(model) = self.model {
             agent.model = model;

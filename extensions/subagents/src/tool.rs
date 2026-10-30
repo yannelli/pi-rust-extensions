@@ -95,6 +95,30 @@ pub async fn execute(app: App, params: Params, ctx: ToolCtx) -> Result<ToolResul
     }
 }
 
+/// `rel` joined to the session cwd; refuses paths that resolve outside it.
+pub fn child_cwd(cwd: &Path, rel: &str) -> std::result::Result<std::path::PathBuf, String> {
+    use std::path::Component;
+    let mut dir = cwd.to_path_buf();
+    for part in Path::new(rel).components() {
+        match part {
+            Component::Normal(name) => dir.push(name),
+            Component::ParentDir => {
+                dir.pop();
+            }
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => dir = part.as_os_str().into(),
+        }
+    }
+    let escapes = match (dir.canonicalize(), cwd.canonicalize()) {
+        (Ok(real), Ok(real_cwd)) => !real.starts_with(real_cwd),
+        _ => false,
+    };
+    if !dir.starts_with(cwd) || escapes {
+        return Err(format!("cwd \"{rel}\" is outside the session cwd."));
+    }
+    Ok(dir)
+}
+
 fn jobs_of(
     params: &Params,
     agents: &[AgentDef],
@@ -135,10 +159,10 @@ fn jobs_of(
                     let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
                     format!("Unknown agent \"{name}\". Available: {}.", names.join(", "))
                 })?;
-            let dir = t
-                .cwd
-                .or_else(|| params.cwd.clone())
-                .map_or_else(|| cwd.to_path_buf(), |d| cwd.join(d));
+            let dir = match t.cwd.or_else(|| params.cwd.clone()) {
+                Some(d) => child_cwd(cwd, &d)?,
+                None => cwd.to_path_buf(),
+            };
             Ok(Job {
                 agent,
                 task: t.task,

@@ -1,4 +1,5 @@
-//! Starts child runs: run registry entries, the concurrency limit, and `todo:scope` events.
+//! Starts child runs: run registry entries, the concurrency limit, `todo:scope` events, and
+//! `subagents:start` / `subagents:stop` events.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,6 +17,8 @@ use crate::runs::Status;
 use crate::stream::Effect;
 
 pub const TODO_SCOPE_CHANNEL: &str = "todo:scope";
+pub const START_CHANNEL: &str = "subagents:start";
+pub const STOP_CHANNEL: &str = "subagents:stop";
 
 #[derive(Debug, Clone)]
 pub struct Job {
@@ -66,11 +69,20 @@ pub fn start(
         job.agent.name,
         crate::runs::first_line(&job.task, 60)
     );
-    let (scope_tx, scope_rx) = mpsc::unbounded_channel::<Value>();
-    tokio::spawn(forward_scope(host.clone(), scope_rx));
+    let (events_tx, events_rx) = mpsc::unbounded_channel::<(&'static str, Value)>();
+    tokio::spawn(forward_events(host.clone(), events_rx));
     let scope_id = id.clone();
-    let scope = move |status: &str, state: Value| json!({ "scope": scope_id, "label": label, "status": status, "state": state });
-    let _ = scope_tx.send(scope("running", Value::Null));
+    let scope = move |status: &str, state: Value| {
+        let payload =
+            json!({ "scope": scope_id, "label": label, "status": status, "state": state });
+        (TODO_SCOPE_CHANNEL, payload)
+    };
+    let agent_type = job.agent.name.clone();
+    let _ = events_tx.send((
+        START_CHANNEL,
+        json!({ "agentId": id, "agentType": agent_type }),
+    ));
+    let _ = events_tx.send(scope("running", Value::Null));
     let runs = app.runs.clone();
     let limit = launch.limit.clone();
     let changed = launch.changed.clone();
@@ -85,7 +97,7 @@ pub fn start(
             Some(_permit) => {
                 let mut on_effect = |effect: Effect| {
                     if let Effect::Todo(details) = effect {
-                        let _ = scope_tx.send(scope("running", details));
+                        let _ = events_tx.send(scope("running", details));
                     }
                     changed.notify_one();
                 };
@@ -93,18 +105,27 @@ pub fn start(
             }
             None => Status::Cancelled,
         };
+        let output = runs
+            .get(&run_id)
+            .map(|run| run.progress.output())
+            .unwrap_or_default();
         runs.finish(&run_id, status, keep);
-        let _ = scope_tx.send(scope(status.as_str(), Value::Null));
+        let _ = events_tx.send(scope(status.as_str(), Value::Null));
+        let _ = events_tx.send((
+            STOP_CHANNEL,
+            json!({ "agentId": run_id, "agentType": agent_type, "status": status.as_str(),
+                "lastAssistantMessage": output }),
+        ));
         changed.notify_one();
         status
     });
     Started { id, handle }
 }
 
-async fn forward_scope(host: Host, mut rx: mpsc::UnboundedReceiver<Value>) {
-    while let Some(payload) = rx.recv().await {
-        if let Err(err) = host.emit(TODO_SCOPE_CHANNEL, payload).await {
-            pi_ext_sdk::debug!("todo:scope emit failed: {}", err.message());
+async fn forward_events(host: Host, mut rx: mpsc::UnboundedReceiver<(&'static str, Value)>) {
+    while let Some((channel, payload)) = rx.recv().await {
+        if let Err(err) = host.emit(channel, payload).await {
+            pi_ext_sdk::debug!("{channel} emit failed: {}", err.message());
         }
     }
 }

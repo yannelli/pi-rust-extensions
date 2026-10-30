@@ -71,6 +71,7 @@ pub fn merge_file(agents: &mut Vec<AgentDef>, path: &Path, content: &str, source
                 description: String::new(),
                 prompt: String::new(),
                 tools: None,
+                disallowed_tools: Vec::new(),
                 model: None,
                 thinking: None,
                 max_turns: None,

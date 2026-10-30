@@ -65,7 +65,10 @@ pub fn extension() -> Extension {
             let app = shutdown_app.clone();
             async move {
                 app.runs.cancel_all();
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                let deadline = tokio::time::Instant::now() + exec::SHUTDOWN_WAIT;
+                while app.runs.any_running() && tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
                 Ok(())
             }
         })
