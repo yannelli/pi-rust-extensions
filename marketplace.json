@@ -2,5 +2,59 @@
   "schemaVersion": 1,
   "protocolVersion": 1,
   "minPiVersion": "0.7.7",
-  "extensions": []
+  "extensions": [
+    {
+      "name": "goal",
+      "displayName": "Goal",
+      "description": "Persistent goals, task trees, autonomous continuation, and completion audits.",
+      "version": "0.1.0",
+      "args": [
+        "goal"
+      ],
+      "tags": [
+        "workflow",
+        "tui"
+      ]
+    },
+    {
+      "name": "background-tasks",
+      "displayName": "Background Tasks",
+      "description": "Durable background shell jobs with output and task management.",
+      "version": "0.1.0",
+      "args": [
+        "background-tasks"
+      ],
+      "tags": [
+        "shell",
+        "tui"
+      ]
+    },
+    {
+      "name": "rewind",
+      "displayName": "Rewind",
+      "description": "Per-turn shadow git checkpoints and conversation restoration.",
+      "version": "0.1.0",
+      "args": [
+        "rewind"
+      ],
+      "tags": [
+        "git",
+        "workflow"
+      ]
+    },
+    {
+      "name": "ssh",
+      "displayName": "SSH",
+      "description": "Reusable SSH profiles, shared connections, remote tools, and remote bash mode.",
+      "version": "0.1.0",
+      "args": [
+        "ssh"
+      ],
+      "tags": [
+        "shell",
+        "remote",
+        "tui"
+      ]
+    }
+  ]
 }

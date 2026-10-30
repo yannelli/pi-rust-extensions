@@ -145,11 +145,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-background-tasks"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-e2e"
 version = "0.1.0"
 dependencies = [
  "pi-ext-sdk",
  "serde_json",
+]
+
+[[package]]
+name = "pi-ext-goal"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "pi-ext-rewind"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -164,8 +197,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-ssh"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "pi-rust-ext"
 version = "0.1.0"
+dependencies = [
+ "pi-ext-background-tasks",
+ "pi-ext-goal",
+ "pi-ext-rewind",
+ "pi-ext-ssh",
+]
 
 [[package]]
 name = "pin-project-lite"

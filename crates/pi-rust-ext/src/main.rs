@@ -4,7 +4,12 @@ use std::process::ExitCode;
 
 type Extension = (&'static str, fn() -> ExitCode);
 
-const EXTENSIONS: &[Extension] = &[];
+const EXTENSIONS: &[Extension] = &[
+    ("background-tasks", pi_ext_background_tasks::main),
+    ("goal", pi_ext_goal::main),
+    ("rewind", pi_ext_rewind::main),
+    ("ssh", pi_ext_ssh::main),
+];
 
 fn main() -> ExitCode {
     let name = std::env::args().nth(1).unwrap_or_default();
