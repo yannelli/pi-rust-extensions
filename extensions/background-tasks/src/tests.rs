@@ -49,6 +49,7 @@ pub fn sample(id: &str, status: Status) -> Task {
         cwd: "/".into(),
         is_agent: false,
         pid: None,
+        process_start: None,
         dir: PathBuf::from("/nonexistent").join(id),
         started_at: 1_000,
         ended_at: None,

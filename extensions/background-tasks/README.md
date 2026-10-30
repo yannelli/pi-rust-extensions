@@ -48,6 +48,10 @@ Upstream defaults `surviveReload` to false. This port defaults it to true becaus
 - Output: `.../<taskId>/output.log`
 - Exit code: `.../<taskId>/exit`
 
+On unix, the extension creates these directories with mode 0700 and these files with mode 0600.
+
+At spawn the extension records the start time of the task's process (`ps -o lstart=`, `LC_ALL=C`) as `processStart`. Before each signal it compares the start time of the pid with `processStart`. When the pid is gone, belongs to another process, or has no readable start time, the extension sends no signal and marks the task `lost` (or `completed`/`failed` when the exit file exists). After TERM, KILL goes to the group only when the leader still matches or a group member seen before TERM is still in the group. Task records without `processStart` become `lost` when their pid is alive.
+
 The extension has no config file. Commands run with `/bin/bash -c` (or `/bin/sh -c` without bash) in the session cwd. On Windows they run with `cmd /C` and stop with `taskkill /T /F`.
 
 ## Tests

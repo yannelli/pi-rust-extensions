@@ -6,10 +6,12 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
+use crate::identity::{Owner, group_members, group_unchanged, owner};
+
 /// Starts `command` detached in its own process group, with stdout and stderr appended to
 /// `output`. The wrapper writes the exit code to `exit` so a later process can read it.
 pub fn spawn(command: &str, cwd: &Path, output: &Path, exit: &Path) -> io::Result<u32> {
-    let log = File::options().create(true).append(true).open(output)?;
+    let log = private_append(output)?;
     let mut cmd = wrapper(command, exit);
     cmd.current_dir(cwd)
         .stdin(Stdio::null())
@@ -22,9 +24,27 @@ pub fn spawn(command: &str, cwd: &Path, output: &Path, exit: &Path) -> io::Resul
 }
 
 #[cfg(unix)]
+fn private_append(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let file = File::options()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn private_append(path: &Path) -> io::Result<File> {
+    File::options().create(true).append(true).open(path)
+}
+
+#[cfg(unix)]
 fn wrapper(command: &str, exit: &Path) -> std::process::Command {
     use std::os::unix::process::CommandExt;
-    const SCRIPT: &str = r#""$3" -c "$1"; c=$?; printf '%s' "$c" > "$2.tmp"; mv -f "$2.tmp" "$2""#;
+    const SCRIPT: &str =
+        r#""$3" -c "$1"; c=$?; umask 077; printf '%s' "$c" > "$2.tmp"; mv -f "$2.tmp" "$2""#;
     let shell = if Path::new("/bin/bash").exists() {
         "/bin/bash"
     } else {
@@ -47,11 +67,6 @@ fn wrapper(command: &str, exit: &Path) -> std::process::Command {
     let script = format!("{command} & call echo %^ERRORLEVEL%>{}", exit.display());
     cmd.arg("/C").arg(script);
     cmd
-}
-
-/// True while the process `pid` exists.
-pub async fn alive(pid: u32) -> bool {
-    alive_impl(&pid.to_string()).await.unwrap_or(false)
 }
 
 /// True while any process of the group led by `pid` exists (unix); the process itself on Windows.
@@ -132,15 +147,17 @@ fn quiet(cmd: &mut Command) -> &mut Command {
         .stderr(Stdio::null())
 }
 
-pub async fn is_alive(pid: Option<u32>) -> bool {
-    match pid {
-        Some(pid) => alive(pid).await,
-        None => false,
-    }
+pub fn unverified_message(pid: u32) -> String {
+    format!("pid {pid} is not the task's process (reused or unreadable); no signal sent")
 }
 
 /// TERM to the process group, KILL to whatever is left after `grace`; fails when processes remain.
-pub async fn terminate(pid: u32, grace: Duration) -> Result<(), String> {
+/// TERM needs `pid` to match `identity`; KILL also accepts the group members seen before TERM.
+pub async fn terminate(pid: u32, identity: Option<&str>, grace: Duration) -> Result<(), String> {
+    if owner(pid, identity) != Owner::Same {
+        return Err(unverified_message(pid));
+    }
+    let members = group_members(pid).unwrap_or_default();
     if let Err(err) = signal_group(pid, Signal::Term).await {
         if group_alive(pid).await {
             return Err(format!("cannot stop process group {pid}: {err}"));
@@ -153,6 +170,14 @@ pub async fn terminate(pid: u32, grace: Duration) -> Result<(), String> {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let ours = match owner(pid, identity) {
+        Owner::Same => true,
+        Owner::Gone => group_unchanged(pid, &members),
+        Owner::Other => false,
+    };
+    if !ours {
+        return Err(unverified_message(pid));
     }
     let killed = signal_group(pid, Signal::Kill).await;
     for _ in 0..10 {
