@@ -46,10 +46,9 @@ fn full_extension() -> Extension {
                 .next()
                 .unwrap_or("")
                 .to_owned();
-            Ok(Some(Suggestions {
-                items: vec![CompletionItem::new("@file")],
-                prefix,
-            }))
+            Ok(Some(
+                Suggestions::new(vec![CompletionItem::new("@file")], prefix).merged(),
+            ))
         })
 }
 
@@ -101,7 +100,7 @@ async fn initialize_returns_registrations() {
     let response = host.expect_response(2).await;
     assert_eq!(
         response["result"],
-        json!({ "items": [{ "value": "@file" }], "prefix": "@fi" })
+        json!({ "items": [{ "value": "@file" }], "prefix": "@fi", "merge": true })
     );
 
     let params = json!({ "provider": "router", "id": "auto", "request": {} });

@@ -16,6 +16,24 @@ pub mod content {
     }
 }
 
+/// Session entry drafts for `EventReply::entries` (`turn_end`, `agent_before_settle`).
+pub mod entry {
+    use serde_json::{Value, json};
+
+    pub fn custom(custom_type: impl Into<String>, data: Value) -> Value {
+        json!({ "type": "custom", "customType": custom_type.into(), "data": data })
+    }
+
+    /// A custom message the model sees; `display` shows it in the transcript.
+    pub fn custom_message(
+        custom_type: impl Into<String>,
+        content: Vec<Value>,
+        display: bool,
+    ) -> Value {
+        json!({ "type": "custom_message", "customType": custom_type.into(), "content": content, "display": display })
+    }
+}
+
 /// The answer to `tool.execute`. `From<String>` and `From<&str>` build a text result.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,6 +135,17 @@ impl EventReply {
         Self::result(json!({ "cancel": true }))
     }
 
+    /// `turn_end` and `agent_before_settle`: the entry drafts to append and whether the run
+    /// continues. `entries` replaces the event's `entries`; include them to keep earlier drafts.
+    pub fn entries(entries: Vec<Value>, continue_run: bool) -> Self {
+        Self::result(json!({ "entries": entries, "continue": continue_run }))
+    }
+
+    /// `context` and `context_with_system`: replace the messages sent to the model.
+    pub fn messages(messages: Vec<Value>) -> Self {
+        Self::result(json!({ "messages": messages }))
+    }
+
     /// `before_agent_start`: set `systemPromptOptions.sections.<key>`.
     pub fn section(key: &str, text: impl Into<String>) -> Self {
         Self::none().with_section(key, Some(text.into()))
@@ -164,6 +193,24 @@ mod tests {
             serde_json::to_value(&reply).unwrap(),
             json!({ "patch": { "systemPromptOptions": { "sections": { "a": "x", "b": null } } } })
         );
+    }
+
+    #[test]
+    fn entries_and_messages_results() {
+        let draft = entry::custom("note", json!({ "n": 1 }));
+        let reply = EventReply::entries(vec![draft.clone()], true);
+        assert_eq!(
+            serde_json::to_value(&reply).unwrap(),
+            json!({ "result": { "entries": [{ "type": "custom", "customType": "note", "data": { "n": 1 } }], "continue": true } })
+        );
+        let message = entry::custom_message("hint", vec![content::text("hi")], false);
+        assert_eq!(message["type"], "custom_message");
+        assert_eq!(message["content"][0]["text"], "hi");
+        assert_eq!(message["display"], false);
+        let messages = vec![json!({ "role": "user", "content": "x" })];
+        let reply = EventReply::messages(messages.clone());
+        assert_eq!(reply.result, Some(json!({ "messages": messages })));
+        assert_eq!(reply.patch, None);
     }
 
     #[test]

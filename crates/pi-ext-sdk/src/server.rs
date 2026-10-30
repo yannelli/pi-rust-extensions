@@ -174,10 +174,17 @@ fn notification(state: &Arc<State>, method: &str, params: Value) -> Flow {
             let event = host.inner.surfaces.resize(text("surface"), width as usize);
             surface_callbacks(host, event);
         }
-        "ui.key" => host.inner.surfaces.key(text("surface"), text("data")),
+        "ui.key" => {
+            let id = params.get("key").and_then(Value::as_str);
+            host.inner.surfaces.key(text("surface"), text("data"), id);
+        }
         "ui.closed" => {
             let event = host.inner.surfaces.closed(text("surface"));
             surface_callbacks(host, event);
+        }
+        "footer.changed" => {
+            let footer = params.get("footer").cloned().unwrap_or(Value::Null);
+            footer_callbacks(host, footer);
         }
         other => debug!("ignored notification {other}"),
     }
@@ -197,6 +204,20 @@ fn start(host: &Host) {
         tokio::spawn(async move {
             if let Err(err) = hook(host).await {
                 warn!("start hook failed: {err}");
+            }
+        });
+    }
+}
+
+fn footer_callbacks(host: &Host, footer: Value) {
+    let registry = host.inner.registry.read().expect("registry lock");
+    let callbacks = registry.on_footer.clone();
+    drop(registry);
+    for callback in callbacks {
+        let (host, footer) = (host.clone(), footer.clone());
+        tokio::spawn(async move {
+            if let Err(err) = callback(footer, host).await {
+                warn!("footer handler failed: {err}");
             }
         });
     }

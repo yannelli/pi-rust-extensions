@@ -5,7 +5,7 @@ mod ui;
 
 pub use agent::{ExecOutput, ExecRequest, LlmRequest, LlmResponse, ProviderAuth};
 pub use session::{CustomMessage, DeliverAs};
-pub use ui::{NotifyType, Placement};
+pub use ui::{InputOptions, NotifyType, Placement};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

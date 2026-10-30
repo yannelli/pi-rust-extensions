@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::keys::Key;
-use crate::panel::PanelEvent;
+use crate::panel::{KeyInput, PanelEvent, PanelMessage};
 
 /// A change to a widget (`widget:<key>`) or the footer (`footer`) surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +45,7 @@ impl SurfaceEvents {
 }
 
 pub(crate) struct Surfaces {
-    panels: Mutex<HashMap<String, mpsc::UnboundedSender<PanelEvent>>>,
+    panels: Mutex<HashMap<String, mpsc::UnboundedSender<PanelMessage>>>,
     widths: Mutex<HashMap<String, usize>>,
     events: broadcast::Sender<SurfaceEvent>,
 }
@@ -59,7 +59,7 @@ impl Surfaces {
         }
     }
 
-    pub(crate) fn add_panel(&self, surface: &str, tx: mpsc::UnboundedSender<PanelEvent>) {
+    pub(crate) fn add_panel(&self, surface: &str, tx: mpsc::UnboundedSender<PanelMessage>) {
         self.panels
             .lock()
             .expect("panels lock")
@@ -71,7 +71,7 @@ impl Surfaces {
         self.widths.lock().expect("widths lock").remove(surface);
     }
 
-    fn panel(&self, surface: &str) -> Option<mpsc::UnboundedSender<PanelEvent>> {
+    fn panel(&self, surface: &str) -> Option<mpsc::UnboundedSender<PanelMessage>> {
         self.panels
             .lock()
             .expect("panels lock")
@@ -99,7 +99,7 @@ impl Surfaces {
         widths.insert(surface.to_owned(), width);
         drop(widths);
         if let Some(panel) = self.panel(surface) {
-            let _ = panel.send(PanelEvent::Resize(width));
+            let _ = panel.send((PanelEvent::Resize(width), None));
             return None;
         }
         let event = SurfaceEvent::Resize {
@@ -110,9 +110,14 @@ impl Surfaces {
         Some(event)
     }
 
-    pub(crate) fn key(&self, surface: &str, data: &str) {
+    pub(crate) fn key(&self, surface: &str, data: &str, id: Option<&str>) {
         if let Some(panel) = self.panel(surface) {
-            let _ = panel.send(PanelEvent::Key(Key::parse(data)));
+            let input = KeyInput {
+                key: Key::parse(data),
+                data: data.to_owned(),
+                id: id.map(str::to_owned),
+            };
+            let _ = panel.send((PanelEvent::Key(input.key.clone()), Some(input)));
         }
     }
 

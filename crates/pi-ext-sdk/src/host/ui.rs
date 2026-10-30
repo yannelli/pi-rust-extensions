@@ -59,8 +59,19 @@ impl Host {
     }
 
     pub async fn input(&self, title: &str, placeholder: Option<&str>) -> Result<Option<String>> {
-        let params = without_nulls(json!({ "title": title, "placeholder": placeholder }));
-        self.call_as("ui.input", params).await
+        self.input_with(
+            title,
+            InputOptions {
+                placeholder: placeholder.map(str::to_owned),
+                ..InputOptions::default()
+            },
+        )
+        .await
+    }
+
+    /// `ui.input` with a placeholder, initial text, or masked (`secret`) entry.
+    pub async fn input_with(&self, title: &str, options: InputOptions) -> Result<Option<String>> {
+        self.call_as("ui.input", options.params(title)).await
     }
 
     pub async fn editor(&self, title: &str, prefill: Option<&str>) -> Result<Option<String>> {
@@ -134,5 +145,46 @@ impl Host {
         S: Into<String>,
     {
         PanelBuilder::new(self.clone(), lines(lines_))
+    }
+}
+
+/// Options of `Host::input_with`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InputOptions {
+    pub placeholder: Option<String>,
+    /// The initial text.
+    pub prefill: Option<String>,
+    /// Show `*` for each character in `tui` mode.
+    pub secret: bool,
+}
+
+impl InputOptions {
+    fn params(&self, title: &str) -> Value {
+        let mut params = without_nulls(
+            json!({ "title": title, "placeholder": self.placeholder, "prefill": self.prefill }),
+        );
+        if self.secret {
+            params["secret"] = json!(true);
+        }
+        params
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn input_params_carry_prefill_and_secret() {
+        assert_eq!(InputOptions::default().params("T"), json!({ "title": "T" }));
+        let options = InputOptions {
+            prefill: Some("ab".into()),
+            secret: true,
+            ..InputOptions::default()
+        };
+        assert_eq!(
+            options.params("Token"),
+            json!({ "title": "Token", "prefill": "ab", "secret": true })
+        );
     }
 }

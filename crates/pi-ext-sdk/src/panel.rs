@@ -6,6 +6,17 @@ use crate::error::{Error, Result, code};
 use crate::host::Host;
 use crate::keys::Key;
 
+/// A key of a panel as pi sent it: the raw terminal `data` and the pi-tui key `id`
+/// (for example `shift+enter`), next to the SDK's parsed `key`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyInput {
+    pub key: Key,
+    pub data: String,
+    pub id: Option<String>,
+}
+
+pub(crate) type PanelMessage = (PanelEvent, Option<KeyInput>);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PanelEvent {
     Key(Key),
@@ -86,6 +97,7 @@ impl PanelBuilder {
             host: self.host,
             surface,
             events,
+            last_input: None,
             result: Some(result),
             ended: false,
         })
@@ -96,7 +108,8 @@ impl PanelBuilder {
 pub struct Panel {
     host: Host,
     surface: String,
-    events: mpsc::UnboundedReceiver<PanelEvent>,
+    events: mpsc::UnboundedReceiver<PanelMessage>,
+    last_input: Option<KeyInput>,
     result: Option<oneshot::Receiver<Result<Value>>>,
     ended: bool,
 }
@@ -124,9 +137,18 @@ impl Panel {
 
     /// The next key, resize, or `Closed`. After `Closed` it keeps returning `Closed`.
     pub async fn next_event(&mut self) -> PanelEvent {
-        let event = self.events.recv().await;
-        self.ended = event.is_none();
-        event.unwrap_or(PanelEvent::Closed)
+        let message = self.events.recv().await;
+        self.ended = message.is_none();
+        let (event, input) = message.unwrap_or((PanelEvent::Closed, None));
+        if input.is_some() {
+            self.last_input = input;
+        }
+        event
+    }
+
+    /// The raw data and key id of the last `PanelEvent::Key` that `next_event` returned.
+    pub fn last_input(&self) -> Option<&KeyInput> {
+        self.last_input.as_ref()
     }
 
     /// Sends `ui.close` with `result` and waits for `ui.custom` to answer.

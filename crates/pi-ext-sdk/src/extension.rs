@@ -177,6 +177,17 @@ impl Extension {
         self
     }
 
+    /// Runs with the new footer data (`gitBranch`, `sessionStats`, `runState`) each time pi
+    /// sends `footer.changed`; pi sends it in `tui` mode only.
+    pub fn on_footer_change<F, Fut>(mut self, handle: F) -> Self
+    where
+        F: Fn(Value, Host) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.registry.on_footer.push(handler::with_host(handle));
+        self
+    }
+
     /// Serves the protocol on stdin and stdout. Nonzero exit on a protocol failure.
     pub fn run(self) -> ExitCode {
         let runtime = tokio::runtime::Builder::new_multi_thread()

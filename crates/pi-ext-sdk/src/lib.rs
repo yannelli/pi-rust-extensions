@@ -23,20 +23,22 @@ mod snapshot;
 mod spec;
 pub mod style;
 mod surface;
+#[cfg(feature = "test-util")]
+pub mod test_util;
 
 pub use bus::Subscription;
 pub use ctx::{CommandCtx, EventCtx, ToolCtx};
 pub use error::{Error, Result, code};
 pub use extension::Extension;
 pub use host::{
-    CustomMessage, DeliverAs, ExecOutput, ExecRequest, Host, LlmRequest, LlmResponse, NotifyType,
-    Placement, ProviderAuth,
+    CustomMessage, DeliverAs, ExecOutput, ExecRequest, Host, InputOptions, LlmRequest, LlmResponse,
+    NotifyType, Placement, ProviderAuth,
 };
 pub use keys::Key;
-pub use panel::{Panel, PanelBuilder, PanelEvent};
+pub use panel::{KeyInput, Panel, PanelBuilder, PanelEvent};
 pub use protocol::PROTOCOL_VERSION;
-pub use reply::{EventReply, ToolResult, content};
-pub use snapshot::{InitParams, Model, Snapshot};
+pub use reply::{EventReply, ToolResult, content, entry};
+pub use snapshot::{ContextUsage, InitParams, Model, ScopedModel, Snapshot};
 pub use spec::{
     AutocompleteRequest, CommandSpec, CompletionItem, FlagSpec, FlagType, RouteRequest,
     ShortcutSpec, Suggestions, ToolSpec,
