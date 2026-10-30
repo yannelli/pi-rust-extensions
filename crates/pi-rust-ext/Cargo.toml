@@ -27,6 +27,12 @@ pi-ext-todo = { path = "../../extensions/todo" }
 pi-ext-hooks = { path = "../../extensions/hooks" }
 pi-ext-claude-marketplace = { path = "../../extensions/claude-marketplace" }
 pi-ext-context-include = { path = "../../extensions/context-include" }
+pi-ext-web-search = { path = "../../extensions/web-search" }
+pi-ext-chrome = { path = "../../extensions/chrome" }
+pi-ext-computer-use = { path = "../../extensions/computer-use" }
+
+[dev-dependencies]
+pi-ext-e2e = { path = "../pi-ext-e2e" }
 
 [lints]
 workspace = true

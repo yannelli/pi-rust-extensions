@@ -20,6 +20,9 @@ const EXTENSIONS: &[Extension] = &[
     ("hooks", pi_ext_hooks::main),
     ("claude-marketplace", pi_ext_claude_marketplace::main),
     ("context-include", pi_ext_context_include::main),
+    ("web-search", pi_ext_web_search::main),
+    ("chrome", pi_ext_chrome::main),
+    ("computer-use", pi_ext_computer_use::main),
 ];
 
 fn main() -> ExitCode {
