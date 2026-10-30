@@ -3,8 +3,12 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 verify="$root/scripts/verify-release.sh"
-timeout_command="$(command -v timeout || command -v gtimeout)" \
-  || { echo "test-verify-release: timeout or gtimeout is necessary" >&2; exit 1; }
+timeout_command="$(command -v timeout || command -v gtimeout || true)"
+if [ -z "$timeout_command" ]; then
+  command -v perl >/dev/null || { echo "test-verify-release: timeout, gtimeout, or perl is necessary" >&2; exit 1; }
+  perl_timeout() { perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$@"; }
+  timeout_command=perl_timeout
+fi
 
 if ! openssl version 2> /dev/null | grep -q '^OpenSSL 3'; then
   for prefix in /opt/homebrew/opt/openssl@3 /usr/local/opt/openssl@3; do
