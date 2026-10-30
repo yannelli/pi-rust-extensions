@@ -3,7 +3,9 @@ mod common;
 use common::now_ms;
 use common::routing::*;
 use pi_ext_subscription_router::config::{ModelRef, parse_config};
-use pi_ext_subscription_router::router::{Admission, Pick, Reason, RouteError, can_wait};
+use pi_ext_subscription_router::router::{
+    Admission, Pick, Reason, RouteError, can_wait, route_wait,
+};
 use pi_ext_subscription_router::usage::{Scope, UsageDecision};
 use serde_json::json;
 
@@ -180,6 +182,28 @@ async fn exhausted_chains_report_reset_and_policy() {
     assert!(!can_wait(short.exhaustion.as_ref(), reset_at, now_ms()));
     let fail = two_chain("ordered", json!({ "exhaustionPolicy": "fail" }));
     assert!(!can_wait(fail.exhaustion.as_ref(), reset_at, now_ms()));
+    assert_eq!(
+        route_wait(wait.exhaustion.as_ref(), reset_at, now_ms()),
+        Some(reset)
+    );
+    assert_eq!(
+        route_wait(short.exhaustion.as_ref(), reset_at, now_ms()),
+        None
+    );
+    assert_eq!(
+        route_wait(fail.exhaustion.as_ref(), reset_at, now_ms()),
+        None
+    );
+    let unlimited = two_chain("ordered", json!({ "exhaustionPolicy": "wait" }));
+    assert_eq!(
+        route_wait(unlimited.exhaustion.as_ref(), reset_at, now_ms()),
+        None
+    );
+    let default = two_chain("ordered", json!({}));
+    assert_eq!(
+        route_wait(default.exhaustion.as_ref(), reset_at, now_ms()),
+        None
+    );
     let config = parse_config(&json!({ "profiles": { "main": { "chain": [{ "model": "openai-codex/gpt-5.5" }], "exhaustionPolicy": "fail" } } })).unwrap();
     let admission = router.admit("router/main", &config, &env);
     assert_eq!(

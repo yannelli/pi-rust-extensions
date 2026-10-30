@@ -87,7 +87,7 @@ async fn remove(host: &Host, state: &Arc<State>, family: Family, slot: u32) -> R
     }
     let provider = family.provider(slot);
     host.unregister_provider(&provider).await?;
-    state.accounts.remove(&provider)?;
+    state.accounts.remove(&provider).await?;
     state.usage().forget(&provider);
     state.router.tracker().clear_provider(&provider);
     let current = current_model(host).is_some_and(|m| m.provider == provider);

@@ -150,7 +150,8 @@ pub fn parse_authorization_input(input: &str) -> AuthorizationInput {
     }
 }
 
-/// `access_token`, `refresh_token`, and `expires_in` of a token response.
+/// `access_token`, `refresh_token`, and `expires_in` of a token response. Errors name the
+/// missing fields only, so no token reaches a log or notice.
 pub fn read_token(json: &Value, margin_ms: i64, label: &str) -> Result<Credential, String> {
     let field = |k: &str| {
         json.get(k)
@@ -165,11 +166,41 @@ pub fn read_token(json: &Value, margin_ms: i64, label: &str) -> Result<Credentia
             expires: now_ms() + (expires_in * 1000.0) as i64 - margin_ms,
             account_id: None,
         }),
-        _ => Err(format!("{label} token response missing fields: {json}")),
+        (access, refresh, expires_in) => {
+            let missing: Vec<&str> = [
+                ("access_token", access.is_none()),
+                ("refresh_token", refresh.is_none()),
+                ("expires_in", expires_in.is_none()),
+            ]
+            .into_iter()
+            .filter_map(|(name, missing)| missing.then_some(name))
+            .collect();
+            Err(format!(
+                "{label} token response missing fields: {}",
+                missing.join(", ")
+            ))
+        }
     }
 }
 
-/// POSTs a token request; non-2xx answers become errors with the body text.
+/// The OAuth `error` and `error_description` of an error body, when it has them.
+fn oauth_error(body: &str) -> Option<String> {
+    let json: Value = serde_json::from_str(body).ok()?;
+    let text = |k: &str| {
+        json.get(k)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+    };
+    match (text("error"), text("error_description")) {
+        (Some(error), Some(description)) => Some(format!("{error}: {description}")),
+        (Some(error), None) => Some(error.to_owned()),
+        (None, Some(description)) => Some(description.to_owned()),
+        (None, None) => None,
+    }
+}
+
+/// POSTs a token request. A non-2xx answer becomes an error with the HTTP status and the
+/// OAuth error fields; the body itself is not reported.
 pub async fn post_token(request: reqwest::RequestBuilder, label: &str) -> Result<Value, String> {
     let response = request
         .timeout(std::time::Duration::from_secs(30))
@@ -179,8 +210,9 @@ pub async fn post_token(request: reqwest::RequestBuilder, label: &str) -> Result
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
+        let detail = oauth_error(&body).map_or_else(String::new, |e| format!(": {e}"));
         return Err(format!(
-            "{label} token request failed ({}): {body}",
+            "{label} token request failed ({}){detail}",
             status.as_u16()
         ));
     }

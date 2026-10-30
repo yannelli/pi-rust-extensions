@@ -7,6 +7,7 @@ pub mod config;
 pub mod exhaustion;
 pub mod failover;
 pub mod family;
+pub mod filelock;
 pub mod fsutil;
 pub mod login;
 pub mod menu;
@@ -81,6 +82,7 @@ pub fn extension(state: Arc<State>) -> Extension {
         state.clone(),
         state.clone(),
     );
+    let s13 = state.clone();
     let (s7, s8, s9, s10, s11, s12) = (
         state.clone(),
         state.clone(),
@@ -116,6 +118,13 @@ pub fn extension(state: Arc<State>) -> Extension {
     .on_start(move |host| start(host, s6.clone()))
     .on("before_agent_start", move |ev: EventCtx| {
         tool::before_agent_start(ev.host().clone(), s7.clone())
+    })
+    .on("before_provider_request", move |ev: EventCtx| {
+        let state = s13.clone();
+        async move {
+            lock(&state.failover).request_provider = current_model(ev.host()).map(|m| m.provider);
+            Ok(())
+        }
     })
     .on("after_provider_response", move |ev: EventCtx| {
         let state = s8.clone();

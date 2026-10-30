@@ -214,6 +214,14 @@ pub fn can_wait(exhaustion: Option<&Exhaustion>, reset_at: Option<i64>, now: i64
         .is_none_or(|max| reset - now <= max)
 }
 
+/// The reset `virtualModel.route` sleeps until: only with policy `wait`, a configured
+/// `maxWaitMinutes`, and a reset within it. Otherwise the route fails with the exhausted error.
+pub fn route_wait(exhaustion: Option<&Exhaustion>, reset_at: Option<i64>, now: i64) -> Option<i64> {
+    let exhaustion = exhaustion.filter(|e| e.policy == Policy::Wait)?;
+    let (reset, max) = (reset_at?, exhaustion.max_wait_ms()?);
+    (reset - now <= max).then_some(reset)
+}
+
 pub fn exhausted_message(profile: &str, blocked: &[Ineligible], reset_at: Option<i64>) -> String {
     let when = reset_at.map_or("an unknown time".into(), iso_seconds);
     let detail: Vec<String> = blocked

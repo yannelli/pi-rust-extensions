@@ -44,7 +44,7 @@ Native pi-rust extension that combines `@nredd/pi-subscription-router` and `@hen
 - Eligible chain entry: pi has the model and credentials for it, no confirmed block covers it, and cached usage does not show its window exhausted.
 - `ordered`: the first eligible entry. `balanced`: the highest `remaining / clamp(timeLeft, 0.05, 1)` over the windows that apply; a new prompt keeps the previous model unless the best candidate scores more than 20% higher.
 - `retry` after a failed request: when the error matches the quota pattern and a usage read made after the failure shows the window exhausted, the window's (provider, family) is blocked until its reset (or 5 minutes, doubling to 60, when the reset is unknown) and the next entry is picked. Otherwise the same model retries. A failed message with partial output fails the route.
-- All entries blocked: policy `wait` (default) sleeps until the earliest reset when it is within `maxWaitMinutes`; policy `fail` fails the request at once.
+- All entries blocked: the request fails with the exhausted error. With policy `wait` and `maxWaitMinutes` set, `virtualModel.route` first sleeps once until the earliest reset when it is within `maxWaitMinutes`. `router:rpc:admit` reports `wait: true` under policy `wait` without a limit, as upstream.
 
 ## Config
 
@@ -57,7 +57,7 @@ Native pi-rust extension that combines `@nredd/pi-subscription-router` and `@hen
 | `profiles.<id>.strategy` | `ordered` | `ordered` or `balanced`. |
 | `profiles.<id>.chain` | required | Non-empty list of `{ "model": "provider/id", "thinking"?: level }`. No `router/*`, no duplicates. `thinking` is one of `off minimal low medium high xhigh max`. |
 | `profiles.<id>.exhaustionPolicy` | `wait` | `wait` or `fail`. |
-| `profiles.<id>.maxWaitMinutes` | no limit | Longest wait for a reset under `wait`. |
+| `profiles.<id>.maxWaitMinutes` | unset | Longest wait for a reset under `wait`. Unset: the route does not wait; `router:rpc:admit` has no limit. |
 | `autoSwitchOn429` | `true` | Slot failover on HTTP 429 for models outside `router/*`. |
 
 ```json
@@ -81,8 +81,8 @@ Native pi-rust extension that combines `@nredd/pi-subscription-router` and `@hen
 
 | Path | Content |
 | --- | --- |
-| `<agentDir>/ext/subscription-router/accounts.json` | Credentials of slots 2..n (`access`, `refresh`, `expires`, `accountId`), mode 0600, atomic writes. |
-| `<agentDir>/ext/subscription-router/usage.json` | Usage snapshots per provider, mode 0600, atomic writes. |
+| `<agentDir>/ext/subscription-router/accounts.json` | Credentials of slots 2..n (`access`, `refresh`, `expires`, `accountId`), mode 0600, atomic writes under an `accounts.json.lock` directory lock. Re-read before each refresh and save. A malformed file blocks saves until it is fixed. |
+| `<agentDir>/ext/subscription-router/usage.json` | Usage snapshots per provider, mode 0600, atomic writes under an `accounts.json.lock` directory lock. Re-read before each refresh and save. A malformed file blocks saves until it is fixed. |
 
 | Variable | Default |
 | --- | --- |

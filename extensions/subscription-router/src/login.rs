@@ -13,7 +13,7 @@ pub async fn open_browser(host: &Host, url: &str) {
     let (command, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
         ("open", vec![url])
     } else if cfg!(windows) {
-        ("cmd", vec!["/c", "start", "", url])
+        ("rundll32", vec!["url.dll,FileProtocolHandler", url])
     } else {
         ("xdg-open", vec![url])
     };
@@ -115,6 +115,7 @@ pub async fn login(
     state
         .accounts
         .upsert(account.clone())
+        .await
         .map_err(|e| e.to_string())?;
     state.usage().forget(&account.provider);
     providers::register(host, &account)

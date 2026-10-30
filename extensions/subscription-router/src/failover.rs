@@ -17,6 +17,7 @@ static HTTP_429: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b429\b").expec
 
 #[derive(Default)]
 pub struct Failover {
+    /// The provider of the current model at `before_provider_request`, as multi-codex.
     pub request_provider: Option<String>,
     pub status: Option<u64>,
     pub tried: HashSet<u32>,

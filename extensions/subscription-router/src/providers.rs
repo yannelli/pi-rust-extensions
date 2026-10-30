@@ -83,20 +83,23 @@ pub async fn refresh_credential(state: &State, account: &Account) -> Result<Cred
 }
 
 /// Refreshes `account` when it expires within five minutes, stores it, and re-registers the slot.
+/// A failed save is logged; the slot still gets the new token.
 pub async fn ensure_fresh(host: &Host, state: &State, account: Account) -> Result<Account> {
     if !account.needs_refresh(now_ms()) {
         return Ok(account);
     }
-    let credential = refresh_credential(state, &account)
+    let refreshed = state
+        .accounts
+        .refresh(&account, |current| async move {
+            refresh_credential(state, &current).await
+        })
         .await
         .map_err(Error::msg)?;
-    let account = Account {
-        credential,
-        ..account
-    };
-    state.accounts.upsert(account.clone())?;
-    register(host, &account).await?;
-    Ok(account)
+    if let Some(err) = &refreshed.save_error {
+        pi_ext_sdk::warn!("cannot save refreshed {}: {err}", account.provider);
+    }
+    register(host, &refreshed.account).await?;
+    Ok(refreshed.account)
 }
 
 /// Registers every stored slot, then keeps tokens fresh in the background.
