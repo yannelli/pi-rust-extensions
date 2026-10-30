@@ -172,8 +172,5 @@ pub async fn compact_then_suggestions(request: AutocompleteRequest) -> Result<Op
     let item = CompletionItem::new(COMPACT_THEN)
         .label(COMPACT_THEN)
         .description("Compacts, then sends a prompt once it lands (not a registered command)");
-    Ok(Some(Suggestions {
-        items: vec![item],
-        prefix: before.to_owned(),
-    }))
+    Ok(Some(Suggestions::new(vec![item], before)))
 }
