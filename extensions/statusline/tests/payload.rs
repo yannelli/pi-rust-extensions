@@ -133,6 +133,19 @@ async fn command_reads_the_payload_and_sees_the_width() {
 }
 
 #[tokio::test]
+async fn command_output_is_capped_and_excess_output_is_drained() {
+    let config = CommandConfig {
+        command: "printf '%01000000d' 0".into(),
+        padding: 0,
+        refresh: None,
+    };
+    let lines = run_command(&config, "{}", 80, &std::env::temp_dir())
+        .await
+        .expect("command ran");
+    assert_eq!(lines, vec!["0".repeat(4096)]);
+}
+
+#[tokio::test]
 async fn failed_status_commands_do_not_replace_the_last_successful_output() {
     let config = CommandConfig {
         command: "printf 'partial output'; exit 1".into(),
