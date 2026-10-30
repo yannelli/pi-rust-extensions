@@ -284,3 +284,6 @@ mod trust;
 
 #[path = "hang_tests.rs"]
 mod hang;
+
+#[path = "guard_tests.rs"]
+mod guard;
