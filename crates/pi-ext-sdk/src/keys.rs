@@ -32,6 +32,9 @@ impl Key {
         if let Some(key) = Self::csi_u(data) {
             return key;
         }
+        if let Some(key) = Self::csi_with_event(data) {
+            return key;
+        }
         let mut chars = data.chars();
         match (chars.next(), chars.next(), chars.next()) {
             (Some(c), None, _) => Self::single(c),
@@ -68,6 +71,26 @@ impl Key {
             '\x01'..='\x1a' => Key::Ctrl((b'a' + (c as u8 - 1)) as char),
             c if c.is_control() => Key::Unknown(c.to_string()),
             c => Key::Char(c),
+        }
+    }
+
+    /// Kitty event reports of unmodified cursor and editing keys: `ESC [ 1 ; 1 : 2 A` is a held
+    /// Up, `ESC [ 5 ; 1 : 2 ~` a held Page Up. Releases (`: 3`) return `None`.
+    fn csi_with_event(data: &str) -> Option<Key> {
+        let body = data.strip_prefix("\x1b[")?;
+        let last = body.chars().last()?;
+        let (params, _) = body.split_at(body.len() - last.len_utf8());
+        let (number, mods) = params.split_once(';')?;
+        let (mods, event) = mods.split_once(':').unwrap_or((mods, "1"));
+        if mods != "1" || event == "3" {
+            return None;
+        }
+        match last {
+            'A' | 'B' | 'C' | 'D' | 'H' | 'F' if number == "1" => {
+                Self::named(&format!("\x1b[{last}"))
+            }
+            '~' => Self::named(&format!("\x1b[{number}~")),
+            _ => None,
         }
     }
 
@@ -149,6 +172,12 @@ mod tests {
         assert_eq!(Key::parse("\x1b"), Key::Escape);
         assert_eq!(Key::parse("\x1b[A"), Key::Up);
         assert_eq!(Key::parse("\x1bOB"), Key::Down);
+        assert_eq!(Key::parse("\x1b[1;1:2A"), Key::Up);
+        assert_eq!(Key::parse("\x1b[1;1:1B"), Key::Down);
+        assert_eq!(Key::parse("\x1b[1;1B"), Key::Down);
+        assert_eq!(Key::parse("\x1b[5;1:2~"), Key::PageUp);
+        assert!(matches!(Key::parse("\x1b[1;1:3A"), Key::Unknown(_)));
+        assert!(matches!(Key::parse("\x1b[1;2A"), Key::Unknown(_)));
         assert_eq!(Key::parse("\x03"), Key::Ctrl('c'));
         assert_eq!(Key::parse("q"), Key::Char('q'));
         assert_eq!(Key::parse("\x1bx"), Key::Alt('x'));
