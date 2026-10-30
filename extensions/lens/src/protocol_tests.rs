@@ -13,7 +13,9 @@ pub(super) struct Host {
     task: tokio::task::JoinHandle<pi_ext_sdk::Result<()>>,
     pub(super) calls: Vec<Value>,
     answers: VecDeque<Value>,
+    #[cfg(unix)]
     pub(super) trusted: bool,
+    #[cfg(unix)]
     pub(super) has_ui: bool,
 }
 
@@ -29,7 +31,9 @@ impl Host {
             task,
             calls: vec![],
             answers: VecDeque::new(),
+            #[cfg(unix)]
             trusted: true,
+            #[cfg(unix)]
             has_ui: false,
         }
     }
@@ -87,10 +91,12 @@ impl Host {
         }
     }
 
+    #[cfg(unix)]
     pub(super) fn event_params(&self, name: &str, event: Value, project: &Project) -> Value {
         json!({"name":name,"event":event,"ctx":{"cwd":project.0,"hasUI":self.has_ui,"isProjectTrusted":self.trusted}})
     }
 
+    #[cfg(unix)]
     pub(super) async fn event(&mut self, name: &str, event: Value, project: &Project) -> Value {
         let params = self.event_params(name, event, project);
         self.request("event", params).await

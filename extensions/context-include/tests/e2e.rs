@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::os::unix::fs::PermissionsExt;
 
 use pi_ext_e2e::{Run, Turn, cargo_bin, pi_bin, pi_bin_or_skip};

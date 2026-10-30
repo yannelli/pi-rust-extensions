@@ -210,6 +210,7 @@ async fn timeout_kills_and_reaps_server() {
     assert!(!alive(&fx.pid()));
 }
 
+#[cfg(unix)]
 async fn assert_child_stops(fx: &Fixture) {
     let log = fx.log();
     let child = log

@@ -8,9 +8,12 @@ use anyhow::{Context, Result, bail};
 const TIMEOUT: Duration = Duration::from_secs(300);
 
 fn run(args: &[&str], dir: Option<&Path>) -> Result<String> {
-    use std::os::unix::process::CommandExt;
     let mut command = Command::new("git");
-    command.process_group(0);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     if let Some(dir) = dir {
         command.arg("-C").arg(dir);
     }
@@ -48,11 +51,15 @@ fn run(args: &[&str], dir: Option<&Path>) -> Result<String> {
 }
 
 fn kill_group(pid: u32) {
-    let _ = Command::new("kill")
-        .args(["-KILL", "--", &format!("-{pid}")])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    #[cfg(unix)]
+    let mut command = Command::new("kill");
+    #[cfg(unix)]
+    command.args(["-KILL", "--", &format!("-{pid}")]);
+    #[cfg(windows)]
+    let mut command = Command::new("taskkill");
+    #[cfg(windows)]
+    command.args(["/T", "/F", "/PID", &pid.to_string()]);
+    let _ = command.stdout(Stdio::null()).stderr(Stdio::null()).status();
 }
 
 /// A commit id from a marketplace file: 4 to 64 hex digits.
