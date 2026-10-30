@@ -15,13 +15,7 @@ pub use format::{format_duration, format_percent, format_usage, parse_utc_ms, ro
 
 use crate::themes::Role;
 
-const PROVIDERS: &[&str] = &[
-    "anthropic",
-    "openai-codex",
-    "openai",
-    "cursor",
-    "google-antigravity",
-];
+const PROVIDERS: &[&str] = &["anthropic", "openai-codex", "cursor", "google-antigravity"];
 const TICK: Duration = Duration::from_secs(2);
 const REFRESH: Duration = Duration::from_secs(90);
 const AFTER_RUN: Duration = Duration::from_secs(5);
