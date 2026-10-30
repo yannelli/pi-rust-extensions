@@ -2,5 +2,46 @@
   "schemaVersion": 1,
   "protocolVersion": 1,
   "minPiVersion": "0.7.7",
-  "extensions": []
+  "extensions": [
+    {
+      "name": "ask-user-question",
+      "displayName": "Ask User Question",
+      "description": "Tabbed questionnaire tool (ask_user_question) for structured answers from the user.",
+      "version": "0.1.0",
+      "args": [
+        "ask-user-question"
+      ],
+      "tags": [
+        "tui",
+        "tool"
+      ]
+    },
+    {
+      "name": "subagents",
+      "displayName": "Subagents",
+      "description": "Delegate tasks to child pi agents (explore, build, advisor, custom) in the foreground, background, or in parallel.",
+      "version": "0.1.0",
+      "args": [
+        "subagents"
+      ],
+      "tags": [
+        "agents",
+        "tui",
+        "tool"
+      ]
+    },
+    {
+      "name": "todo",
+      "displayName": "Todo",
+      "description": "Phased todo plans with dependencies, per-subagent scopes, a widget above the editor, and /todos.",
+      "version": "0.1.0",
+      "args": [
+        "todo"
+      ],
+      "tags": [
+        "tui",
+        "tool"
+      ]
+    }
+  ]
 }

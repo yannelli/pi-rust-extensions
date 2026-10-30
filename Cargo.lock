@@ -145,6 +145,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-ask-user-question"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-e2e"
 version = "0.1.0"
 dependencies = [
@@ -164,8 +175,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-subagents"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "pi-ext-todo"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pi-rust-ext"
 version = "0.1.0"
+dependencies = [
+ "pi-ext-ask-user-question",
+ "pi-ext-subagents",
+ "pi-ext-todo",
+]
 
 [[package]]
 name = "pin-project-lite"

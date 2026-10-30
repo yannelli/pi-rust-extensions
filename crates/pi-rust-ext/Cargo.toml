@@ -12,6 +12,9 @@ name = "pi-rust-ext"
 path = "src/main.rs"
 
 [dependencies]
+pi-ext-ask-user-question = { path = "../../extensions/ask-user-question" }
+pi-ext-subagents = { path = "../../extensions/subagents" }
+pi-ext-todo = { path = "../../extensions/todo" }
 
 [lints]
 workspace = true
