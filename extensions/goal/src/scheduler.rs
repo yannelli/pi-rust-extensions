@@ -4,7 +4,7 @@ use pi_ext_sdk::prelude::*;
 
 use crate::app::{App, EVENT_MESSAGE};
 use crate::config::Settings;
-use crate::prompts::continuation_trigger;
+use crate::prompts::{continuation_message, continuation_trigger};
 use crate::state::{Goal, GoalStatus, StopReason, now_ms};
 use crate::widget;
 
@@ -98,7 +98,7 @@ pub async fn on_settled(app: &App, host: &Host, aborted: bool) -> Result<()> {
     };
     let notice = match decision {
         Decision::Nothing => return Ok(()),
-        Decision::Continue => return send_continuation(host, &goal_id).await,
+        Decision::Continue => return send_continuation(app, host, &goal_id).await,
         Decision::PauseUser => "goal paused after the interrupted turn; /goal-resume continues",
         Decision::PauseIdle => "goal paused: no progress in recent runs; /goal-resume continues",
         Decision::BudgetLimited => "goal stopped: token budget reached; /goal-tweak raises it",
@@ -116,8 +116,17 @@ fn pause(inner: &mut crate::app::Inner, reason: StopReason, why: &str) {
     });
 }
 
-pub async fn send_continuation(host: &Host, goal_id: &str) -> Result<()> {
-    let message = CustomMessage::new(EVENT_MESSAGE, continuation_trigger(goal_id))
+/// Sends the continuation of `goal_id`, with why the goal is open and what remains.
+pub async fn send_continuation(app: &App, host: &Host, goal_id: &str) -> Result<()> {
+    let text = {
+        let inner = app.lock();
+        let goal = inner.goals.iter().find(|goal| goal.id == goal_id);
+        goal.map_or_else(
+            || continuation_trigger(goal_id),
+            |goal| continuation_message(goal, &inner.settings),
+        )
+    };
+    let message = CustomMessage::new(EVENT_MESSAGE, text)
         .display(false)
         .details(json!({ "goalId": goal_id, "kind": "continuation" }))
         .deliver_as(DeliverAs::FollowUp)
@@ -154,7 +163,7 @@ pub async fn wake(app: &App, host: &Host, goal_id: &str, deadline: Option<u64>) 
         matches
     };
     if fire {
-        if let Err(err) = send_continuation(host, goal_id).await {
+        if let Err(err) = send_continuation(app, host, goal_id).await {
             pi_ext_sdk::warn!("goal wake failed: {}", err.message());
         }
     }

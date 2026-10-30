@@ -1,6 +1,6 @@
 use crate::config::Settings;
 use crate::format::status_label;
-use crate::state::{Goal, TaskStatus};
+use crate::state::{Goal, GoalStatus, GoalTask, TaskStatus};
 
 const MAX_OBJECTIVE_BLOCK_CHARS: usize = 1_500;
 const MAX_PENDING_RENDERED: usize = 3;
@@ -26,6 +26,91 @@ pub fn continuation_trigger(goal_id: &str) -> String {
     format!(
         "<pi_goal_continuation goal_id=\"{}\" kind=\"checkpoint\" v=\"2\"/>",
         escape(goal_id).replace('"', "&quot;")
+    )
+}
+
+/// Why the goal does not run now, from its status and latest stop entry.
+pub fn stop_note(goal: &Goal) -> Option<String> {
+    if goal.status == GoalStatus::Auditing {
+        return Some("the completion audit is running; wait for its verdict".into());
+    }
+    if matches!(goal.status, GoalStatus::Active | GoalStatus::Complete) {
+        return None;
+    }
+    let stops = [
+        "paused: ",
+        "blocked: ",
+        "token budget reached",
+        "auditor failed",
+    ];
+    goal.history
+        .iter()
+        .rev()
+        .map(|entry| entry.event.as_str())
+        .find(|event| stops.iter().any(|stop| event.starts_with(stop)))
+        .map(|event| {
+            let event = event.strip_prefix("paused: ").unwrap_or(event);
+            escape(event.strip_prefix("blocked: ").unwrap_or(event))
+        })
+}
+
+/// Pending task ids and titles, at most `MAX_PENDING_RENDERED`.
+pub fn pending_tasks(tasks: &[&GoalTask]) -> String {
+    let mut parts: Vec<String> = tasks
+        .iter()
+        .take(MAX_PENDING_RENDERED)
+        .map(|task| {
+            format!(
+                "{}: {}",
+                escape(&task.id),
+                excerpt(&task.title, 180, "tasks")
+            )
+        })
+        .collect();
+    let hidden = tasks.len().saturating_sub(MAX_PENDING_RENDERED);
+    if hidden > 0 {
+        parts.push(format!("{hidden} more (get_goal(section=\"tasks\"))"));
+    }
+    parts.join("; ")
+}
+
+/// Continuation message: the trigger, why the goal is still open, and what remains.
+pub fn continuation_message(goal: &Goal, settings: &Settings) -> String {
+    let rejection = goal
+        .last_audit
+        .as_deref()
+        .map(str::trim)
+        .filter(|report| goal.audits > 0 && !report.is_empty());
+    let why = match rejection {
+        Some(report) => format!(
+            "The completion auditor rejected the last completion request:\n{}",
+            excerpt(report, 600, "history")
+        ),
+        None => {
+            "update_goal({status: \"complete\"}) has not passed the completion audit yet.".into()
+        }
+    };
+    let pending: Vec<&GoalTask> = goal
+        .ordered_tasks()
+        .into_iter()
+        .map(|(_, task)| task)
+        .filter(|task| !task.status.is_resolved())
+        .collect();
+    let remaining = if settings.disable_tasks || goal.tasks.is_empty() {
+        "the objective in the [PI GOAL ACTIVE] section.".to_owned()
+    } else if pending.is_empty() {
+        "all tasks are resolved; verify the objective, then request completion.".to_owned()
+    } else {
+        format!(
+            "{} of {} tasks: {}",
+            pending.len(),
+            goal.tasks.len(),
+            pending_tasks(&pending)
+        )
+    };
+    format!(
+        "{}\nThe goal is not complete. {why}\nRemaining: {remaining}",
+        continuation_trigger(&goal.id)
     )
 }
 
@@ -172,8 +257,11 @@ pub fn goal_prompt(goal: &Goal, settings: &Settings) -> String {
         policy_block(settings),
         sisyphus_block(goal),
         format!(
-            "Status: {}\nMode: {}",
+            "Status: {}{}\nMode: {}",
             status_label(goal),
+            stop_note(goal)
+                .map(|note| format!(": {note}"))
+                .unwrap_or_default(),
             if goal.sisyphus { "sisyphus" } else { "regular" }
         ),
         objective_block(goal),

@@ -7,7 +7,7 @@ use crate::lifecycle::{self, NewGoal};
 use crate::state::{GoalStatus, StopReason, WaitState, now_ms};
 use crate::tasks::{self, FlatTask};
 use crate::update::{UpdatePlan, plan_update_goal};
-use crate::{scheduler, view, widget};
+use crate::{prompts, scheduler, view, widget};
 
 #[derive(Deserialize)]
 pub struct CreateArgs {
@@ -86,15 +86,24 @@ pub async fn update_goal(app: App, args: Value, ctx: ToolCtx) -> Result<ToolResu
         Ok(plan) => plan,
         Err(err) => return Ok(ToolResult::error(err)),
     };
-    let status = app.lock().focused().map(|g| g.status);
-    match status {
+    let focused = app.lock().focused().cloned();
+    match focused {
         None => return Ok(ToolResult::error("No focused goal.")),
-        Some(GoalStatus::Active | GoalStatus::Paused | GoalStatus::BudgetLimited) => {}
-        Some(other) => {
+        Some(goal)
+            if !matches!(
+                goal.status,
+                GoalStatus::Active | GoalStatus::Paused | GoalStatus::BudgetLimited
+            ) =>
+        {
+            let why = prompts::stop_note(&goal)
+                .map(|note| format!(": {note}"))
+                .unwrap_or_default();
             return Ok(ToolResult::error(format!(
-                "The goal is {other:?}; update_goal does not apply."
+                "The goal is {}{why}. update_goal does not apply.",
+                crate::format::status_label(&goal)
             )));
         }
+        Some(_) => {}
     }
     let text = match plan {
         UpdatePlan::Complete { summary } => {

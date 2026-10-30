@@ -55,11 +55,14 @@ pub fn tool_call(app: &App, ev: &EventCtx) -> EventReply {
         );
     }
     if inner.run.stopped && name != "get_goal" {
-        let status = inner
-            .focused()
-            .map_or("stopped".into(), crate::format::status_label);
+        let goal = inner.focused();
+        let status = goal.map_or("stopped".into(), crate::format::status_label);
+        let why = goal
+            .and_then(prompts::stop_note)
+            .map(|note| format!(": {note}"))
+            .unwrap_or_default();
         return EventReply::block(format!(
-            "The goal stopped this turn ({status}). Do not continue work; reply briefly and end the turn."
+            "The goal stopped this turn ({status}{why}). Do not continue work; reply briefly and end the turn."
         ));
     }
     if name != "get_goal" {

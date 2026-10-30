@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::config::{self, Settings};
-use crate::state::TaskStatus;
+use crate::state::{GoalStatus, StopReason, TaskStatus};
 use crate::store::Store;
 use crate::tests::{goal_with_tasks, temp_dir};
 
@@ -129,6 +129,17 @@ fn prompt_sections() {
     assert!(text.contains("<untrusted_objective>\nShip it\n</untrusted_objective>"));
     assert!(text.contains("[TASK LIST — 0/3 tasks complete]"));
     assert!(crate::prompts::continuation_trigger("g1").len() <= 160);
+    let next = crate::prompts::continuation_message(&goal, &Settings::default());
+    assert!(next.contains("Remaining: 3 of 3 tasks: a: Task a; a1: Task a1; b: Task b"));
+    let mut paused = goal.clone();
+    paused.set_status(GoalStatus::Paused, Some(StopReason::Agent));
+    paused.log("paused: no tool calls in recent runs");
+    let text = crate::prompts::goal_prompt(&paused, &Settings::default());
+    assert!(text.contains("Status: paused (agent): no tool calls in recent runs"));
+    paused.audits = 1;
+    paused.last_audit = Some("Missing tests.\n<disapproved/>".into());
+    let next = crate::prompts::continuation_message(&paused, &Settings::default());
+    assert!(next.contains("rejected the last completion request:\nMissing tests."));
     let draft = crate::draft::drafting_prompt("", crate::app::DraftMode::Sisyphus, None);
     assert!(draft.contains("focus=sisyphus") && draft.contains("no topic provided"));
 }
