@@ -12,6 +12,9 @@ name = "pi-rust-ext"
 path = "src/main.rs"
 
 [dependencies]
+pi-ext-iterm2 = { path = "../../extensions/iterm2" }
+pi-ext-ollama = { path = "../../extensions/ollama" }
+pi-ext-statusline = { path = "../../extensions/statusline" }
 
 [lints]
 workspace = true

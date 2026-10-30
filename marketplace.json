@@ -2,5 +2,30 @@
   "schemaVersion": 1,
   "protocolVersion": 1,
   "minPiVersion": "0.7.7",
-  "extensions": []
+  "extensions": [
+    {
+      "name": "iterm2",
+      "displayName": "iTerm2",
+      "description": "iTerm2 integration: tab color follows the agent state, session badge, status bar user variables, attention requests, and /terminal-setup.",
+      "version": "0.1.0",
+      "args": ["iterm2"],
+      "tags": ["terminal", "tui"]
+    },
+    {
+      "name": "ollama",
+      "displayName": "Ollama",
+      "description": "Discovers models from a local Ollama, registers the ollama provider, and manages models with /ollama.",
+      "version": "0.1.0",
+      "args": ["ollama"],
+      "tags": ["provider", "models", "tui"]
+    },
+    {
+      "name": "statusline",
+      "displayName": "Status line",
+      "description": "Configurable footer status line: builtin presets and themes, command scripts, Claude Code, Cursor, and Codex status lines, and the /statusline editor.",
+      "version": "0.1.0",
+      "args": ["statusline"],
+      "tags": ["footer", "tui"]
+    }
+  ]
 }
