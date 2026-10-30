@@ -2,6 +2,7 @@ mod config;
 mod detection;
 mod diagnostics;
 mod events;
+mod group;
 mod lsp;
 mod pipeline;
 mod state;

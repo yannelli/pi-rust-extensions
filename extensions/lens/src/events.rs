@@ -21,12 +21,13 @@ pub(crate) async fn refresh(host: &Host, state: &Arc<Mutex<State>>) -> Result<()
         .ok()
         .as_deref()
         != Some("1");
+    let untrusted = !config.trusted && config.enabled && config.auto_detect;
     let mut state = state.lock().await;
     state.config = config;
-    if ignored && !state.warned_trust {
+    if (ignored || untrusted) && !state.warned_trust {
         state.warned_trust = true;
         drop(state);
-        let text = "Lens ignored executable project settings because the project is untrusted.";
+        let text = "Lens does not auto-detect tools or use executable project settings because the project is untrusted.";
         if host.has_ui() {
             host.notify_warning(text).await?;
         } else {
@@ -72,28 +73,40 @@ pub(crate) async fn handle(ctx: EventCtx, state: Arc<Mutex<State>>) -> Result<Ev
             let Some(path) = ctx.event()["input"]["path"].as_str() else {
                 return Ok(EventReply::none());
             };
-            let path = diagnostics::normalize_path(&host.cwd(), path);
-            let mut state = state.lock().await;
-            if !state.config.enabled {
+            let cwd = host.cwd();
+            let path = diagnostics::normalize_path(&cwd, path);
+            let config = state.lock().await.config.clone();
+            if !config.enabled {
                 return Ok(EventReply::none());
             }
-            match tool {
+            let state = match tool {
                 "read" => {
                     let content = ctx.event()["content"]
                         .as_array()
                         .cloned()
                         .unwrap_or_default();
+                    let mut state = state.lock().await;
                     state.guard.record(&path, &ctx.event()["input"], &content);
+                    state
                 }
                 "write" | "edit" => {
-                    let cwd = host.cwd();
-                    let work = pipeline::run(&state.config, &cwd, &path);
-                    let findings = tokio::select! { result = work => result, _ = ctx.cancelled() => return Err(Error::cancelled()) };
-                    state.findings.insert(path.clone(), findings);
+                    let findings = if diagnostics::within(&cwd, &path) {
+                        let work = pipeline::run(&config, &cwd, &path);
+                        Some(
+                            tokio::select! { result = work => result, _ = ctx.cancelled() => return Err(Error::cancelled()) },
+                        )
+                    } else {
+                        None
+                    };
+                    let mut state = state.lock().await;
+                    if let Some(findings) = findings {
+                        state.findings.insert(path.clone(), findings);
+                    }
                     state.guard.invalidate(&path);
+                    state
                 }
                 _ => return Ok(EventReply::none()),
-            }
+            };
             let guard = state.guard.clone();
             let count = state.all_findings().len();
             drop(state);

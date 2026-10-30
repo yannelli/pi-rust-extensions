@@ -172,7 +172,10 @@ async fn fake_pipeline_formats_then_lints_and_clears_findings() {
         "diagnostics.json",
         r#"[{"filename":"a.py","message":"unused","location":{"row":1,"column":1},"code":"F401"}]"#,
     );
-    let config = config::Config::default();
+    let config = config::Config {
+        trusted: true,
+        ..Default::default()
+    };
     let findings = crate::pipeline::run(&config, &project.0, &file).await;
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "formatted\n");
@@ -232,3 +235,6 @@ async fn timeout_becomes_a_finding() {
 
 #[path = "protocol_tests.rs"]
 mod protocol;
+
+#[path = "trust_tests.rs"]
+mod trust;

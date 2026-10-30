@@ -31,6 +31,7 @@ Config paths, in precedence order:
 
 Project fields override global fields. Objects merge by key. Arrays replace previous arrays.
 Untrusted project config cannot override `commands` or `lsp`.
+In an untrusted project, Lens does not auto-detect tools and does not add `node_modules/.bin` to `PATH`. Commands and LSP servers from global config still run. Lens shows one notice.
 
 | Key | Default | Use |
 | --- | --- | --- |
@@ -39,6 +40,7 @@ Untrusted project config cannot override `commands` or `lsp`.
 | `readGuard` | `true` | Requires a read before an edit. |
 | `autoDetect` | `true` | Detects tools from language and project files. |
 | `timeoutMs` | `30000` | Sets each command and LSP timeout, from 1 to 300000 ms. |
+| `pipelineTimeoutMs` | `30000` | Sets the total time for all commands and LSP servers after one write or edit, from 1 to 600000 ms. Lens skips the remaining steps with a warning finding. |
 | `languages.<name>.enabled` | `true` | Enables `rust`, `javascript`, `python` or `go`. |
 | `tools.<name>.enabled` | `true` | Enables a detected or configured tool. |
 | `commands` | `[]` | Adds commands or overrides detected commands by name. |
@@ -66,7 +68,10 @@ Untrusted project config cannot override `commands` or `lsp`.
 
 Stages run in this order: `format`, `lint`, `types`.
 Arguments expand `{path}` and `{root}` without a shell.
-Children use the nearest project root and include `node_modules/.bin` on `PATH`.
+Children use the nearest project root. In a trusted project, `PATH` starts with `<root>/node_modules/.bin`.
+On Unix, each command runs in its own process group. On timeout or cancel, Lens kills the group.
+Lens skips files outside the current directory, after it resolves symlinks.
+`rustfmt` uses the edition from the nearest `Cargo.toml`: `package.edition`, or the workspace root's `workspace.package.edition` when the package sets `edition.workspace = true`. The default is 2021. Lens reads one-line `key = value` entries only.
 Detected tools: Rust `rustfmt`, `cargo check`, `cargo clippy`; JavaScript `prettier`, `eslint`, `tsc`; Python `ruff format`, `ruff check`; Go `gofmt`, `go vet`.
 JavaScript tools need a matching dependency or config file. Rust and Go need their project manifests.
 Missing tools, failed commands and timeouts produce findings.
