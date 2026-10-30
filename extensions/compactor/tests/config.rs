@@ -164,3 +164,35 @@ fn trigger_ignores_unknown_usage_and_disabled() {
         None
     );
 }
+
+#[test]
+fn debug_comes_only_from_global_config() {
+    let on = json!({ "debug": true });
+    assert!(!merge_layers(None, layer(on.clone())).debug);
+    assert!(merge_layers(layer(on), layer(json!({ "debug": false }))).debug);
+}
+
+#[test]
+fn debug_file_is_private_and_replaces_symlinks() {
+    use pi_ext_compactor::state::{debug_path, write_private};
+    let root = std::env::temp_dir().join(format!("compactor-debug-{}", std::process::id()));
+    let path = debug_path(&root);
+    assert!(path.ends_with("ext/compactor/debug.json"));
+    write_private(&path, "one").unwrap();
+    write_private(&path, "two").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "two");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let target = root.join("target.txt");
+        std::fs::write(&target, "keep").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        write_private(&path, "three").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+        assert!(!std::fs::symlink_metadata(&path).unwrap().is_symlink());
+    }
+    std::fs::remove_dir_all(root).ok();
+}

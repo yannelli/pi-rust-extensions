@@ -172,3 +172,25 @@ fn recall_finds_sources_and_collisions() {
     ];
     assert!(recall_memory_sources(&twice, &o1.id).unwrap().collision);
 }
+
+#[test]
+fn fold_skips_records_covering_entries_off_the_branch() {
+    let here = observation("On this branch.", "low", &["u0"]);
+    let foreign = observation("From branch A.", "low", &["a1"]);
+    let entries = vec![
+        user("u0", "hi"),
+        observations_entry("m1", std::slice::from_ref(&here), "u0"),
+        observations_entry("m2", std::slice::from_ref(&foreign), "a1"),
+        dropped_entry("m3", &[here.id.as_str()], "a1"),
+        reflections_entry(
+            "m4",
+            &[reflection("Foreign.", &[foreign.id.as_str()])],
+            "a1",
+        ),
+    ];
+    let folded = fold_ledger(&entries, None);
+    assert_eq!(folded.observations, vec![here.clone()]);
+    assert_eq!(folded.active_observations, vec![here]);
+    assert!(folded.reflections.is_empty());
+    assert!(folded.dropped_observation_ids.is_empty());
+}

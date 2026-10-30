@@ -204,7 +204,10 @@ fn stored_selection(layers: &[Option<Map<String, Value>>]) -> Option<Vec<String>
     None
 }
 
-/// Effective config from the global and project layers (each `None` when absent or unreadable).
+/// Turns on `debug` like the `debug` key of the global config.
+pub const DEBUG_ENV: &str = "UNIPI_COMPACTOR_DEBUG";
+
+/// Effective config from the global and project layers (`debug` only from global or [`DEBUG_ENV`]) (each `None` when absent or unreadable).
 pub fn merge_layers(
     global: Option<Map<String, Value>>,
     project: Option<Map<String, Value>>,
@@ -217,7 +220,15 @@ pub fn merge_layers(
     if let Some(selection) = stored_selection(&layers) {
         merged["summarySections"] = json!(selection);
     }
-    from_value(&merged)
+    let global_debug = layers[0]
+        .as_ref()
+        .and_then(|global| global.get("debug"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Config {
+        debug: global_debug || std::env::var(DEBUG_ENV).is_ok_and(|v| v == "1"),
+        ..from_value(&merged)
+    }
 }
 
 fn read_layer(path: &Path) -> Option<Map<String, Value>> {
@@ -276,7 +287,6 @@ fn from_value(value: &Value) -> Config {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
-        debug: bool_of("debug", false)
-            || std::env::var("UNIPI_COMPACTOR_DEBUG").is_ok_and(|v| v == "1"),
+        debug: false,
     }
 }

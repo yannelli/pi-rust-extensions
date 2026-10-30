@@ -69,27 +69,26 @@ pub async fn on_input(ev: EventCtx, shared: Shared) -> Result<EventReply> {
     Ok(EventReply::handled())
 }
 
-/// `agent_end` and `agent_settled`: run a compact-then queued as a follow-up.
+/// `agent_end` and `agent_settled`: run a compact-then queued as a follow-up; drop a steer
+/// that the run ended before.
 pub async fn on_settled(ev: EventCtx, shared: Shared) -> Result<EventReply> {
-    let queued = {
-        let mut state = shared.lock();
-        match state.compact_then.take() {
-            Some((prompt, QueueMode::FollowUp)) => Some(prompt),
-            other => {
-                state.compact_then = other;
-                None
-            }
+    let queued = shared.lock().compact_then.take();
+    match queued {
+        Some((prompt, QueueMode::FollowUp)) => {
+            shared.lock().set_pending(None, true, Some(COMPACT_THEN));
+            spawn_compact(
+                ev.host().clone(),
+                shared,
+                Some(COMPACTOR_INSTRUCTION.into()),
+                Some(prompt),
+                false,
+            );
         }
-    };
-    if let Some(prompt) = queued {
-        shared.lock().set_pending(None, true, Some(COMPACT_THEN));
-        spawn_compact(
-            ev.host().clone(),
-            shared,
-            Some(COMPACTOR_INSTRUCTION.into()),
-            Some(prompt),
-            false,
-        );
+        Some((_, QueueMode::Steer)) => {
+            let notice = "Compact then: cancelled — the run ended before the next turn.";
+            ev.host().notify_info(notice).await.ok();
+        }
+        None => {}
     }
     Ok(EventReply::none())
 }

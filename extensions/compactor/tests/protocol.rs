@@ -253,3 +253,101 @@ async fn context_drops_legacy_custom_messages() {
     );
     host.finish().await.unwrap();
 }
+
+/// Answers extension requests with `null` and returns every message up to the response to `id`.
+async fn until_response(host: &mut TestHost, id: u64) -> Vec<Value> {
+    let mut seen = Vec::new();
+    loop {
+        let message = host.recv().await;
+        if let (Some(_), Some(request)) = (message["method"].as_str(), message.get("id")) {
+            host.answer(&request.clone(), Value::Null).await;
+        }
+        let done = message["id"] == id && message.get("method").is_none();
+        seen.push(message);
+        if done {
+            return seen;
+        }
+    }
+}
+
+fn notices(seen: &[Value]) -> Vec<String> {
+    seen.iter()
+        .filter(|m| m["method"] == "ui.notify")
+        .map(|m| {
+            m["params"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn overflow_compaction_falls_through_to_pi() {
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    let params = json!({ "name": "session_before_compact", "event": compact_event("overflow", None), "ctx": ctx() });
+    host.request(60, "event", params).await;
+    assert_eq!(host.expect_response(60).await["result"], json!({}));
+    let marked = json!({ "name": "session_before_compact",
+        "event": compact_event("overflow", Some("__compactor__")), "ctx": ctx() });
+    host.request(61, "event", marked).await;
+    assert_eq!(host.expect_response(61).await["result"], json!({}));
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn non_matching_input_is_not_handled() {
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    for (id, text) in [
+        (62, "run the tests"),
+        (63, "/unipi:compact-thenx"),
+        (64, "please /unipi:compact-then"),
+    ] {
+        let event = json!({ "type": "input", "text": text, "source": "interactive" });
+        host.request(
+            id,
+            "event",
+            json!({ "name": "input", "event": event, "ctx": ctx() }),
+        )
+        .await;
+        assert_eq!(
+            host.expect_response(id).await["result"],
+            json!({}),
+            "{text}"
+        );
+    }
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn steered_compact_then_is_cancelled_when_the_run_settles() {
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    let event = json!({ "type": "input", "text": "/unipi:compact-then go on",
+        "source": "interactive", "streamingBehavior": "steer" });
+    host.request(
+        65,
+        "event",
+        json!({ "name": "input", "event": event, "ctx": ctx() }),
+    )
+    .await;
+    let queued = until_response(&mut host, 65).await;
+    assert!(notices(&queued)[0].starts_with("Compact then: queued"));
+
+    let settled =
+        json!({ "name": "agent_settled", "event": { "type": "agent_settled" }, "ctx": ctx() });
+    host.request(66, "event", settled.clone()).await;
+    let seen = until_response(&mut host, 66).await;
+    assert_eq!(
+        notices(&seen),
+        ["Compact then: cancelled — the run ended before the next turn."]
+    );
+    assert_eq!(seen.last().unwrap()["result"], json!({}));
+
+    host.request(67, "event", settled).await;
+    let again = until_response(&mut host, 67).await;
+    assert!(notices(&again).is_empty(), "{again:?}");
+    host.finish().await.unwrap();
+}

@@ -175,8 +175,9 @@ async fn recall_unknown_and_invalid_ids() {
 
 #[tokio::test]
 async fn view_copies_through_exec_and_notifies() {
+    let agent_dir = std::env::temp_dir().join(format!("om-view-{}", std::process::id()));
     let mut host = TestHost::start(extension());
-    host.initialize().await;
+    host.initialize_with(&agent_dir.display().to_string()).await;
     host.request(
         10,
         "command.run",
@@ -210,8 +211,11 @@ async fn view_copies_through_exec_and_notifies() {
             .unwrap()
             .starts_with("pbcopy < '")
     );
+    let state_dir = agent_dir.join("ext/observational-memory");
+    assert_eq!(std::fs::read_dir(&state_dir).unwrap().count(), 0);
     assert_eq!(host.expect_response(10).await["result"], Value::Null);
     host.finish().await.unwrap();
+    std::fs::remove_dir_all(agent_dir).ok();
 }
 
 #[tokio::test]
@@ -237,4 +241,203 @@ async fn agent_settled_compacts_over_threshold_when_idle() {
     assert!(idle < methods.len() - 1);
     assert_eq!(seen.last().unwrap()["params"], json!({}));
     host.finish().await.unwrap();
+}
+
+fn event(name: &str, ctx: Value) -> Value {
+    json!({ "name": name, "event": { "type": name }, "ctx": ctx })
+}
+
+fn observer_reply() -> String {
+    json!({ "observations": [{ "timestamp": "2026-10-29 10:00",
+        "content": "User pasted inputs.", "relevance": "low", "sourceEntryIds": ["u0"] }] })
+    .to_string()
+}
+
+/// Runs `/om:status` and returns every request method seen until its response.
+async fn methods_until_status(host: &mut TestHost, id: u64, branch: &Value) -> Vec<String> {
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    host.request(
+        id,
+        "command.run",
+        json!({ "name": "om:status", "args": "", "ctx": quiet_ctx() }),
+    )
+    .await;
+    let seen = host
+        .drive(
+            |method, _| match method {
+                "session.getBranch" => branch.clone(),
+                "ctx.isIdle" => json!(true),
+                _ => Value::Null,
+            },
+            |m| m["id"] == id && m.get("method").is_none(),
+        )
+        .await;
+    seen.iter()
+        .filter_map(|m| m["method"].as_str().map(str::to_owned))
+        .collect()
+}
+
+#[tokio::test]
+async fn passive_mode_stops_workers_and_auto_compaction() {
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    let branch = json!(conversation(3, 400_000));
+    host.request(20, "event", event("turn_end", quiet_ctx()))
+        .await;
+    host.request(21, "event", event("agent_settled", quiet_ctx()))
+        .await;
+    host.drive(
+        |method, _| match method {
+            "settings.get" => json!({ "passive": true }),
+            _ => Value::Null,
+        },
+        |m| m["method"] == "settings.get",
+    )
+    .await;
+    let methods = methods_until_status(&mut host, 22, &branch).await;
+    assert_eq!(
+        methods.iter().filter(|m| *m == "session.getBranch").count(),
+        1,
+        "{methods:?}"
+    );
+    assert!(
+        !methods
+            .iter()
+            .any(|m| matches!(m.as_str(), "llm.complete" | "ctx.compact" | "ctx.isIdle")),
+        "{methods:?}"
+    );
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_turn_ends_start_one_pipeline() {
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    let branch = json!(conversation(3, 16_000));
+    host.request(30, "event", event("turn_end", quiet_ctx()))
+        .await;
+    host.request(31, "event", event("turn_end", quiet_ctx()))
+        .await;
+    let reply = observer_reply();
+    let mut methods = Vec::new();
+    host.drive(
+        |method, _| {
+            methods.push(method.to_owned());
+            match method {
+                "settings.get" => json!({ "showWorkerNotifications": false }),
+                "session.getBranch" => branch.clone(),
+                "llm.complete" => json!({ "message": {}, "text": reply }),
+                _ => Value::Null,
+            }
+        },
+        |m| m["method"] == "session.appendEntry",
+    )
+    .await;
+    let after = methods_until_status(&mut host, 32, &branch).await;
+    assert_eq!(methods.iter().filter(|m| *m == "llm.complete").count(), 1);
+    assert_eq!(methods.iter().filter(|m| *m == "settings.get").count(), 1);
+    assert!(!after.iter().any(|m| m == "llm.complete"), "{after:?}");
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn compaction_waits_while_consolidation_runs() {
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    let branch = json!(conversation(3, 400_000));
+    host.request(40, "event", event("turn_end", quiet_ctx()))
+        .await;
+    let held = loop {
+        let message = host.recv().await;
+        let (Some(method), Some(id)) = (message["method"].as_str(), message.get("id")) else {
+            continue;
+        };
+        let id = id.clone();
+        match method {
+            "llm.complete" => break id,
+            "settings.get" => {
+                host.answer(&id, json!({ "showWorkerNotifications": false }))
+                    .await
+            }
+            "session.getBranch" => host.answer(&id, branch.clone()).await,
+            _ => host.answer(&id, Value::Null).await,
+        }
+    };
+
+    host.request(41, "event", event("agent_settled", quiet_ctx()))
+        .await;
+    assert_eq!(host.expect_response(41).await["result"], json!({}));
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    host.answer(
+        &held,
+        json!({ "message": {}, "text": "{\"observations\": []}" }),
+    )
+    .await;
+    let methods = methods_until_status(&mut host, 42, &branch).await;
+    assert!(
+        !methods
+            .iter()
+            .any(|m| m == "ctx.compact" || m == "ctx.isIdle"),
+        "{methods:?}"
+    );
+
+    host.request(43, "event", event("agent_settled", quiet_ctx()))
+        .await;
+    host.drive(
+        |method, _| match method {
+            "session.getBranch" => branch.clone(),
+            "ctx.isIdle" => json!(true),
+            _ => Value::Null,
+        },
+        |m| m["method"] == "ctx.compact",
+    )
+    .await;
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn untrusted_project_config_is_ignored() {
+    let dir = std::env::temp_dir().join(format!("om-untrusted-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join(".pi/ext")).unwrap();
+    std::fs::write(
+        dir.join(".pi/ext/observational-memory.json"),
+        r#"{"passive": true}"#,
+    )
+    .unwrap();
+    let cwd = dir.display().to_string();
+    let branch = json!(conversation(3, 16_000));
+    let ctx_with = |trusted: bool| json!({ "cwd": cwd, "hasUI": false, "flags": {}, "isProjectTrusted": trusted });
+
+    let mut untrusted = TestHost::start(extension());
+    untrusted.initialize().await;
+    untrusted
+        .request(50, "event", event("turn_end", ctx_with(false)))
+        .await;
+    untrusted
+        .drive(
+            |method, _| match method {
+                "session.getBranch" => branch.clone(),
+                _ => json!({}),
+            },
+            |m| m["method"] == "session.getBranch",
+        )
+        .await;
+    untrusted.finish().await.unwrap();
+
+    let mut trusted = TestHost::start(extension());
+    trusted.initialize().await;
+    trusted
+        .request(51, "event", event("turn_end", ctx_with(true)))
+        .await;
+    trusted
+        .drive(|_, _| json!({}), |m| m["method"] == "settings.get")
+        .await;
+    let methods = methods_until_status(&mut trusted, 52, &branch).await;
+    assert_eq!(
+        methods.iter().filter(|m| *m == "session.getBranch").count(),
+        1,
+        "trusted project file sets passive: {methods:?}"
+    );
+    trusted.finish().await.unwrap();
+    std::fs::remove_dir_all(dir).ok();
 }

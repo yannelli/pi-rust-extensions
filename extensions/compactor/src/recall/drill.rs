@@ -111,7 +111,7 @@ fn format_call(name: &str, path: &str, body: &str, n: usize, drill: &Drill) -> S
     }
     if let Some(offset) = drill.offset {
         let max = drill.limit.unwrap_or(30);
-        let end = (offset + max).min(total);
+        let end = offset.saturating_add(max).min(total);
         if offset >= end {
             return format!(
                 "Offset {offset} is beyond file length {total}. Use #{n}:{path} for the first {PREVIEW_LINES} lines."
@@ -119,7 +119,7 @@ fn format_call(name: &str, path: &str, body: &str, n: usize, drill: &Drill) -> S
         }
         let mut out = format!(
             "File: {path}\nTool: {name}\nLines {}-{end} (of {total}):\n\n{}",
-            offset + 1,
+            offset.saturating_add(1),
             lines[offset..end].join("\n")
         );
         if end < total {

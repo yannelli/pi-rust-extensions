@@ -38,6 +38,9 @@ pub async fn on_before_compact(ev: EventCtx, shared: Shared) -> Result<EventRepl
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
+    if reason == "overflow" {
+        return Ok(EventReply::none());
+    }
     let custom = ev
         .get("customInstructions")
         .and_then(Value::as_str)
@@ -105,6 +108,7 @@ pub async fn on_before_compact(ev: EventCtx, shared: Shared) -> Result<EventRepl
             Err(_) if ev.is_cancelled() => Ok(EventReply::cancel()),
             Err(err) => {
                 debug_dump(
+                    &host,
                     &config,
                     json!({ "method": "llm", "fallback": true, "error": err.message() }),
                 );
@@ -136,7 +140,6 @@ pub async fn on_before_compact(ev: EventCtx, shared: Shared) -> Result<EventRepl
     };
     let plan = match plan_lossless(&input) {
         Ok(plan) => plan,
-        Err(_) if reason == "overflow" => return Ok(EventReply::none()),
         Err(why) => {
             if reason == "manual" || from_command {
                 let text = if why == "no_live_messages" {
@@ -146,7 +149,7 @@ pub async fn on_before_compact(ev: EventCtx, shared: Shared) -> Result<EventRepl
                 };
                 host.notify_warning(text).await.ok();
             }
-            debug_dump(&config, json!({ "cancelled": true, "reason": why }));
+            debug_dump(&host, &config, json!({ "cancelled": true, "reason": why }));
             return Ok(EventReply::cancel());
         }
     };
@@ -160,6 +163,7 @@ pub async fn on_before_compact(ev: EventCtx, shared: Shared) -> Result<EventRepl
     }
     let preview: String = plan.summary.chars().take(800).collect();
     debug_dump(
+        &host,
         &config,
         json!({ "method": "vcc", "reason": reason, "details": plan.details, "summaryPreview": preview }),
     );

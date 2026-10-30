@@ -65,8 +65,18 @@ impl Config {
     }
 }
 
+/// A positive integer; integer-valued floats such as `10000.0` count, as `Number.isInteger`.
 fn positive_int(value: Option<&Value>) -> Option<u64> {
-    value.and_then(Value::as_u64).filter(|v| *v > 0)
+    let value = value?;
+    value
+        .as_u64()
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|f| f.fract() == 0.0 && *f >= 1.0 && *f <= u64::MAX as f64)
+                .map(|f| f as u64)
+        })
+        .filter(|v| *v > 0)
 }
 
 fn normalize_model(value: Option<&Value>) -> Option<ConfiguredModel> {

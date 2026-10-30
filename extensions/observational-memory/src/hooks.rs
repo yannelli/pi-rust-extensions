@@ -26,7 +26,8 @@ fn run_id() -> String {
     )
 }
 
-/// `agent_start` / `turn_end`: starts the pipeline in a background task when a stage is due.
+/// `agent_start` / `turn_end`: starts the pipeline in a background task when a stage is due
+/// and no compaction runs.
 pub fn launch_consolidation(state: Arc<State>, ev: &EventCtx) {
     let host = ev.host().clone();
     let snapshot = ev.snapshot().clone();
@@ -39,6 +40,9 @@ pub fn launch_consolidation(state: Arc<State>, ev: &EventCtx) {
         let Some(_running) = runtime.claim(&runtime.consolidation_in_flight) else {
             return;
         };
+        if runtime.compacting() {
+            return;
+        }
         let memory = HostMemory(host.clone());
         let Ok(entries) = memory.branch().await else {
             return;
@@ -77,7 +81,8 @@ pub fn launch_consolidation(state: Arc<State>, ev: &EventCtx) {
     });
 }
 
-/// `agent_settled`: compacts in a background task once the source tokens reach the threshold.
+/// `agent_settled`: compacts in a background task once the source tokens reach the threshold
+/// and no consolidation runs.
 pub fn launch_compaction(state: Arc<State>, ev: &EventCtx) {
     let host = ev.host().clone();
     let snapshot = ev.snapshot().clone();
@@ -90,6 +95,11 @@ pub fn launch_compaction(state: Arc<State>, ev: &EventCtx) {
         let Some(_running) = runtime.claim(&runtime.compact_in_flight) else {
             return;
         };
+        // Observations finishing after the compaction entry would cover entries it already summarized;
+        // the next `agent_settled` retries.
+        if runtime.consolidating() {
+            return;
+        }
         let Ok(entries) = host.branch(None).await else {
             return;
         };

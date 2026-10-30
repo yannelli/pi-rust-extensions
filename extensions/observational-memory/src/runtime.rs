@@ -30,6 +30,7 @@ pub struct RunState {
     pub last_reflector_error: Option<String>,
     pub last_dropper_error: Option<String>,
     pub observer_empty_backoff: Option<EmptyBackoff>,
+    pub reflector_backoff: Option<EmptyBackoff>,
 }
 
 /// Process-wide flags and run state, shared by handlers and background tasks.
@@ -51,9 +52,19 @@ impl Runtime {
 
     /// Sets `flag` when it was clear; the returned guard clears it on drop.
     pub fn claim<'a>(&'a self, flag: &'a AtomicBool) -> Option<FlagGuard<'a>> {
-        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .ok()
             .map(|_| FlagGuard(flag))
+    }
+
+    /// Compaction from `agent_settled` or the `session_before_compact` hook is running.
+    pub fn compacting(&self) -> bool {
+        self.compact_in_flight.load(Ordering::SeqCst)
+            || self.compact_hook_in_flight.load(Ordering::SeqCst)
+    }
+
+    pub fn consolidating(&self) -> bool {
+        self.consolidation_in_flight.load(Ordering::SeqCst)
     }
 
     pub fn begin_consolidation(&self) {
@@ -83,6 +94,6 @@ pub struct FlagGuard<'a>(&'a AtomicBool);
 
 impl Drop for FlagGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.0.store(false, Ordering::SeqCst);
     }
 }
