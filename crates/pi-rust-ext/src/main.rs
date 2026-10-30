@@ -17,6 +17,9 @@ const EXTENSIONS: &[Extension] = &[
     ("ask-user-question", pi_ext_ask_user_question::main),
     ("subagents", pi_ext_subagents::main),
     ("todo", pi_ext_todo::main),
+    ("hooks", pi_ext_hooks::main),
+    ("claude-marketplace", pi_ext_claude_marketplace::main),
+    ("context-include", pi_ext_context_include::main),
 ];
 
 fn main() -> ExitCode {

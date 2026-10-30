@@ -30,6 +30,32 @@
       ]
     },
     {
+      "name": "claude-marketplace",
+      "displayName": "Claude Marketplace",
+      "description": "Add Claude Code plugin marketplaces and install their commands, skills, agents, hooks, and MCP servers into pi.",
+      "version": "0.1.0",
+      "args": [
+        "claude-marketplace"
+      ],
+      "tags": [
+        "claude",
+        "plugins",
+        "tui"
+      ]
+    },
+    {
+      "name": "context-include",
+      "displayName": "Context Include",
+      "description": "Expand @path.md lines in AGENTS.md context files into an extra system prompt section.",
+      "version": "0.1.0",
+      "args": [
+        "context-include"
+      ],
+      "tags": [
+        "context"
+      ]
+    },
+    {
       "name": "goal",
       "displayName": "Goal",
       "description": "Persistent goals, task trees, autonomous continuation, and completion audits.",
@@ -39,6 +65,21 @@
       ],
       "tags": [
         "workflow",
+        "tui"
+      ]
+    },
+    {
+      "name": "hooks",
+      "displayName": "Hooks",
+      "description": "Run Claude Code and Codex hooks (PreToolUse, PostToolUse, Stop, and more) from pi, with per-hook trust.",
+      "version": "0.1.0",
+      "args": [
+        "hooks"
+      ],
+      "tags": [
+        "hooks",
+        "claude",
+        "codex",
         "tui"
       ]
     },
