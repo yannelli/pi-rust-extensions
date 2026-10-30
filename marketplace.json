@@ -2,5 +2,46 @@
   "schemaVersion": 1,
   "protocolVersion": 1,
   "minPiVersion": "0.7.7",
-  "extensions": []
+  "extensions": [
+    {
+      "name": "compactor",
+      "displayName": "Compactor",
+      "description": "Zero-LLM structured compaction summaries or LLM summaries with an active-work header, plus session recall and context budget tools.",
+      "version": "0.1.0",
+      "args": [
+        "compactor"
+      ],
+      "tags": [
+        "compaction",
+        "context"
+      ]
+    },
+    {
+      "name": "observational-memory",
+      "displayName": "Observational Memory",
+      "description": "Records observations and reflections during a session, uses them as the compaction summary, and adds a recall tool.",
+      "version": "0.1.0",
+      "args": [
+        "observational-memory"
+      ],
+      "tags": [
+        "memory",
+        "compaction"
+      ]
+    },
+    {
+      "name": "subscription-router",
+      "displayName": "Subscription Router",
+      "description": "Several ChatGPT Codex and Anthropic subscription accounts as provider slots, quota-aware slot selection, 429 failover, and router/<profile> virtual models.",
+      "version": "0.1.0",
+      "args": [
+        "subscription-router"
+      ],
+      "tags": [
+        "providers",
+        "oauth",
+        "routing"
+      ]
+    }
+  ]
 }

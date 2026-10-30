@@ -12,6 +12,9 @@ name = "pi-rust-ext"
 path = "src/main.rs"
 
 [dependencies]
+pi-ext-compactor = { path = "../../extensions/compactor" }
+pi-ext-observational-memory = { path = "../../extensions/observational-memory" }
+pi-ext-subscription-router = { path = "../../extensions/subscription-router" }
 
 [lints]
 workspace = true
