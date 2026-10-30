@@ -191,3 +191,5 @@ async fn test(ext: Extension) {
 ```
 
 `tests/common/mod.rs` has a `TestHost` that does this.
+
+For an end-to-end test under the real pi binary, add `pi-ext-e2e` as a dev-dependency. `Run::new(binary).args([...]).turns([Turn::tool_call(..), Turn::text(..)]).prompt(..).run()` starts a mock OpenAI-compatible provider, installs your binary as a `pi.native` package in a temp agent dir, runs `$PI_BIN --mode json -p <prompt>`, and returns the JSON events, the provider requests, and stderr. The test skips when `PI_BIN` does not exist. See `crates/pi-ext-e2e/README.md`.

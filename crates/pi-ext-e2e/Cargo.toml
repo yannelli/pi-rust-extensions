@@ -1,0 +1,18 @@
+[package]
+name = "pi-ext-e2e"
+description = "End-to-end test harness for pi-rust native extensions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+
+[dev-dependencies]
+pi-ext-sdk = { path = "../pi-ext-sdk" }
+
+[lints]
+workspace = true

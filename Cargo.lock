@@ -145,6 +145,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-e2e"
+version = "0.1.0"
+dependencies = [
+ "pi-ext-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "pi-ext-sdk"
 version = "0.1.0"
 dependencies = [
