@@ -1,10 +1,14 @@
 use std::path::Path;
+use std::time::Duration;
 
 use pi_ext_sdk::Host;
 use pi_ext_sdk::json::merge_patch;
 use serde_json::{Value, json};
 
 pub use crate::excludes::DEFAULT_EXCLUDE_PATTERNS;
+
+pub const DEFAULT_STAGE_BUDGET: Duration = Duration::from_secs(10);
+pub const DEFAULT_GIT_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestoreOnTree {
@@ -24,6 +28,10 @@ pub struct Config {
     /// Defaults, then user `exclude`, then `include` as `!pattern` lines.
     pub exclude: Vec<String>,
     pub max_file_bytes: Option<u64>,
+    /// How long a turn waits for its pre-turn snapshot before it runs without one.
+    pub stage_budget: Duration,
+    /// How long git may take to store one batch of files.
+    pub git_timeout: Duration,
 }
 
 impl Default for Config {
@@ -65,6 +73,14 @@ impl Config {
             .as_f64()
             .filter(|mb| mb.is_finite() && *mb > 0.0)
             .map(|mb| (mb * 1024.0 * 1024.0) as u64);
+        let stage_budget = checkpoint["stageBudgetSeconds"]
+            .as_f64()
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+            .map_or(DEFAULT_STAGE_BUDGET, Duration::from_secs_f64);
+        let git_timeout = checkpoint["gitTimeoutSeconds"]
+            .as_f64()
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+            .map_or(DEFAULT_GIT_TIMEOUT, Duration::from_secs_f64);
         let restore_on_tree = match ayu["rewind"]["restoreOnTree"].as_str() {
             Some("never") => RestoreOnTree::Never,
             Some("always") => RestoreOnTree::Always,
@@ -79,6 +95,8 @@ impl Config {
             restore_on_tree,
             exclude,
             max_file_bytes,
+            stage_budget,
+            git_timeout,
         }
     }
 

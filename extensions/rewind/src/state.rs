@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use pi_ext_sdk::{Host, Result, Snapshot, info, warn};
 use serde_json::json;
@@ -8,7 +8,7 @@ use tokio::sync::{Mutex, MutexGuard};
 
 use crate::checkpoint::{self, Checkpoint, ENTRY_TYPE};
 use crate::config::Config;
-use crate::git::ShadowRepo;
+use crate::git::{ShadowRepo, Taken};
 use crate::lock::StorageLock;
 
 #[derive(Debug, Clone)]
@@ -18,6 +18,17 @@ pub struct Pending {
     pub before_commit: String,
 }
 
+/// What [`Session::finish_turn`] did.
+#[derive(Debug)]
+pub enum Finished {
+    /// No turn was pending.
+    Idle,
+    /// The post-turn snapshot passed the budget; the turn stays pending.
+    Pending,
+    /// The turn's checkpoint entry was appended.
+    Done,
+}
+
 pub struct Session {
     pub config: Config,
     pub repo: ShadowRepo,
@@ -25,20 +36,26 @@ pub struct Session {
     pub pending: Option<Pending>,
     pub last_commit: Option<String>,
     pub tree_target: Option<Option<String>>,
-    /// The user entry whose pre-turn checkpoint failed; its later assistant messages skip it.
+    /// The user entry whose pre-turn checkpoint failed or ran out of budget; its later
+    /// assistant messages skip it.
     pub failed_turn: Option<String>,
+    /// A snapshot is still staging the work tree in budgeted steps.
+    pub building: bool,
+    noted: bool,
 }
 
 impl Session {
     pub fn new(config: Config, storage: PathBuf, work_tree: &Path) -> Self {
         Self {
-            repo: ShadowRepo::new(&storage, work_tree),
+            repo: ShadowRepo::new(&storage, work_tree).with_add_timeout(config.git_timeout),
             config,
             storage,
             pending: None,
             last_commit: None,
             tree_target: None,
             failed_turn: None,
+            building: false,
+            noted: false,
         }
     }
 
@@ -69,7 +86,28 @@ impl Session {
         Ok(commit)
     }
 
+    /// Like [`Self::snapshot_locked`], but stops when the turn's stage budget runs out.
+    async fn snapshot_budgeted(&mut self, message: &str, base: Option<&str>) -> Result<Taken> {
+        self.repo.ensure().await?;
+        let deadline = Instant::now() + self.config.stage_budget;
+        let taken = self
+            .repo
+            .snapshot_within(
+                message,
+                base,
+                &self.config.exclude,
+                self.config.max_file_bytes,
+                deadline,
+            )
+            .await?;
+        if let Taken::Commit(commit) = &taken {
+            self.last_commit = Some(commit.clone());
+        }
+        Ok(taken)
+    }
+
     /// Captures the pre-turn state for `user_entry_id` unless that turn already started.
+    /// A turn whose snapshot does not finish within the budget runs without a checkpoint.
     pub async fn begin_turn(
         &mut self,
         host: &Host,
@@ -82,14 +120,23 @@ impl Session {
         }
         self.failed_turn = Some(user_entry_id.to_string());
         let _lock = self.lock().await?;
-        if let Err(err) = self.finish_turn_locked(host).await {
-            warn!("dropped unfinished checkpoint: {err}");
-            self.pending = None;
+        match self.finish_turn_locked(host).await {
+            Ok(Finished::Pending) => return Ok(()),
+            Ok(_) => {}
+            Err(err) => {
+                warn!("dropped unfinished checkpoint: {err}");
+                self.pending = None;
+            }
         }
         let base = self.last_commit.clone();
-        let before = self
-            .snapshot_locked(&format!("[pi] before:{user_entry_id}"), base.as_deref())
-            .await?;
+        let message = format!("[pi] before:{user_entry_id}");
+        let before = match self.snapshot_budgeted(&message, base.as_deref()).await? {
+            Taken::Commit(commit) => commit,
+            Taken::Partial { staged, remaining } => {
+                return self.note_progress(host, staged, remaining).await;
+            }
+        };
+        self.mark_ready(host).await?;
         self.failed_turn = None;
         self.pending = Some(Pending {
             user_entry_id: user_entry_id.to_string(),
@@ -100,23 +147,68 @@ impl Session {
     }
 
     /// Captures the post-turn state and appends the `pi-checkpoint` entry.
-    /// The turn stays pending when a step fails, so the next call retries it.
-    pub async fn finish_turn(&mut self, host: &Host) -> Result<Option<Checkpoint>> {
-        if self.pending.is_none() {
-            return Ok(None);
+    /// The turn stays pending when a step fails or runs out of budget, so the next call
+    /// retries it. Without a pending turn, continues an unfinished snapshot.
+    pub async fn finish_turn(&mut self, host: &Host) -> Result<Finished> {
+        if self.pending.is_none() && !self.building {
+            return Ok(Finished::Idle);
         }
         let _lock = self.lock().await?;
+        if self.pending.is_none() {
+            let base = self.last_commit.clone();
+            return match self
+                .snapshot_budgeted("[pi] snapshot", base.as_deref())
+                .await?
+            {
+                Taken::Commit(_) => self.mark_ready(host).await.map(|()| Finished::Idle),
+                Taken::Partial { staged, remaining } => {
+                    self.note_progress(host, staged, remaining).await?;
+                    Ok(Finished::Idle)
+                }
+            };
+        }
         self.finish_turn_locked(host).await
     }
 
-    async fn finish_turn_locked(&mut self, host: &Host) -> Result<Option<Checkpoint>> {
+    async fn note_progress(&mut self, host: &Host, staged: usize, remaining: usize) -> Result<()> {
+        self.building = true;
+        info!("snapshot staged {staged} files, {remaining} left");
+        if self.noted {
+            return Ok(());
+        }
+        self.noted = true;
+        let text = format!(
+            "Rewind is taking its first file snapshot of {} ({remaining} files left). \
+             Turns get file checkpoints when it is done.",
+            self.repo.work_tree().display()
+        );
+        notice(host, text).await;
+        Ok(())
+    }
+
+    async fn mark_ready(&mut self, host: &Host) -> Result<()> {
+        let was_building = std::mem::take(&mut self.building);
+        if was_building && self.noted {
+            notice(host, "Rewind file checkpoints are on.".into()).await;
+        }
+        Ok(())
+    }
+
+    async fn finish_turn_locked(&mut self, host: &Host) -> Result<Finished> {
         let Some(pending) = self.pending.clone() else {
-            return Ok(None);
+            return Ok(Finished::Idle);
         };
         let message = format!("[pi] entry:{}", pending.user_entry_id);
-        let after = self
-            .snapshot_locked(&message, Some(&pending.before_commit))
-            .await?;
+        let after = match self
+            .snapshot_budgeted(&message, Some(&pending.before_commit))
+            .await?
+        {
+            Taken::Commit(commit) => commit,
+            Taken::Partial { staged, remaining } => {
+                info!("post-turn snapshot staged {staged} files, {remaining} left");
+                return Ok(Finished::Pending);
+            }
+        };
         let file_changes = self.repo.numstat(&pending.before_commit, &after).await?;
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -143,7 +235,7 @@ impl Session {
             short(&checkpoint.after_commit),
             checkpoint.file_count
         );
-        Ok(Some(checkpoint))
+        Ok(Finished::Done)
     }
 
     /// Writes `commit` into the work tree; rolls back to a safety snapshot on failure.
@@ -170,6 +262,13 @@ impl Session {
             .git(&["diff", "--cached", "--quiet", commit])
             .await
             .is_ok())
+    }
+}
+
+/// A progress notice; pi can already be gone when a snapshot finishes at shutdown.
+async fn notice(host: &Host, text: String) {
+    if let Err(err) = host.notify_info(text).await {
+        info!("notice not shown: {err}");
     }
 }
 
