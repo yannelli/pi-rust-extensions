@@ -21,7 +21,7 @@ fn todo_tool_runs_in_pi() {
 }
 ```
 
-- `PI_BIN` selects pi (default `/Users/ryanyannelli/Development/pi-upstream-ref/bin/pi-dev`); tests skip with a message when it does not exist.
+- `PI_BIN` selects pi (default `/Users/ryanyannelli/Development/pi-upstream-ref/bin/pi-dev`). Tests skip with a message only when `PI_BIN` is unset and the default does not exist; a set `PI_BIN` that is not an executable file, or `PI_REQUIRE_E2E=1` without `PI_BIN`, fails the test.
 - `PI_E2E_KEEP=1` keeps the temp dir. pi runs with a cleared environment (`PATH`, `HOME`, `TMPDIR`, `LANG` only) and `PI_OFFLINE=1`.
 - `Output` helpers: `events_of`, `tool_results`, `tool_result_text`, `tool_updates`, `tool_names`, `system_prompt`, `final_text`.
 - `Run` options: `.env(k, v)` for the extension, `.settings(json)`, `.pi_args([...])` (for example extension flags), `.file("work/AGENTS.md", text)` (a file under the cwd `work/` or the agent dir `agent/`, written before pi starts), `.timeout(..)`.
