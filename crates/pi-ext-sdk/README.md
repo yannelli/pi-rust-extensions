@@ -140,6 +140,7 @@ async fn pick(host: Host) -> Result<Value> {
 ```
 
 - `open()` sends `ui.custom` with a new surface id and returns at once. It fails with `-32001` when pi has no UI.
+- `width()` and `height()` return the last `ui.resize` values. `height()` is the terminal rows; it is `None` when pi does not send `height`. A resize that changes only the height also sends `PanelEvent::Resize`.
 - `set_lines` sends `ui.update`. `close(result)` sends `ui.close` and waits for the `ui.custom` answer. `result()` waits without a close.
 - When you drop an open panel, the SDK sends `ui.close`.
 - `Key::parse(raw)` reads raw terminal input: arrows, enter, escape, tab, backspace, ctrl and alt keys, and kitty `CSI u` keys. `key.is("ctrl+c")` compares with a name. `key.is_cancel()` is true for escape, ctrl+c, and `q`.

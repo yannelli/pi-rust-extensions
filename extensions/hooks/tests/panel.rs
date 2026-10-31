@@ -186,3 +186,30 @@ async fn remove_asks_then_edits_the_settings_file() {
     assert!(!blocked(&mut host, 2, &env).await);
     host.finish().await.unwrap();
 }
+
+#[tokio::test]
+async fn panel_fits_the_terminal_height_from_ctx_and_resize() {
+    let env = env();
+    let mut host = TestHost::start(extension(env.paths.clone()));
+    host.initialize().await;
+    let mut ctx = ctx(&env, true);
+    ctx["terminalWidth"] = json!(80);
+    ctx["terminalHeight"] = json!(8);
+    let (panel, surface, lines) = open(&mut host, 1, ctx).await;
+    assert!(lines.lines().count() <= 5, "{lines}");
+    assert!(lines.contains("→ ● PreToolUse"), "{lines}");
+    let sizes = [(json!(80), json!(40), 37), (Value::Null, json!(7), 4)];
+    for (width, height, max_lines) in sizes {
+        let mut params = json!({ "surface": surface, "height": height });
+        if !width.is_null() {
+            params["width"] = width;
+        }
+        host.notify("ui.resize", params).await;
+        let lines = text(&host.expect_notification("ui.update").await["lines"]);
+        assert!(lines.lines().count() <= max_lines, "{lines}");
+        assert!(lines.contains("→ ● PreToolUse"), "{lines}");
+        assert!(lines.contains("esc close"), "{lines}");
+    }
+    close(&mut host, 1, &panel, &surface).await;
+    host.finish().await.unwrap();
+}

@@ -170,8 +170,12 @@ fn notification(state: &Arc<State>, method: &str, params: Value) -> Flow {
             host.inner.subscriptions.deliver(text("channel"), &data);
         }
         "ui.resize" => {
-            let width = params.get("width").and_then(Value::as_u64).unwrap_or(0);
-            let event = host.inner.surfaces.resize(text("surface"), width as usize);
+            let size = |key: &str| params.get(key).and_then(Value::as_u64).map(|n| n as usize);
+            let height = size("height").filter(|&rows| rows > 0);
+            let event = host
+                .inner
+                .surfaces
+                .resize(text("surface"), size("width"), height);
             surface_callbacks(host, event);
         }
         "ui.key" => {

@@ -103,6 +103,49 @@ async fn panel_open_key_resize_close() {
 }
 
 #[tokio::test]
+async fn panel_height_tracks_resize_and_old_hosts_leave_it_unset() {
+    let ext = Extension::new("size").command("size", "", |_, ctx: CommandCtx| async move {
+        let mut panel = ctx.host().panel(["size"]).open().await?;
+        while let PanelEvent::Resize(width) = panel.next_event().await {
+            panel.set_lines([format!("{width}x{:?}", panel.height())])?;
+        }
+        Ok(())
+    });
+    let mut host = TestHost::start(ext);
+    host.initialize().await;
+    host.request(
+        4,
+        "command.run",
+        json!({ "name": "size", "args": "", "ctx": ctx() }),
+    )
+    .await;
+    let (custom_id, params) = host.expect_request("ui.custom").await;
+    let surface = params["surface"].clone();
+    let resizes = [
+        (json!({ "surface": surface, "width": 80 }), "80xNone"),
+        (
+            json!({ "surface": surface, "width": 80, "height": 12 }),
+            "80xSome(12)",
+        ),
+        (json!({ "surface": surface, "height": 16 }), "80xSome(16)"),
+        (
+            json!({ "surface": surface, "width": 40, "height": 0 }),
+            "40xSome(16)",
+        ),
+    ];
+    for (params, line) in resizes {
+        host.notify("ui.resize", params).await;
+        let update = host.expect_notification("ui.update").await;
+        assert_eq!(update["lines"], json!([line]));
+    }
+    host.notify("ui.closed", json!({ "surface": surface }))
+        .await;
+    host.answer(&custom_id, json!({ "result": null })).await;
+    assert_eq!(host.expect_response(4).await["result"], Value::Null);
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
 async fn panel_open_is_sent_before_first_update() {
     let ext = Extension::new("order").command("p", "", |_, ctx: CommandCtx| async move {
         let panel = ctx.host().panel(["loading"]).open().await?;

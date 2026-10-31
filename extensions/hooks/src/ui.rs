@@ -32,12 +32,16 @@ pub async fn hooks_command(rt: Arc<Runtime>, args: String, ctx: CommandCtx) -> R
         }
         view.clamp(&rows);
         let mut width = snap.terminal_width.map_or(100, |w| w as usize);
-        let mut panel = host.panel(view.render(&rows, width)).open().await?;
+        let mut height = panel_height(snap.terminal_height.map(|h| h as usize));
+        let mut panel = host.panel(view.render(&rows, width, height)).open().await?;
         width = panel.width().unwrap_or(width);
         let dialog = loop {
             match panel.next_event().await {
                 PanelEvent::Closed => return Ok(()),
-                PanelEvent::Resize(w) => width = w,
+                PanelEvent::Resize(w) => {
+                    width = w;
+                    height = panel_height(panel.height()).or(height);
+                }
                 PanelEvent::Key(key) => match view.key(&key, &rows) {
                     Action::Close => break None,
                     Action::Redraw => {}
@@ -52,7 +56,7 @@ pub async fn hooks_command(rt: Arc<Runtime>, args: String, ctx: CommandCtx) -> R
                     }
                 },
             }
-            panel.set_lines(view.render(&rows, width))?;
+            panel.set_lines(view.render(&rows, width, height))?;
         };
         let _ = panel.close(Value::Null).await;
         let Some(dialog) = dialog else {
@@ -79,6 +83,15 @@ pub async fn hooks_command(rt: Arc<Runtime>, args: String, ctx: CommandCtx) -> R
             }
         };
     }
+}
+
+/// Rows pi keeps outside a panel: the cwd and usage footer lines, and the top row of
+/// fullscreen mode. The ctx does not say which TUI mode runs, so both modes reserve it.
+const HOST_ROWS: usize = 3;
+
+/// The lines the panel may use when pi reports `terminal_rows`.
+fn panel_height(terminal_rows: Option<usize>) -> Option<usize> {
+    terminal_rows.map(|rows| rows.saturating_sub(HOST_ROWS).max(1))
 }
 
 fn project_trusted(snap: &Snapshot) -> bool {

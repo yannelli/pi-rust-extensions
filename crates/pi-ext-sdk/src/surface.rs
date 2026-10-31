@@ -44,9 +44,16 @@ impl SurfaceEvents {
     }
 }
 
+/// The last `ui.resize` of one surface; `height` is the terminal rows when pi sent them.
+#[derive(Debug, Clone, Copy, Default)]
+struct Size {
+    width: usize,
+    height: Option<usize>,
+}
+
 pub(crate) struct Surfaces {
     panels: Mutex<HashMap<String, mpsc::UnboundedSender<PanelMessage>>>,
-    widths: Mutex<HashMap<String, usize>>,
+    sizes: Mutex<HashMap<String, Size>>,
     events: broadcast::Sender<SurfaceEvent>,
 }
 
@@ -54,7 +61,7 @@ impl Surfaces {
     pub(crate) fn new() -> Self {
         Self {
             panels: Mutex::new(HashMap::new()),
-            widths: Mutex::new(HashMap::new()),
+            sizes: Mutex::new(HashMap::new()),
             events: broadcast::channel(64).0,
         }
     }
@@ -68,7 +75,7 @@ impl Surfaces {
 
     pub(crate) fn remove_panel(&self, surface: &str) {
         self.panels.lock().expect("panels lock").remove(surface);
-        self.widths.lock().expect("widths lock").remove(surface);
+        self.sizes.lock().expect("sizes lock").remove(surface);
     }
 
     fn panel(&self, surface: &str) -> Option<mpsc::UnboundedSender<PanelMessage>> {
@@ -79,12 +86,16 @@ impl Surfaces {
             .cloned()
     }
 
+    fn size(&self, surface: &str) -> Option<Size> {
+        self.sizes.lock().expect("sizes lock").get(surface).copied()
+    }
+
     pub(crate) fn width(&self, surface: &str) -> Option<usize> {
-        self.widths
-            .lock()
-            .expect("widths lock")
-            .get(surface)
-            .copied()
+        self.size(surface).map(|size| size.width)
+    }
+
+    pub(crate) fn height(&self, surface: &str) -> Option<usize> {
+        self.size(surface)?.height
     }
 
     pub(crate) fn subscribe(&self) -> SurfaceEvents {
@@ -93,11 +104,20 @@ impl Surfaces {
         }
     }
 
-    /// Routes a `ui.resize`; returns the event for non-panel surfaces.
-    pub(crate) fn resize(&self, surface: &str, width: usize) -> Option<SurfaceEvent> {
-        let mut widths = self.widths.lock().expect("widths lock");
-        widths.insert(surface.to_owned(), width);
-        drop(widths);
+    /// Routes a `ui.resize`; a missing width or height keeps the last value.
+    /// Returns the event for non-panel surfaces.
+    pub(crate) fn resize(
+        &self,
+        surface: &str,
+        width: Option<usize>,
+        height: Option<usize>,
+    ) -> Option<SurfaceEvent> {
+        let mut sizes = self.sizes.lock().expect("sizes lock");
+        let size = sizes.entry(surface.to_owned()).or_default();
+        size.width = width.unwrap_or(size.width);
+        size.height = height.or(size.height);
+        let width = size.width;
+        drop(sizes);
         if let Some(panel) = self.panel(surface) {
             let _ = panel.send((PanelEvent::Resize(width), None));
             return None;
@@ -127,7 +147,7 @@ impl Surfaces {
             self.remove_panel(surface);
             return None;
         }
-        self.widths.lock().expect("widths lock").remove(surface);
+        self.sizes.lock().expect("sizes lock").remove(surface);
         let event = SurfaceEvent::Closed {
             surface: surface.to_owned(),
         };
@@ -137,5 +157,41 @@ impl Surfaces {
 
     pub(crate) fn close_all(&self) {
         self.panels.lock().expect("panels lock").clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panel_size_clears_with_the_surface() {
+        let surfaces = Surfaces::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        surfaces.add_panel("p", tx);
+        assert_eq!(surfaces.resize("p", Some(80), Some(12)), None);
+        assert_eq!(surfaces.resize("p", None, Some(20)), None);
+        assert_eq!(rx.try_recv().unwrap().0, PanelEvent::Resize(80));
+        assert_eq!(rx.try_recv().unwrap().0, PanelEvent::Resize(80));
+        assert_eq!(
+            (surfaces.width("p"), surfaces.height("p")),
+            (Some(80), Some(20))
+        );
+        surfaces.closed("p");
+        assert_eq!((surfaces.width("p"), surfaces.height("p")), (None, None));
+    }
+
+    #[test]
+    fn widget_resize_without_height_keeps_the_event_shape() {
+        let surfaces = Surfaces::new();
+        let event = surfaces.resize("widget:a", Some(30), None);
+        let expected = SurfaceEvent::Resize {
+            surface: "widget:a".into(),
+            width: 30,
+        };
+        assert_eq!(event, Some(expected));
+        assert_eq!(surfaces.height("widget:a"), None);
+        surfaces.closed("widget:a");
+        assert_eq!(surfaces.width("widget:a"), None);
     }
 }
