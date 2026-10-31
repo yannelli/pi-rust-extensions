@@ -1,4 +1,5 @@
 use pi_ext_sdk::prelude::*;
+use tokio::sync::oneshot;
 
 use crate::app::{AUDIT_MESSAGE, App, AuditJob, Inner};
 use crate::auditor::{self, Verdict};
@@ -56,9 +57,10 @@ pub async fn create(app: &App, host: &Host, new: NewGoal) -> std::result::Result
     Ok(goal)
 }
 
-/// `update_goal({status: "complete"})`: gate on tasks, then audit in the background.
+/// `update_goal({status: "complete"})`: gate on tasks, then wait for the auditor and return its
+/// verdict as the tool result, as upstream's tool does.
 pub async fn submit_completion(app: &App, host: &Host, summary: Option<String>) -> ToolResult {
-    let inline = {
+    let (inline, pending) = {
         let mut inner = app.lock();
         let Some(goal) = inner.focused().cloned() else {
             return ToolResult::error("No focused goal.");
@@ -78,10 +80,12 @@ pub async fn submit_completion(app: &App, host: &Host, summary: Option<String>) 
         });
         let goal = inner.focused().cloned().unwrap_or(goal);
         if inner.settings.disable_auditor {
-            Some(goal.id)
+            (Some(goal.id), None)
         } else {
-            start_audit(app, &mut inner, host, goal, summary);
-            None
+            (
+                None,
+                Some(start_audit(app, &mut inner, host, goal, summary)),
+            )
         }
     };
     if let Some(goal_id) = inline {
@@ -94,29 +98,56 @@ pub async fn submit_completion(app: &App, host: &Host, summary: Option<String>) 
         return ToolResult::text("Goal complete and archived (auditor disabled). End this turn.");
     }
     let _ = widget::refresh(app, host).await;
-    ToolResult::text(
-        "Completion submitted; the independent auditor is checking the evidence. Stop work and end this turn.",
-    )
+    let Some(verdict) = pending else {
+        return ToolResult::error("No audit started.");
+    };
+    match verdict.await {
+        Ok(message) => {
+            let mut inner = app.lock();
+            let reopened = inner
+                .focused()
+                .is_some_and(|g| g.status == GoalStatus::Active);
+            inner.run.stopped = !reopened;
+            ToolResult::text(message.content.as_str().unwrap_or_default())
+        }
+        Err(_) => ToolResult::text(
+            "The audit stopped before a verdict (paused, cleared, aborted, or replaced). The goal stays open.",
+        ),
+    }
 }
 
-/// Spawns the auditor for `goal` and records it while the caller holds the lock.
-fn start_audit(app: &App, inner: &mut Inner, host: &Host, goal: Goal, summary: Option<String>) {
+/// Spawns the auditor for `goal` and records it while the caller holds the lock. The verdict
+/// message goes to the returned receiver, or to the session when nothing waits for it.
+fn start_audit(
+    app: &App,
+    inner: &mut Inner,
+    host: &Host,
+    goal: Goal,
+    summary: Option<String>,
+) -> oneshot::Receiver<CustomMessage> {
     inner.cancel_audit(&goal.id);
     inner.audit_generation += 1;
     let generation = inner.audit_generation;
     let goal_id = goal.id.clone();
     let settings = inner.settings.clone();
     let (app, host) = (app.clone(), host.clone());
+    let (sender, receiver) = oneshot::channel();
     let task = tokio::spawn(async move {
         let verdict = auditor::audit(&host, &goal, summary.as_deref(), &settings).await;
-        finish_audit(&app, &host, &goal.id, Some(generation), verdict).await;
+        let Some(message) = apply_verdict(&app, &host, &goal.id, Some(generation), verdict).await
+        else {
+            return;
+        };
+        if let Err(message) = sender.send(message) {
+            deliver(&host, message).await;
+        }
     });
     let abort = task.abort_handle();
     inner.audits.insert(goal_id, AuditJob { generation, abort });
+    receiver
 }
 
-/// Applies a verdict while the goal still waits on this audit; `generation` is `None` for an
-/// inline verdict. Pause, clear, abort, resume, or a newer audit make the verdict stale.
+/// Applies a verdict and sends its message to the session.
 pub async fn finish_audit(
     app: &App,
     host: &Host,
@@ -124,21 +155,38 @@ pub async fn finish_audit(
     generation: Option<u64>,
     verdict: Verdict,
 ) {
+    if let Some(message) = apply_verdict(app, host, goal_id, generation, verdict).await {
+        deliver(host, message).await;
+    }
+}
+
+async fn deliver(host: &Host, message: CustomMessage) {
+    if let Err(err) = host.send_message(message).await {
+        pi_ext_sdk::warn!("goal audit message failed: {}", err.message());
+    }
+}
+
+/// Applies a current verdict; a goal change or newer audit makes an older verdict stale.
+/// A `generation` of `None` applies an inline verdict.
+async fn apply_verdict(
+    app: &App,
+    host: &Host,
+    goal_id: &str,
+    generation: Option<u64>,
+    verdict: Verdict,
+) -> Option<CustomMessage> {
     let message = {
         let mut inner = app.lock();
         if let Some(generation) = generation {
             if inner.audits.get(goal_id).map(|job| job.generation) != Some(generation) {
-                return;
+                return None;
             }
             inner.audits.remove(goal_id);
         }
-        let Some(goal) = inner
+        let goal = inner
             .goals
             .iter_mut()
-            .find(|g| g.id == goal_id && g.status == GoalStatus::Auditing)
-        else {
-            return;
-        };
+            .find(|g| g.id == goal_id && g.status == GoalStatus::Auditing)?;
         goal.audits += 1;
         goal.last_audit = Some(verdict.report.clone());
         if verdict.approved {
@@ -187,9 +235,7 @@ pub async fn finish_audit(
         let _ = app.set_focus(host, None).await;
     }
     let _ = widget::refresh(app, host).await;
-    if let Err(err) = host.send_message(message).await {
-        pi_ext_sdk::warn!("goal audit message failed: {}", err.message());
-    }
+    Some(message)
 }
 
 fn truncate_text_block(report: &str) -> String {
