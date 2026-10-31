@@ -80,3 +80,47 @@ fn strips_wrappers() {
     let w = words("command -v git");
     assert_eq!(raw_text(strip_wrappers(&w, false)), "command -v git");
 }
+
+#[test]
+fn heredoc_bodies_are_not_commands() {
+    let script = "cat <<EOF > notes.txt\nrm -rf /\ngit push --force\nEOF\nls";
+    assert_eq!(texts(script), ["cat", "ls"]);
+    let tabs = "cat <<-'END'\n\trm -rf x\n\tEND\necho done";
+    assert_eq!(texts(tabs), ["cat", "echo done"]);
+    let s = parse("python3 - <<'PY'\nimport os; os.remove('x')\nPY");
+    assert_eq!(s.commands.len(), 1);
+}
+
+#[test]
+fn expanding_heredocs_run_their_substitutions() {
+    let script = "cat <<EOF\nvalue: $(rm -rf build)\n`whoami`\nEOF";
+    assert_eq!(texts(script), ["cat", "rm -rf build", "whoami"]);
+    let quoted = "cat <<'EOF'\n$(rm -rf build)\nEOF";
+    assert_eq!(texts(quoted), ["cat"]);
+}
+
+#[test]
+fn redirect_targets_are_collected() {
+    let s = parse("sort < in.txt > out.txt 2>> err.log; echo x &> all.log; cmd 2>&1 >/dev/null");
+    let targets: Vec<(&str, bool)> = s
+        .redirects
+        .iter()
+        .map(|r| (r.path.as_str(), r.write))
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            ("in.txt", false),
+            ("out.txt", true),
+            ("err.log", true),
+            ("all.log", true)
+        ]
+    );
+    assert!(
+        parse("cat <<< 'text' >| clobber.txt")
+            .redirects
+            .iter()
+            .any(|r| r.path == "clobber.txt")
+    );
+    assert!(parse("cat <<< 'secret.txt'").redirects.is_empty());
+}

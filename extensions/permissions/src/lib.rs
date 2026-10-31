@@ -2,6 +2,7 @@ mod ask;
 mod codex;
 mod codex_config;
 mod evaluate;
+mod files;
 mod listing;
 mod load;
 mod paths;
