@@ -113,10 +113,8 @@ fn real_pattern(spec: &str, cx: &PathContext) -> Option<String> {
         (PathBuf::from("/"), rest)
     } else if let Some(rest) = spec.strip_prefix("~/") {
         (cx.home.to_path_buf(), rest)
-    } else if let Some(rest) = spec.strip_prefix('/') {
-        (cx.anchor.to_path_buf(), rest)
     } else {
-        return None;
+        (cx.anchor.to_path_buf(), spec.strip_prefix('/')?)
     };
     let segments: Vec<&str> = rest.split('/').collect();
     let literal = segments
