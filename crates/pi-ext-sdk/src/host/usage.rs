@@ -47,6 +47,8 @@ pub struct UsageWindow {
     pub resets_at: Option<String>,
     /// `300` for 5 hours, `10080` for a week.
     pub window_minutes: Option<u64>,
+    /// The exact window length in seconds, when the provider reports a whole number.
+    pub window_seconds: Option<u64>,
     /// `provider` or `model`. Hosts before this field send none.
     pub scope: Option<String>,
     /// The model families of a `model` window, for example `opus`.

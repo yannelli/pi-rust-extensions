@@ -41,20 +41,23 @@ pub fn from_older_host(usage: &ProviderUsage) -> bool {
     unaliased_slot || unscoped || unkinded_failure
 }
 
-fn codex_name(minutes: Option<u64>, id: &str) -> (String, i64, &'static str) {
+/// Router name, length, and source of a Codex window from the exact seconds pi reports.
+fn codex_name(seconds: Option<u64>, id: &str) -> (String, i64, &'static str) {
     let (fallback, fallback_ms) = if id == "primary_window" {
         ("5h", FIVE_HOURS_MS)
     } else {
         ("7d", SEVEN_DAYS_MS)
     };
-    match minutes {
-        Some(10_080) => ("7d".into(), SEVEN_DAYS_MS, "reported"),
-        Some(300) => ("5h".into(), FIVE_HOURS_MS, "reported"),
-        Some(minutes) => (
-            format!("{}s", minutes * 60),
-            minutes as i64 * 60_000,
-            "reported",
-        ),
+    match seconds {
+        Some(604_800) => ("7d".into(), SEVEN_DAYS_MS, "reported"),
+        Some(18_000) => ("5h".into(), FIVE_HOURS_MS, "reported"),
+        Some(seconds) => match i64::try_from(seconds)
+            .ok()
+            .and_then(|seconds| seconds.checked_mul(1000))
+        {
+            Some(ms) => (format!("{seconds}s"), ms, "reported"),
+            None => (fallback.into(), fallback_ms, "assumed"),
+        },
         None => (fallback.into(), fallback_ms, "assumed"),
     }
 }
@@ -70,7 +73,7 @@ fn window(family: Family, core: &pi_ext_sdk::UsageWindow) -> Option<UsageWindow>
             };
             (id.to_owned(), duration, "reported")
         }
-        Family::Codex if CODEX_WINDOWS.contains(&id) => codex_name(core.window_minutes, id),
+        Family::Codex if CODEX_WINDOWS.contains(&id) => codex_name(core.window_seconds, id),
         _ => return None,
     };
     let model = core.scope.as_deref() == Some("model");
@@ -119,11 +122,10 @@ pub fn outcome(provider: &str, family: Family, usage: &ProviderUsage, now: i64) 
             retry_after: None,
         };
     }
-    let retrieved_at = if usage.fetched_at > 0 {
-        usage.fetched_at as i64
-    } else {
-        now
-    };
+    let retrieved_at = i64::try_from(usage.fetched_at)
+        .ok()
+        .filter(|at| *at > 0)
+        .unwrap_or(now);
     let credits = usage.credits.as_ref().map(|credits| Credits {
         available: credits.available,
         unlimited: credits.unlimited,
@@ -136,7 +138,7 @@ pub fn outcome(provider: &str, family: Family, usage: &ProviderUsage, now: i64) 
         credits,
         tier: usage.plan.clone(),
         retrieved_at,
-        expires_at: retrieved_at + CACHE_TTL_MS,
+        expires_at: retrieved_at.saturating_add(CACHE_TTL_MS),
         message: None,
     };
     Outcome {

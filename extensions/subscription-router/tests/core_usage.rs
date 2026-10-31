@@ -206,3 +206,33 @@ async fn only_results_of_older_hosts_fall_back_to_the_router_read() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].headers["authorization"], "Bearer router-token");
 }
+
+#[tokio::test]
+async fn exact_and_extreme_codex_lengths_and_times_map_without_overflow() {
+    let mock = MockHttp::start(vec![]).await;
+    let answer = json!({ "provider": "openai-codex-2", "fetchedAt": u64::MAX, "windows": [
+        { "label": "5m", "usedPercent": 1, "windowMinutes": 5, "windowSeconds": 301, "scope": "provider", "id": "primary_window" },
+        { "label": "Secondary", "usedPercent": 2, "windowMinutes": 5, "windowSeconds": u64::MAX, "scope": "provider", "id": "secondary_window", "resetsAtMs": i64::MAX }
+    ] });
+    let before = now_ms();
+    let snapshot = UsageService::new(urls(&mock), None)
+        .get("openai-codex-2", &Core::new(answer), GetOptions::default())
+        .await;
+    let windows: Vec<(&str, Option<i64>, Option<&str>)> = snapshot
+        .windows
+        .iter()
+        .map(|w| (w.name.as_str(), w.duration_ms, w.span_source.as_deref()))
+        .collect();
+    assert_eq!(
+        windows,
+        [
+            ("301s", Some(301_000), Some("reported")),
+            ("7d", Some(604_800_000), Some("assumed"))
+        ]
+    );
+    assert_eq!(snapshot.windows[1].reset_at, Some(i64::MAX));
+    assert!(
+        snapshot.retrieved_at >= before,
+        "an out-of-range fetchedAt was kept"
+    );
+}
