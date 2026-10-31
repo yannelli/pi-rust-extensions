@@ -6,7 +6,7 @@ use pi_ext_sdk::Key;
 
 use crate::command::parse_bg_args;
 use crate::panel::{Action, View};
-use crate::registry::{Registry, StartOptions};
+use crate::registry::{Registry, StartOptions, WidgetMode};
 use crate::task::{self, Status, Task, resolve_in};
 use crate::tools::{RunArgs, normalize_max_bytes};
 use crate::ui;
@@ -176,13 +176,50 @@ fn status_and_widget_text() {
         ui::status_text(&tasks).unwrap(),
         "bg: 1 running, 1 completed, 1 failed"
     );
-    let lines = ui::widget_lines(&tasks, 61_000, Some(20));
+    let lines = ui::widget_lines(&tasks, 61_000, Some(20), WidgetMode::Auto);
     assert_eq!(lines.len(), 1);
     assert!(pi_ext_sdk::style::visible_width(&lines[0]) <= 20);
     assert!(
-        pi_ext_sdk::style::strip(&ui::widget_lines(&tasks, 61_000, None)[0])
+        pi_ext_sdk::style::strip(&ui::widget_lines(&tasks, 61_000, None, WidgetMode::Auto)[0])
             .contains("task r1 (r1) 1m00s")
     );
+}
+
+#[test]
+fn many_running_tasks_collapse_the_widget_to_a_count() {
+    let running: Vec<Task> = (1..=5)
+        .map(|n| sample(&format!("r{n}"), Status::Running))
+        .collect();
+    let strip = |lines: Vec<String>| -> Vec<String> {
+        lines.iter().map(|l| pi_ext_sdk::style::strip(l)).collect()
+    };
+    let auto = strip(ui::widget_lines(&running, 0, None, WidgetMode::Auto));
+    assert_eq!(auto.len(), 1);
+    assert!(
+        auto[0].starts_with("● 5 background tasks running · /tasks"),
+        "{auto:?}"
+    );
+    let expanded = ui::widget_lines(&running, 0, None, WidgetMode::Expanded);
+    assert_eq!(expanded.len(), 5);
+    let few = &running[..2];
+    assert_eq!(ui::widget_lines(few, 0, None, WidgetMode::Auto).len(), 2);
+    let collapsed = strip(ui::widget_lines(few, 0, None, WidgetMode::Collapsed));
+    assert!(
+        collapsed[0].starts_with("● 2 background tasks running"),
+        "{collapsed:?}"
+    );
+    assert!(ui::widget_lines(&[], 0, None, WidgetMode::Collapsed).is_empty());
+}
+
+#[test]
+fn the_widget_argument_toggles_or_sets_the_mode() {
+    use WidgetMode::*;
+    assert_eq!(ui::widget_mode_for(Auto, 5, ""), Ok(Expanded));
+    assert_eq!(ui::widget_mode_for(Auto, 2, "toggle"), Ok(Collapsed));
+    assert_eq!(ui::widget_mode_for(Expanded, 5, ""), Ok(Collapsed));
+    assert_eq!(ui::widget_mode_for(Collapsed, 0, ""), Ok(Expanded));
+    assert_eq!(ui::widget_mode_for(Expanded, 5, "auto"), Ok(Auto));
+    assert!(ui::widget_mode_for(Auto, 0, "sideways").is_err());
 }
 
 #[test]

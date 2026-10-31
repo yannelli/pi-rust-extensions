@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::Config;
+use crate::pipeline::Runner;
+
+pub const MAX_GUARD_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Default)]
 pub struct State {
@@ -12,6 +15,17 @@ pub struct State {
     pub findings: BTreeMap<PathBuf, Vec<Value>>,
     pub guard: Guard,
     pub warned_trust: bool,
+    pub runner: Runner,
+}
+
+/// Text of a regular file of at most [`MAX_GUARD_BYTES`]. Lens does not open
+/// FIFOs, devices or large files, because a read can block or use much memory.
+pub fn small_text(path: &Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_GUARD_BYTES {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -21,20 +35,61 @@ pub struct Guard {
     pub allowed: HashSet<PathBuf>,
 }
 
+/// One read of a file: a hash and the length of the text it saw, and the
+/// line ranges it covered. Entries from older versions hold the full text.
 #[derive(Clone, Deserialize, Serialize)]
+#[serde(from = "ReadEntry")]
 struct Read {
-    text: String,
+    hash: String,
+    len: usize,
     ranges: Vec<(usize, usize)>,
 }
 
+#[derive(Deserialize)]
+struct ReadEntry {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    hash: String,
+    #[serde(default)]
+    len: usize,
+    ranges: Vec<(usize, usize)>,
+}
+
+impl From<ReadEntry> for Read {
+    fn from(entry: ReadEntry) -> Self {
+        let (hash, len) = match entry.text {
+            Some(text) => (hash(&text), text.len()),
+            None => (entry.hash, entry.len),
+        };
+        Self {
+            hash,
+            len,
+            ranges: entry.ranges,
+        }
+    }
+}
+
+impl Read {
+    fn matches(&self, text: &str) -> bool {
+        self.len == text.len() && self.hash == hash(text)
+    }
+}
+
+/// FNV-1a, 64 bits, as hex. Stable across Rust versions and platforms.
+fn hash(text: &str) -> String {
+    let value = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{value:016x}")
+}
+
 impl Guard {
-    pub fn record(&mut self, path: &Path, input: &Value, content: &[Value]) {
-        let Ok(text) = std::fs::read_to_string(path) else {
+    /// `text` is the current file text from [`small_text`].
+    pub fn record(&mut self, path: &Path, text: Option<String>, input: &Value, content: &[Value]) {
+        let Some(text) = text else {
             return;
         };
-        if text.len() > 2 * 1024 * 1024 {
-            return;
-        }
         let start = input["offset"].as_u64().unwrap_or(1).max(1) as usize;
         let total = text.lines().count().max(1);
         let output = content
@@ -62,25 +117,35 @@ impl Guard {
             .reads
             .entry(path.to_path_buf())
             .or_insert_with(|| Read {
-                text: text.clone(),
+                hash: String::new(),
+                len: 0,
                 ranges: vec![],
             });
-        if read.text != text {
+        if !read.matches(&text) {
             read.ranges.clear();
-            read.text = text;
+            read.hash = hash(&text);
+            read.len = text.len();
         }
         read.ranges.push(range);
     }
 
-    pub fn block_reason(&mut self, path: &Path, tool: &str, input: &Value) -> Option<String> {
-        if self.allowed.remove(path) || !path.exists() {
+    /// `text` is the current file text from [`small_text`]. Missing, large,
+    /// special and non-UTF-8 files have none and pass without a check.
+    pub fn block_reason(
+        &mut self,
+        path: &Path,
+        text: Option<String>,
+        tool: &str,
+        input: &Value,
+    ) -> Option<String> {
+        if self.allowed.remove(path) {
             return None;
         }
-        let text = std::fs::read_to_string(path).ok();
+        let text = text?;
         let covered = self
             .reads
             .get(path)
-            .filter(|read| Some(&read.text) == text.as_ref())
+            .filter(|read| read.matches(&text))
             .is_some_and(|read| {
                 let mut ranges = read.ranges.clone();
                 ranges.sort_unstable();
@@ -91,7 +156,7 @@ impl Guard {
                     }
                     end = end.max(stop);
                 }
-                if end >= read.text.lines().count().max(1) {
+                if end >= text.lines().count().max(1) {
                     return true;
                 }
                 if tool != "edit" {
@@ -101,12 +166,11 @@ impl Guard {
                     .as_str()
                     .filter(|old| !old.is_empty())
                     .is_some_and(|old| {
-                        let matches: Vec<_> = read.text.match_indices(old).collect();
+                        let matches: Vec<_> = text.match_indices(old).collect();
                         matches.len() == 1
                             && matches.iter().all(|(offset, old)| {
                                 let first =
-                                    read.text[..*offset].bytes().filter(|b| *b == b'\n').count()
-                                        + 1;
+                                    text[..*offset].bytes().filter(|b| *b == b'\n').count() + 1;
                                 let last = first + old.bytes().filter(|b| *b == b'\n').count();
                                 read.ranges
                                     .iter()

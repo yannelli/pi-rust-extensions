@@ -8,11 +8,34 @@ Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both 
 
 | Name | Use |
 | --- | --- |
-| `/hooks` | Opens a panel with all hooks grouped by event, with source, scope, plugin id, matcher, command or URL, trust state, disabled flag, and last run. Without a UI it shows the listing as a notification. |
+| `/hooks` | Opens the hooks manager panel. Without a UI it shows the listing as a notification. |
 | `/hooks list` | Shows the listing as a notification. |
 | `--hooks-trust-all` | Runs every hook without a trust prompt for this run (like Codex `--dangerously-bypass-hook-trust`). |
 
-Panel keys: up/down move, enter opens the actions of the selected hook (Trust always, Allow once, Untrust, Deny, Disable/Enable, Show last output), `s` turns a source on or off, `c` sets the scope, `t` toggles `trustAll` in the global options file, `g`/`p` select the global or project options file that `s` and `c` write, `q` or Esc closes.
+### Hooks manager
+
+The panel lists every hook handler grouped by source: Claude Code (user `settings.json`, project `.claude/settings.json`, local `.claude/settings.local.json`), Codex (`hooks.json` and inline `config.toml` hooks), pi (`ext/hooks.json` files), and Plugins (pi-native groups with a `plugin` id). Each row shows the enabled state (`●` on, `○` off), event, matcher, scope (`global`, `project`, or `local`), trust state, and the command. Below 72 columns the scope and trust state shrink to two characters, such as `G✓` (global, trusted) or `L?` (local, untrusted).
+
+| Key | Action |
+| --- | --- |
+| Up/Down, Home/End, PageUp/PageDown | Move. Up and Down wrap. |
+| Space | Enable or disable the selected hook. |
+| Enter | Details: full command, type, timeout, `async`/`asyncRewake`/`once` flags, status message, file path, plugin, trust, and last run with stdout and stderr. The details view lists actions: Enable/Disable, Trust always, Allow once this session, Untrust, Deny, Remove from file. Up/Down choose, Enter runs, Esc goes back. |
+| `d` or Delete | Remove the hook from its file after a `y`/`n` confirm. |
+| `a` | Add a command hook: `p` project or `g` global, then the event, matcher, and command. |
+| Tab, Shift+Tab | Switch the All, Project, and Global tabs. |
+| `/` | Search event, matcher, command, source, scope, file, and plugin id. Enter keeps the filter; Esc clears it. |
+| `s`, `c`, `t` | Turn a source on or off, set the `scope` option, and toggle `trustAll`, in the global options file. |
+| Esc or `q` | Close (Esc clears an active search first). |
+
+Writes per scope:
+
+- Disable and enable add or remove the hook hash in the `disabled` list of the pi options file of the hook's scope: `<agentDir>/ext/hooks.json` for global hooks, `<cwd>/.pi/ext/hooks.json` for project and local hooks. The hook definition stays in its file. Enable also clears the hash from the older `state.json` `disabled` list.
+- Remove deletes the handler from its own file (Claude settings, Codex `hooks.json` or `config.toml`, or the pi file), then drops a matcher group or event that became empty. JSON files keep their key order, unknown keys, indent, and trailing newline; `config.toml` keeps comments and formatting (`toml_edit`). A file that does not parse is not changed. Remove also clears the hash from the trust and disabled lists.
+- Add appends `{ matcher?, hooks: [{ type: "command", command }] }` to the pi file of the chosen scope and marks the new hook trusted.
+- Project scope needs a trusted project (`isProjectTrusted`). In an untrusted project the panel shows a warning, hides project hooks, and refuses to add project hooks.
+
+Each change reloads the config, so the running session uses it at once.
 
 The extension registers no tools.
 
@@ -41,6 +64,7 @@ In `<agentDir>/ext/hooks.json` and `<cwd>/.pi/ext/hooks.json` (same file as the 
 | `sources.claude`, `sources.codex`, `sources.pi` | `true` | Turn a source on or off. |
 | `scope` | `"both"` | `global`, `project`, or `both`: which files load. |
 | `trustAll` | `false` | Run all hooks without trust prompts. Read from the global options file only; a project file's `trustAll` is ignored. |
+| `disabled` | `[]` | Hashes of disabled hooks. The lists of both files merge. |
 
 ## Trust
 
@@ -116,8 +140,8 @@ SessionStart hooks get `CLAUDE_ENV_FILE=<agentDir>/ext/hooks/env/<session_id>.sh
 
 | Path | Content |
 | --- | --- |
-| `<agentDir>/ext/hooks.json`, `<cwd>/.pi/ext/hooks.json` | Options and pi-native hooks. |
-| `<agentDir>/ext/hooks/state.json` | `{ trusted, denied, disabled }` lists of hook hashes. |
+| `<agentDir>/ext/hooks.json`, `<cwd>/.pi/ext/hooks.json` | Options, `disabled` lists, and pi-native hooks. |
+| `<agentDir>/ext/hooks/state.json` | `{ trusted, denied, disabled }` lists of hook hashes. `/hooks` reads `disabled` here and writes new disabled hooks to the options files. |
 | `<agentDir>/ext/hooks/last-runs.json` | Last run per hook hash: time, duration, exit code, result, stdout, stderr (4,000 characters each). |
 | `<agentDir>/ext/hooks/env/<session_id>.sh` | `CLAUDE_ENV_FILE`. |
 | `<tmp>/hook_outputs/<session_id>/` | Codex context overflow. |

@@ -20,6 +20,8 @@ pub struct Snapshot {
     pub context_usage: Option<Value>,
     /// Terminal columns in `tui` mode, else `None`.
     pub terminal_width: Option<u64>,
+    /// Terminal rows in `tui` mode; `None` in other modes and from hosts that do not send it.
+    pub terminal_height: Option<u64>,
     pub flags: Map<String, Value>,
     pub footer: Option<Value>,
     /// `isProjectTrusted`; parsing also keeps the key in `extra`, and serializing writes this value.
@@ -46,6 +48,7 @@ struct SnapshotWire {
     is_idle: Option<bool>,
     context_usage: Option<Value>,
     terminal_width: Option<u64>,
+    terminal_height: Option<u64>,
     flags: Map<String, Value>,
     footer: Option<Value>,
     #[serde(flatten)]
@@ -73,6 +76,7 @@ impl<'de> Deserialize<'de> for Snapshot {
             is_idle: wire.is_idle,
             context_usage: wire.context_usage,
             terminal_width: wire.terminal_width,
+            terminal_height: wire.terminal_height,
             flags: wire.flags,
             footer: wire.footer,
             is_project_trusted,
@@ -103,6 +107,7 @@ impl Serialize for Snapshot {
             is_idle: self.is_idle,
             context_usage: self.context_usage.clone(),
             terminal_width: self.terminal_width,
+            terminal_height: self.terminal_height,
             flags: self.flags.clone(),
             footer: self.footer.clone(),
             extra,
@@ -226,6 +231,7 @@ mod tests {
         assert!(!snapshot.is_project_trusted);
         assert!(snapshot.scoped_models.is_empty());
         assert_eq!(snapshot.terminal_width, None);
+        assert_eq!(snapshot.terminal_height, None);
     }
 
     #[test]
@@ -242,12 +248,15 @@ mod tests {
     #[test]
     fn parses_scoped_models_terminal_width_and_model_endpoint() {
         let snapshot: Snapshot = serde_json::from_value(json!({
-            "cwd": "/work", "terminalWidth": 120,
+            "cwd": "/work", "terminalWidth": 120, "terminalHeight": 40,
             "scopedModels": [{ "provider": "local", "id": "other", "thinkingLevel": "high" }, { "provider": "a", "id": "b" }],
             "model": { "provider": "local", "id": "tiny", "baseUrl": "http://x", "compat": { "supportsStore": false } }
         }))
         .unwrap();
         assert_eq!(snapshot.terminal_width, Some(120));
+        assert_eq!(snapshot.terminal_height, Some(40));
+        let round_trip = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(round_trip["terminalHeight"], json!(40));
         assert_eq!(
             snapshot.scoped_models[0].thinking_level.as_deref(),
             Some("high")

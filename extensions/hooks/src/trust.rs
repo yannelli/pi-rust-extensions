@@ -57,16 +57,6 @@ impl TrustState {
         self.denied.remove(hash);
     }
 
-    /// Flips the disabled flag; returns the new value.
-    pub fn toggle_disabled(&mut self, hash: &str) -> bool {
-        if self.disabled.remove(hash) {
-            false
-        } else {
-            self.disabled.insert(hash.to_owned());
-            true
-        }
-    }
-
     pub fn level(&self, hash: &str, trust_all: bool, once: bool) -> Trust {
         if self.denied.contains(hash) {
             Trust::Denied
@@ -127,7 +117,7 @@ mod tests {
         let mut state = TrustState::default();
         state.trust("a");
         state.deny("b");
-        assert!(state.toggle_disabled("c"));
+        state.disabled.insert("c".into());
         state.save(&path);
         let loaded = TrustState::load(&path);
         assert_eq!(loaded, state);
@@ -141,6 +131,6 @@ mod tests {
         assert!(!again.trusted.contains("a"));
         again.untrust("a");
         assert!(!again.denied.contains("a"));
-        assert!(!again.toggle_disabled("c"));
+        assert!(again.disabled.contains("c"));
     }
 }

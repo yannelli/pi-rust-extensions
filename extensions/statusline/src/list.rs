@@ -75,6 +75,13 @@ impl SettingsList {
         }
     }
 
+    /// The item id and the value under the cursor of the open value list.
+    pub fn highlighted(&self) -> Option<(String, String)> {
+        let submenu = self.submenu.as_ref()?;
+        let value = self.filtered(submenu).into_iter().nth(submenu.cursor)?;
+        Some((self.items[submenu.item].id.clone(), value))
+    }
+
     fn filtered(&self, submenu: &Submenu) -> Vec<String> {
         let filter = submenu.filter.to_lowercase();
         self.items[submenu.item]

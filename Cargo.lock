@@ -914,6 +914,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-permissions"
+version = "0.1.2"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml_edit",
+]
+
+[[package]]
 name = "pi-ext-rewind"
 version = "0.1.2"
 dependencies = [
@@ -1042,6 +1056,7 @@ dependencies = [
  "pi-ext-lens",
  "pi-ext-observational-memory",
  "pi-ext-ollama",
+ "pi-ext-permissions",
  "pi-ext-rewind",
  "pi-ext-ssh",
  "pi-ext-statusline",

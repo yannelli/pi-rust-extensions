@@ -111,3 +111,20 @@ async fn outside_iterm2_nothing_is_written() {
     host.expect_response(2).await;
     host.finish().await.unwrap();
 }
+
+#[tokio::test]
+async fn the_snapshot_mode_wins_over_the_load_time_mode() {
+    let mut host = TestHost::start(extension(Terminal {
+        iterm2: true,
+        tmux: false,
+    }));
+    host.initialize_as("/work", "/nonexistent/agent", "print", false)
+        .await;
+    let mut ctx = ctx("working");
+    ctx["mode"] = json!("tui");
+    let params = json!({ "name": "agent_start", "event": { "type": "agent_start" }, "ctx": ctx });
+    host.request(1, "event", params).await;
+    let terminal = json!({ "iterm2": true, "notifyMinSeconds": 0 });
+    let first = answer_settings_then_write(&mut host, terminal).await;
+    assert_eq!(first["params"]["data"], tab_color(Some(WORKING)));
+}

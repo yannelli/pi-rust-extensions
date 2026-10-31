@@ -19,6 +19,8 @@ pub const DEFAULT_WIDTH: usize = 80;
 #[derive(Default)]
 struct State {
     config: Option<StatusLineConfig>,
+    /// The `/statusline` editor's value while it is open; `Some(None)` previews pi's footer.
+    preview: Option<Option<StatusLineConfig>>,
     ctx: Option<Snapshot>,
     extras: Extras,
     sent: Option<Vec<String>>,
@@ -155,18 +157,23 @@ impl Footer {
             .map(|ctx| StatusSnapshot::from_ctx(ctx, &state.extras))
     }
 
-    /// Lines for the editor preview of an unsaved value.
-    pub fn preview(&self, value: &Value, width: usize) -> Vec<String> {
+    /// Shows `value` in the footer until [`Footer::end_preview`].
+    pub async fn show_preview(self: &Arc<Self>, host: &Host, value: &Value) {
         let settings: StatusLineSettings =
             serde_json::from_value(value.clone()).unwrap_or_default();
-        let Some(snapshot) = self.snapshot() else {
-            return Vec::new();
-        };
-        match StatusLineConfig::from_settings(&settings, &self.home) {
-            Some(StatusLineConfig::Builtin(builtin)) => builtin.render(&snapshot, width),
-            Some(StatusLineConfig::Command(_)) => vec![pi_ext_sdk::style::dim("(command output)")],
-            None => vec![pi_ext_sdk::style::dim("(pi's default footer)")],
+        {
+            let mut state = self.lock();
+            state.preview = Some(StatusLineConfig::from_settings(&settings, &self.home));
+            state.command_key = None;
+            state.output = None;
         }
+        self.render(host).await;
+    }
+
+    /// Shows the saved status line again.
+    pub async fn end_preview(self: &Arc<Self>, host: &Host) {
+        self.lock().preview = None;
+        self.reload(host).await;
     }
 
     pub fn set_version(&self, version: String) {
@@ -195,10 +202,7 @@ impl Footer {
     }
 
     pub async fn render(self: &Arc<Self>, host: &Host) {
-        let tui = host
-            .init()
-            .is_some_and(|init| init.mode == "tui" && init.has_ui);
-        if !tui {
+        if !is_tui(host) {
             return;
         }
         if let Some(snapshot) = host.snapshot() {
@@ -209,7 +213,11 @@ impl Footer {
             let mut state = self.lock();
             let Some(ctx) = state.ctx.clone() else { return };
             let snapshot = StatusSnapshot::from_ctx(&ctx, &state.extras);
-            match state.config.clone() {
+            let config = match &state.preview {
+                Some(preview) => preview.clone(),
+                None => state.config.clone(),
+            };
+            match config {
                 None => None,
                 Some(StatusLineConfig::Builtin(builtin)) => {
                     Some(render_builtin(&builtin, &snapshot, width))
@@ -279,6 +287,19 @@ impl Footer {
             pi_ext_sdk::warn!("statusline: footer update failed: {error:?}");
             self.forget_sent();
         }
+    }
+}
+
+/// pi loads extensions before it binds the UI, so `initialize` reports the load-time mode;
+/// the ctx snapshot has the current one.
+fn is_tui(host: &Host) -> bool {
+    match host.snapshot() {
+        Some(snapshot) if snapshot.mode.is_some() => {
+            snapshot.mode.as_deref() == Some("tui") && snapshot.has_ui
+        }
+        _ => host
+            .init()
+            .is_some_and(|init| init.mode == "tui" && init.has_ui),
     }
 }
 

@@ -2,10 +2,12 @@ mod agent;
 mod register;
 mod session;
 mod ui;
+mod usage;
 
 pub use agent::{ExecOutput, ExecRequest, LlmRequest, LlmResponse, ProviderAuth};
 pub use session::{CustomMessage, DeliverAs};
 pub use ui::{InputOptions, NotifyType, Placement};
+pub use usage::{ProviderUsage, UsageWindow};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

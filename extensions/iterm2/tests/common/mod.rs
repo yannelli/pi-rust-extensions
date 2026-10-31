@@ -88,10 +88,21 @@ impl TestHost {
     }
 
     pub async fn initialize_in(&mut self, cwd: &str, agent_dir: &str) -> Value {
+        self.initialize_as(cwd, agent_dir, "tui", true).await
+    }
+
+    /// `mode` and `hasUI` as an older pi reports them before it binds the UI.
+    pub async fn initialize_as(
+        &mut self,
+        cwd: &str,
+        agent_dir: &str,
+        mode: &str,
+        has_ui: bool,
+    ) -> Value {
         let params = json!({
             "protocolVersion": 1, "piVersion": "0.8.0", "cwd": cwd,
             "agentDir": agent_dir, "extensionPath": "native:test/test",
-            "platform": "darwin", "mode": "tui", "hasUI": true, "flags": {}
+            "platform": "darwin", "mode": mode, "hasUI": has_ui, "flags": {}
         });
         self.request(0, "initialize", params).await;
         let response = self.expect_response(0).await;

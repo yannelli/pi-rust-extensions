@@ -1,10 +1,14 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use pi_ext_sdk::prelude::*;
 use tokio::sync::Mutex;
+use tokio::time::Instant;
 
-use crate::{detection, diagnostics, lsp, state::State};
+use crate::config::Config;
+use crate::pipeline::{Runner, budget, lsp_diagnostics, skipped};
+use crate::{detection, diagnostics, state::State};
 
 pub(crate) fn bounded(mut text: String) -> String {
     if text.len() > 40 * 1024 {
@@ -32,10 +36,10 @@ pub(crate) async fn get_diagnostics(
         .map(|path| diagnostics::normalize_path(&cwd, path))
         .collect();
     if args["source"] == "lsp" {
-        let (config, known) = {
+        let (config, known, runner) = {
             let state = state.lock().await;
             let known: Vec<_> = state.findings.keys().cloned().collect();
-            (state.config.clone(), known)
+            (state.config.clone(), known, state.runner.clone())
         };
         if !config.enabled {
             return Err(Error::msg("Lens is disabled"));
@@ -48,33 +52,10 @@ pub(crate) async fn get_diagnostics(
         } else {
             paths.clone()
         };
-        for path in scan_paths {
-            let Some(language) = detection::language(&path) else {
-                continue;
-            };
-            if !config.language_enabled(language) || !diagnostics::within(&cwd, &path) {
-                continue;
-            }
-            let root = detection::root(&path, &cwd, language);
-            let mut findings = vec![];
-            for server in &config.lsp.servers {
-                if server.enabled && server.languages.iter().any(|item| item == language) {
-                    findings.extend(
-                        lsp::diagnostics(server, &root, &path, config.timeout_ms)
-                            .await
-                            .map_err(Error::msg)?
-                            .into_iter()
-                            .map(|mut item| {
-                                item["kind"] = json!("lsp");
-                                item
-                            }),
-                    );
-                }
-            }
-            let mut state = state.lock().await;
-            let current = state.findings.entry(path).or_default();
-            current.retain(|item| item["kind"] != "lsp");
-            current.extend(findings);
+        let scan = scan_lsp(&config, &cwd, scan_paths, &runner, &state);
+        tokio::select! {
+            () = scan => {}
+            () = ctx.cancelled() => return Err(Error::cancelled()),
         }
     }
     let state = state.lock().await;
@@ -107,4 +88,54 @@ pub(crate) async fn get_diagnostics(
         ToolResult::text(text)
             .details(json!({"findings":kept,"truncated":truncated,"total":count})),
     )
+}
+
+/// Requests LSP diagnostics for each path within one `pipelineTimeoutMs` budget.
+/// Errors and skipped servers become warning findings.
+async fn scan_lsp(
+    config: &Config,
+    cwd: &Path,
+    paths: Vec<std::path::PathBuf>,
+    runner: &Runner,
+    state: &Arc<Mutex<State>>,
+) {
+    let deadline = Instant::now() + Duration::from_millis(config.pipeline_timeout_ms);
+    for path in paths {
+        let Some(language) = detection::language(&path) else {
+            continue;
+        };
+        if !config.language_enabled(language) || !diagnostics::within(cwd, &path) {
+            continue;
+        }
+        let root = detection::root(&path, cwd, language);
+        let mut findings = vec![];
+        for server in &config.lsp.servers {
+            if !server.enabled || !server.languages.iter().any(|item| item == language) {
+                continue;
+            }
+            if let Some(skip) = runner.skip(&path, &server.command) {
+                findings.push(skip);
+                continue;
+            }
+            let Some(limit) = budget(deadline, config.timeout_ms) else {
+                findings.push(skipped(&path, &server.command, config.pipeline_timeout_ms));
+                continue;
+            };
+            match lsp_diagnostics(server, &root, &path, limit, &runner.live).await {
+                Ok(items) => findings.extend(items),
+                Err(error) => {
+                    if crate::pipeline::full_wait(config, limit) {
+                        runner.record(&server.command, &error);
+                    }
+                    let mut item = diagnostics::finding(&path, &server.command, "warning", &error);
+                    item["kind"] = json!("lsp");
+                    findings.push(item);
+                }
+            }
+        }
+        let mut state = state.lock().await;
+        let current = state.findings.entry(path).or_default();
+        current.retain(|item| item["kind"] != "lsp");
+        current.extend(findings);
+    }
 }

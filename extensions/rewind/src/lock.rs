@@ -148,10 +148,43 @@ fn current(locks: &Path, stale: Duration) -> io::Result<Current> {
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Current::Retry),
         Err(err) => return Err(err),
     };
-    if text.trim() == RELEASED || age(&path, &text)? >= stale {
+    if text.trim() == RELEASED || age(&path, &text)? >= stale || holder_exited(&text) {
         return Ok(Current::Free(top + 1));
     }
     Ok(Current::Held)
+}
+
+/// True when the holder pid of `text` names a process of another pi that no longer runs.
+fn holder_exited(text: &str) -> bool {
+    let Some(pid) = text
+        .split_whitespace()
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+    else {
+        return false;
+    };
+    pid != std::process::id() && !process_alive(pid)
+}
+
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    let probe = std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .output();
+    match probe {
+        Ok(out) => {
+            out.status.success()
+                || !String::from_utf8_lossy(&out.stderr).contains("No such process")
+        }
+        Err(_) => true,
+    }
+}
+
+#[cfg(not(unix))]
+fn process_alive(_pid: u32) -> bool {
+    true
 }
 
 /// Age of a held lock from its timestamp, or from the file mtime while the text is partial.

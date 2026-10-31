@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 use std::time::Duration;
 
 use pi_ext_sdk::{Error, Result, bail};
@@ -23,6 +23,20 @@ pub fn path_str(path: &Path) -> Result<&str> {
 }
 
 pub async fn run_git(cwd: Option<&Path>, args: &[&str]) -> Result<String> {
+    let output = git_output(cwd, args).await?;
+    if !output.status.success() {
+        bail!("{}", failure(args, &output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub fn failure(args: &[&str], output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    format!("git {} failed: {}", args.join(" "), stderr.trim())
+}
+
+/// Runs git and returns its output whatever the exit status.
+pub async fn git_output(cwd: Option<&Path>, args: &[&str]) -> Result<Output> {
     let mut command = Command::new("git");
     command
         .args(args)
@@ -40,9 +54,5 @@ pub async fn run_git(cwd: Option<&Path>, args: &[&str]) -> Result<String> {
     let output = tokio::time::timeout(GIT_TIMEOUT, command.output())
         .await
         .map_err(|_| Error::msg(format!("git {} timed out", args.join(" "))))??;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git {} failed: {}", args.join(" "), stderr.trim());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(output)
 }

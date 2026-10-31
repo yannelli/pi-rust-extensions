@@ -8,7 +8,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::{Instant, timeout, timeout_at};
 
 use crate::config::LspServer;
-use crate::group::Group;
+use crate::group::{Group, Live};
 
 #[path = "lsp_wire.rs"]
 mod wire;
@@ -16,7 +16,8 @@ mod wire;
 use wire::{command_name, convert, file_uri, language_id, read_message, uri_path, write_message};
 
 const EMPTY_PUBLISH_GRACE: Duration = Duration::from_millis(500);
-const SHUTDOWN_GRACE: Duration = Duration::from_millis(300);
+pub const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
+pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Opens `path` in a fresh `server` process rooted at `root` and returns the
 /// diagnostics the server reports for that file.
@@ -25,10 +26,18 @@ pub async fn diagnostics(
     root: &Path,
     path: &Path,
     timeout_ms: u64,
+    live: &Live,
 ) -> Result<Vec<Value>, String> {
     let abs_root = std::path::absolute(root).map_err(|e| format!("{}: {e}", root.display()))?;
     let target = std::fs::canonicalize(abs_root.join(path))
         .map_err(|e| format!("{}: {e}", path.display()))?;
+    let meta = std::fs::metadata(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+        return Err(format!(
+            "skipped {}: not a regular file of at most {MAX_FILE_BYTES} bytes",
+            target.display()
+        ));
+    }
     let text = tokio::fs::read_to_string(&target)
         .await
         .map_err(|e| format!("{}: {e}", target.display()))?;
@@ -45,9 +54,9 @@ pub async fn diagnostics(
     let mut child = command
         .spawn()
         .map_err(|e| format!("failed to start {}: {e}", server.command))?;
-    let mut group = Group::new(child.id());
+    let mut group = Group::new(child.id(), live);
     let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-        group.kill();
+        group.stop().await;
         stop(&mut child).await;
         return Err(format!("{}: missing stdio pipes", server.command));
     };
@@ -68,18 +77,16 @@ pub async fn diagnostics(
     };
     if result.is_ok() {
         session.shutdown().await;
-        if let Ok(Ok(_)) = timeout(SHUTDOWN_GRACE, child.wait()).await {
-            group.disarm();
-        }
     }
-    group.kill();
+    group.stop().await;
     stop(&mut child).await;
     let source = command_name(&server.command);
     result.map(|items| {
-        items
+        let items = items
             .iter()
             .map(|d| convert(d, &session.target, &source))
-            .collect()
+            .collect();
+        crate::diagnostics::cap(items, &session.target, &source)
     })
 }
 
@@ -244,16 +251,25 @@ impl Session {
         write_message(&mut self.stdin, &message).await
     }
 
+    /// Asks the server to exit and reads its output until it closes. The caller
+    /// then kills the group before it reaps the leader, so the group ID stays valid.
     async fn shutdown(&mut self) {
         let polite = async {
             let id = self.request("shutdown", Value::Null).await?;
             self.await_response(id).await?;
-            self.notify("exit", Value::Null).await
+            self.notify("exit", Value::Null).await?;
+            loop {
+                self.next_event().await?;
+            }
         };
-        let _ = timeout(SHUTDOWN_GRACE, polite).await;
+        let _: Result<Result<(), String>, _> = timeout(SHUTDOWN_GRACE, polite).await;
     }
 }
 
 #[cfg(test)]
 #[path = "lsp_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "lsp_hang_tests.rs"]
+mod hang_tests;

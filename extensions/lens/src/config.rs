@@ -185,9 +185,9 @@ pub async fn trusted(host: &Host) -> bool {
     {
         return value;
     }
-    host.pi_call("ctx", "isProjectTrusted", vec![])
+    let call = host.pi_call("ctx", "isProjectTrusted", vec![]);
+    crate::events::bounded_call("isProjectTrusted", call)
         .await
-        .ok()
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
 }

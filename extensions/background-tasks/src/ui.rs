@@ -4,12 +4,15 @@ use std::time::Duration;
 use pi_ext_sdk::prelude::*;
 use pi_ext_sdk::style::{self, Color};
 
-use crate::registry::Registry;
+use crate::registry::{Registry, WidgetMode};
 use crate::task::{self, Status, Task};
 
 pub const WIDGET: &str = "background-tasks";
 pub const NOTIFICATION: &str = "background-task-notification";
-const WIDGET_ROWS: usize = 4;
+const WIDGET_ROWS: usize = 3;
+const EXPANDED_ROWS: usize = 20;
+/// More running tasks than this collapse the widget to one line.
+pub const COLLAPSE_AT: usize = 3;
 const NOTICE_TAIL_BYTES: u64 = 2048;
 const NOTICE_TAIL_LINES: usize = 20;
 
@@ -54,23 +57,73 @@ pub fn task_row(task: &Task, now: u64) -> String {
     )
 }
 
-/// Widget lines for running tasks; empty when none run.
-pub fn widget_lines(tasks: &[Task], now: u64, width: Option<usize>) -> Vec<String> {
+/// Widget lines for running tasks; empty when none run. Above `COLLAPSE_AT` running tasks, or
+/// when collapsed, one count line points to `/tasks`.
+pub fn widget_lines(
+    tasks: &[Task],
+    now: u64,
+    width: Option<usize>,
+    mode: WidgetMode,
+) -> Vec<String> {
     let running: Vec<&Task> = tasks.iter().filter(|t| t.status.is_running()).collect();
-    let mut lines: Vec<String> = running
-        .iter()
-        .take(WIDGET_ROWS)
-        .map(|t| task_row(t, now))
-        .collect();
-    if running.len() > WIDGET_ROWS {
+    let collapse = match mode {
+        WidgetMode::Auto => running.len() > COLLAPSE_AT,
+        WidgetMode::Collapsed => !running.is_empty(),
+        WidgetMode::Expanded => false,
+    };
+    let rows = if mode == WidgetMode::Expanded {
+        EXPANDED_ROWS
+    } else {
+        WIDGET_ROWS
+    };
+    let mut lines: Vec<String> = if collapse {
+        let noun = if running.len() == 1 { "task" } else { "tasks" };
+        let count = format!("{} background {noun} running", running.len());
+        let hint = style::dim(" · /tasks");
+        vec![format!("{} {count}{hint}", glyph(Status::Running))]
+    } else {
+        running
+            .iter()
+            .take(rows)
+            .map(|t| task_row(t, now))
+            .collect()
+    };
+    if !collapse && running.len() > rows {
         lines.push(style::dim(&format!(
             "+{} more, /tasks",
-            running.len() - WIDGET_ROWS
+            running.len() - rows
         )));
     }
     match width {
         Some(width) => lines.iter().map(|l| style::truncate(l, width)).collect(),
         None => lines,
+    }
+}
+
+/// `/tasks widget [collapse|expand|auto]`: the new mode; no argument toggles.
+pub fn widget_mode_for(
+    current: WidgetMode,
+    running: usize,
+    argument: &str,
+) -> Result<WidgetMode, String> {
+    match argument.trim() {
+        "" | "toggle" => {
+            let collapsed = match current {
+                WidgetMode::Auto => running > COLLAPSE_AT,
+                mode => mode == WidgetMode::Collapsed,
+            };
+            Ok(if collapsed {
+                WidgetMode::Expanded
+            } else {
+                WidgetMode::Collapsed
+            })
+        }
+        "collapse" => Ok(WidgetMode::Collapsed),
+        "expand" => Ok(WidgetMode::Expanded),
+        "auto" => Ok(WidgetMode::Auto),
+        other => Err(format!(
+            "usage: /tasks widget [collapse|expand|auto], not {other:?}"
+        )),
     }
 }
 
@@ -144,7 +197,7 @@ pub async fn refresh(host: &Host, registry: &Registry) -> Result<()> {
     host.set_status(WIDGET, status_text(&tasks).as_deref())
         .await?;
     let width = host.surface_width(&format!("widget:{WIDGET}"));
-    let lines = widget_lines(&tasks, task::now_ms(), width);
+    let lines = widget_lines(&tasks, task::now_ms(), width, registry.widget_mode());
     if lines.is_empty() {
         host.clear_widget(WIDGET).await
     } else {

@@ -113,7 +113,7 @@ When you drop a `Host` request future, the SDK sends `$/cancelRequest` to pi. pi
 | Model and tools | `model`, `set_model`, `thinking_level`, `set_thinking_level`, `active_tools`, `set_active_tools`, `all_tools`, `all_commands`, `flag::<T>(name)` |
 | Settings | `settings::<T>(namespace)` returns `Option<T>`, `all_settings()` |
 | Context | `compact`, `abort`, `is_idle`, `context_usage`, `system_prompt` |
-| Other | `complete(LlmRequest)`, `provider_auth`, `emit(channel, data)`, `subscribe(channel)`, `exec(cmd, &args)`, `exec_with(ExecRequest)`, `register_provider`, `unregister_provider` |
+| Other | `complete(LlmRequest)`, `provider_auth`, `usage(provider)` and `usage_with(provider, refresh)` (`usage.get`), `emit(channel, data)`, `subscribe(channel)`, `exec(cmd, &args)`, `exec_with(ExecRequest)`, `register_provider`, `unregister_provider` |
 | Later registration | `register_tool`, `register_command`, `register_shortcut`, `register_flag`, `on(event, handler)`, `register_autocomplete`, `register_virtual_model`, `unregister_virtual_model` |
 
 `subscribe` returns a `Subscription`. Call `recv().await` or `recv_as::<T>().await`. When you drop the last subscription of a channel, the SDK sends `events.unsubscribe`.
@@ -140,6 +140,7 @@ async fn pick(host: Host) -> Result<Value> {
 ```
 
 - `open()` sends `ui.custom` with a new surface id and returns at once. It fails with `-32001` when pi has no UI.
+- `width()` and `height()` return the last `ui.resize` values. `height()` is the terminal rows; it is `None` when pi does not send `height`. A resize that changes only the height also sends `PanelEvent::Resize`.
 - `set_lines` sends `ui.update`. `close(result)` sends `ui.close` and waits for the `ui.custom` answer. `result()` waits without a close.
 - When you drop an open panel, the SDK sends `ui.close`.
 - `Key::parse(raw)` reads raw terminal input: arrows, enter, escape, tab, backspace, ctrl and alt keys, and kitty `CSI u` keys. `key.is("ctrl+c")` compares with a name. `key.is_cancel()` is true for escape, ctrl+c, and `q`.

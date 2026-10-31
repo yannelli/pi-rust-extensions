@@ -24,8 +24,18 @@ pub fn main() -> ExitCode {
 }
 
 pub fn extension() -> Extension {
-    let state = Arc::new(Mutex::new(State::default()));
-    let mut extension = Extension::new("lens");
+    let state = State::default();
+    let live = state.runner.live.clone();
+    let state = Arc::new(Mutex::new(state));
+    let mut extension = Extension::new("lens").on_shutdown(move |_host: Host| {
+        let killed = live.kill_all();
+        async move {
+            if killed > 0 {
+                pi_ext_sdk::debug!("lens: stopped {killed} process groups at shutdown");
+            }
+            Ok(())
+        }
+    });
     for name in ["no-lens", "no-lens-context", "no-read-guard"] {
         extension = extension.flag(FlagSpec::boolean(name).default(false));
     }

@@ -1,0 +1,25 @@
+[package]
+name = "pi-ext-permissions"
+description = "Allow, ask, and deny rules from Claude Code, Codex, and pi for pi tool calls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+pi-ext-sdk = { path = "../../crates/pi-ext-sdk" }
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+toml_edit = "0.25.17"
+
+[dev-dependencies]
+pi-ext-sdk = { path = "../../crates/pi-ext-sdk", features = ["test-util"] }
+pi-ext-e2e = { path = "../../crates/pi-ext-e2e" }
+tempfile = "3.27.0"
+tokio.workspace = true
+
+[lints]
+workspace = true
