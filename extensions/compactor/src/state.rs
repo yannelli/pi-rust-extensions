@@ -219,9 +219,8 @@ pub async fn request_active_work(host: &Host, shared: &Shared) {
     }
 }
 
-/// Keeps `[Active Work]` blocks from other extensions: `{ id, text, sessionId? }` on the
-/// `compactor:active-work` channel. After subscribing it asks producers for their blocks, so
-/// blocks sent before the subscription are not lost.
+/// Keeps `{ id, text, sessionId? }` blocks on `compactor:active-work`.
+/// Requests current blocks after subscribing to recover earlier messages.
 pub async fn watch_active_work(host: Host, shared: Shared) -> pi_ext_sdk::Result<()> {
     let mut subscription = host.subscribe(ACTIVE_WORK_CHANNEL).await?;
     request_active_work(&host, &shared).await;
