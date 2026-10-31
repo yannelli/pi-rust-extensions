@@ -73,14 +73,9 @@ impl Config {
             .as_f64()
             .filter(|mb| mb.is_finite() && *mb > 0.0)
             .map(|mb| (mb * 1024.0 * 1024.0) as u64);
-        let stage_budget = checkpoint["stageBudgetSeconds"]
-            .as_f64()
-            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
-            .map_or(DEFAULT_STAGE_BUDGET, Duration::from_secs_f64);
-        let git_timeout = checkpoint["gitTimeoutSeconds"]
-            .as_f64()
-            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
-            .map_or(DEFAULT_GIT_TIMEOUT, Duration::from_secs_f64);
+        let stage_budget =
+            seconds(&checkpoint["stageBudgetSeconds"]).unwrap_or(DEFAULT_STAGE_BUDGET);
+        let git_timeout = seconds(&checkpoint["gitTimeoutSeconds"]).unwrap_or(DEFAULT_GIT_TIMEOUT);
         let restore_on_tree = match ayu["rewind"]["restoreOnTree"].as_str() {
             Some("never") => RestoreOnTree::Never,
             Some("always") => RestoreOnTree::Always,
@@ -103,6 +98,12 @@ impl Config {
     pub fn checkpoints_on(&self) -> bool {
         self.enabled && self.auto_checkpoint
     }
+}
+
+/// A positive number of seconds that fits a `Duration`.
+fn seconds(value: &Value) -> Option<Duration> {
+    let seconds = value.as_f64().filter(|seconds| *seconds > 0.0)?;
+    Duration::try_from_secs_f64(seconds).ok()
 }
 
 /// Later layers win per key; arrays replace.

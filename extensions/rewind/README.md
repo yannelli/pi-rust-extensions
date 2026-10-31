@@ -10,7 +10,7 @@ Per-turn git checkpoints of the workspace, and `/rewind` to restore code, conver
 - Snapshots go to a bare shadow repo, `<agentDir>/ext/rewind/sessions/<session file stem>/.git` (`ephemeral-<session id>` without a session file). Git runs with `--git-dir` set to the shadow repo and `--work-tree` set to the session cwd. `GIT_DIR`, `GIT_INDEX_FILE`, and related variables are removed from the environment. The user's `.git`, refs, and index stay unchanged.
 - An unchanged work tree reuses the previous commit. Every turn still gets an entry, so conversation restore works.
 - Staging runs in batches of up to 500 files or 16 MiB; a file of 16 MiB or more gets a batch of its own. Each batch updates the shadow index, so its work is kept when a turn stops waiting.
-- A turn waits up to `stageBudgetSeconds` for its pre-turn snapshot. When the work tree is large (for example a home directory as cwd), the first snapshot can take longer. The turn then runs without a checkpoint, the extension shows one notice per session, and staging continues after each turn until the snapshot is complete. A snapshot commits only a complete tree, so every checkpoint restores consistently. Restores and fork copies stage the whole tree first and do not use the budget.
+- A turn waits up to `stageBudgetSeconds` for its pre-turn snapshot. When the work tree is large (for example a home directory as cwd), the first snapshot can take longer. The turn then runs without a checkpoint, the extension shows one notice per session, and staging continues after each turn until the snapshot is complete. A snapshot commits only a complete tree, so every checkpoint restores consistently. When a turn's post-turn snapshot is still unfinished as the next turn starts, the extension drops that turn's checkpoint with one warning, so the checkpoint never takes in later edits. Restores and fork copies stage the whole tree first and do not use the budget.
 - A file that git cannot store within `gitTimeoutSeconds` is left out of later snapshots of the session (listed in `<storage>/.git/info/pi-rewind-skip`), with one warning that names it.
 - The shadow repo honors the work tree's `.gitignore` files, the built-in excludes, and the `exclude` and `include` settings. Nested git repos and the storage dir are excluded. Files over `maxFileMB` are not snapshotted.
 - Snapshots, restores, work-tree comparisons, and fork copies share `<storage>/.pi-checkpoint-lock/`. The lock uses numbered files created exclusively and records the holder's PID and timestamp. It expires after 3 minutes without refresh; other processes wait up to 30 seconds before reporting the holder's PID.
@@ -49,6 +49,8 @@ Same keys as upstream. Layers, later wins per key: pi settings `ayu` (`settings.
 | `checkpoint.maxFileMB` | none | Skip files larger than this. |
 | `checkpoint.stageBudgetSeconds` | `10` | How long a turn waits for its pre-turn snapshot. |
 | `checkpoint.gitTimeoutSeconds` | `120` | How long git may take to store one batch of files. |
+
+Values of `stageBudgetSeconds` and `gitTimeoutSeconds` that are not positive numbers, or too large for a duration, use the default.
 
 When `ctx.isProjectTrusted` is false, the extension ignores `restoreOnResume`, `restoreOnFork`, `restoreOnClone`, and `restoreOnTree: "always"` from the merged pi settings and `<cwd>/.pi/ext/rewind.json`, and shows a warning. The same keys from `<agentDir>/settings.json` `ayu` and `<agentDir>/ext/rewind.json` still apply.
 

@@ -121,7 +121,15 @@ impl Session {
         self.failed_turn = Some(user_entry_id.to_string());
         let _lock = self.lock().await?;
         match self.finish_turn_locked(host).await {
-            Ok(Finished::Pending) => return Ok(()),
+            Ok(Finished::Pending) => {
+                self.pending = None;
+                self.building = true;
+                let text = "Rewind dropped the file checkpoint of the previous turn: its snapshot \
+                            did not finish before this turn started.";
+                if let Err(err) = host.notify_warning(text).await {
+                    info!("notice not shown: {err}");
+                }
+            }
             Ok(_) => {}
             Err(err) => {
                 warn!("dropped unfinished checkpoint: {err}");
