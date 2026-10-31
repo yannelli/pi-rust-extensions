@@ -1,6 +1,6 @@
 # pi-ext-subscription-router
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-10-31.
 
 Native pi-rust extension that combines `@nredd/pi-subscription-router` and `@henryqw/pi-multi-codex`:
 
@@ -81,7 +81,7 @@ Native pi-rust extension that combines `@nredd/pi-subscription-router` and `@hen
 
 | Path | Content |
 | --- | --- |
-| `<agentDir>/ext/subscription-router/accounts.json` | Credentials of slots 2..n (`access`, `refresh`, `expires`, `accountId`), mode 0600, atomic writes under an `accounts.json.lock` directory lock. Re-read before each refresh and save. A malformed file blocks saves until it is fixed. |
+| `<agentDir>/ext/subscription-router/accounts.json` | Slots 2..n: `{ "type": "pi" }` when pi stores the login, else the router's own `access`, `refresh`, `expires`, `accountId`. Mode 0600, atomic writes under an `accounts.json.lock` directory lock. Re-read before each refresh and save. A malformed file blocks saves until it is fixed. |
 | `<agentDir>/ext/subscription-router/usage.json` | Usage snapshots per provider, mode 0600, atomic writes under an `accounts.json.lock` directory lock. Re-read before each refresh and save. A malformed file blocks saves until it is fixed. |
 
 | Variable | Default |
@@ -94,17 +94,18 @@ Native pi-rust extension that combines `@nredd/pi-subscription-router` and `@hen
 
 Usage reads: Codex sends `Authorization: Bearer` and `ChatGPT-Account-Id` (from the token JWT); Anthropic sends `Authorization: Bearer` and `anthropic-beta: oauth-2025-04-20`. A good read is cached for 5 minutes. A failed read backs off 1, 2, 5, then 15 minutes, or longer when `retry-after` asks (at most 60 minutes).
 
-## Logins and the OAuth gap
+## Logins
 
-Slot 1 uses pi's `/login`. The extension reads its token with `auth.getProviderAuth` for quota reads.
+Slot 1 uses pi's `/login`. Slots 2..n (pi-rust with `auth.login`):
 
-For slots 2..n the extension runs the login itself, ported from pi-ai:
+- Each slot registers with `provider.register` and `oauth: { builtin: "openai-codex" | "anthropic", name: "<family> #<n>" }`, without `apiKey`. `/login` and `/logout` list the slot under that name.
+- `/router add` and "log in again" in `/router accounts` open pi's login dialog for the slot (`auth.login`). pi runs the login, stores the token in `auth.json` under the slot id, and refreshes it. When the user cancels, the slot stays as it was.
+- The account file keeps `{ "type": "pi" }` for such a slot. Quota reads take the token from `auth.getProviderAuth`.
+- Removing a slot unregisters it. pi keeps the token until `/logout <slot id>`.
+
+Slots of older versions keep their own tokens in the account file. The router refreshes them and logs their ids at start. "Log in again" moves a slot to pi's login.
+
+With pi that has no `auth.login` (it answers `-32601`), the router runs its own login, ported from pi-ai, and keeps the token in the account file:
 
 - Codex: PKCE, a callback listener on `localhost:1455/auth/callback`, and a pasted code or redirect URL in `ui.input` as the fallback.
 - Anthropic: PKCE, then the user pastes the `code#state` that Anthropic shows.
-
-The extension opens the browser with `open` / `xdg-open` and also shows the URL with `ui.notify`. The slot registers with `provider.register` and the access token as a literal `apiKey`; the extension refreshes it before expiry and registers again.
-
-Why: `provider.register` sends `oauth` as plain JSON, and pi's `/login` calls `config.oauth[method]` as a JavaScript function. A declarative `oauth` therefore fails with "Provider X has no OAuth login". As a result, `/login` and `/logout` do not list slots 2..n, and pi does not refresh them.
-
-Host change that removes the gap: accept `oauth: { builtin: "<provider id>" }` in `provider.register`. pi then reuses that built-in provider's login and refresh for the alias, stores its credentials in `auth.json` under the alias id, and lists it in `/login`. The extension then registers slots without `apiKey` and drops its own login code.

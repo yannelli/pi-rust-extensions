@@ -1,9 +1,11 @@
-//! `provider.register` for extension slots: the built-in provider's models under the slot id,
-//! with the slot's access token as `apiKey`, refreshed before expiry.
+//! `provider.register` for extension slots: the built-in provider's models under the slot id. pi
+//! logs in and refreshes a slot through `oauth: { builtin }`; slots of older versions send their
+//! own access token as `apiKey` and refresh it here.
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use pi_ext_sdk::OAuthSpec;
 use pi_ext_sdk::prelude::*;
 
 use crate::accounts::Account;
@@ -24,12 +26,13 @@ pub async fn base_models(host: &Host, family: Family) -> Result<Vec<Value>> {
         .collect())
 }
 
-/// The `provider.register` config of a slot; `None` when pi lists no base models.
+/// The `provider.register` config of a slot; `None` when pi lists no base models. Without a
+/// `token`, pi's login flow of the base provider serves the slot.
 pub fn provider_config(
     family: Family,
     slot: u32,
     base_models: &[Value],
-    token: &str,
+    token: Option<&str>,
 ) -> Option<Value> {
     let first = base_models.first()?;
     let provider = family.provider(slot);
@@ -41,23 +44,26 @@ pub fn provider_config(
             model
         })
         .collect();
-    Some(json!({
+    let mut config = json!({
         "name": family.slot_name(slot),
         "api": first.get("api").cloned().unwrap_or(Value::Null),
         "baseUrl": first.get("baseUrl").cloned().unwrap_or(Value::Null),
-        "apiKey": token,
         "models": models,
-    }))
+    });
+    match token {
+        Some(token) => config["apiKey"] = json!(token),
+        None => {
+            let oauth = OAuthSpec::builtin(family.base()).name(family.slot_name(slot));
+            config["oauth"] = oauth.to_value();
+        }
+    }
+    Some(config)
 }
 
 pub async fn register(host: &Host, account: &Account) -> Result<()> {
     let models = base_models(host, account.family).await?;
-    let config = provider_config(
-        account.family,
-        account.slot,
-        &models,
-        &account.credential.access,
-    );
+    let token = account.credential.as_ref().map(|c| c.access.as_str());
+    let config = provider_config(account.family, account.slot, &models, token);
     let Some(config) = config else {
         bail!(
             "pi lists no {} models to copy for {}",
@@ -69,7 +75,11 @@ pub async fn register(host: &Host, account: &Account) -> Result<()> {
 }
 
 pub async fn refresh_credential(state: &State, account: &Account) -> Result<Credential, String> {
-    let token = &account.credential.refresh;
+    let current = account
+        .credential
+        .as_ref()
+        .ok_or_else(|| format!("pi refreshes the login of {}", account.provider))?;
+    let token = &current.refresh;
     let mut credential = match account.family {
         Family::Codex => codex::refresh(&state.http, &codex::token_url(), token).await?,
         Family::Anthropic => {
@@ -77,7 +87,7 @@ pub async fn refresh_credential(state: &State, account: &Account) -> Result<Cred
         }
     };
     if credential.account_id.is_none() {
-        credential.account_id = account.credential.account_id.clone();
+        credential.account_id = current.account_id.clone();
     }
     Ok(credential)
 }
@@ -102,8 +112,20 @@ pub async fn ensure_fresh(host: &Host, state: &State, account: Account) -> Resul
     Ok(refreshed.account)
 }
 
-/// Registers every stored slot, then keeps tokens fresh in the background.
+/// Registers every stored slot, then keeps the router's own tokens fresh in the background.
 pub async fn start(host: Host, state: Arc<State>) -> Result<()> {
+    let own = state
+        .accounts
+        .list()
+        .into_iter()
+        .filter(|a| a.credential.is_some());
+    let own: Vec<String> = own.map(|a| a.provider).collect();
+    if !own.is_empty() {
+        let names = own.join(", ");
+        pi_ext_sdk::info!(
+            "{names} keep the router's own tokens; log in again in /router accounts to move them to pi"
+        );
+    }
     for account in state.accounts.list() {
         let provider = account.provider.clone();
         let registered = if account.needs_refresh(now_ms()) {

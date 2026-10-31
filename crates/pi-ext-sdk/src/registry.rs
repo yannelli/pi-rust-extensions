@@ -1,10 +1,11 @@
 use serde_json::{Map, Value, json};
 
 use crate::handler::{
-    AutocompleteFn, CommandFn, CompleteFn, EventFn, FooterFn, HostFn, RouteFn, ShortcutFn,
-    SurfaceFn, ToolFn,
+    AutocompleteFn, CommandFn, CompleteFn, EventFn, FooterFn, HostFn, PrepareFn, RenderFn, RouteFn,
+    ShortcutFn, SurfaceFn, ToolFn,
 };
 use crate::protocol::PROTOCOL_VERSION;
+use crate::render::{EntryRender, MessageRender, ToolCallRender, ToolResultRender};
 use crate::spec::{CommandSpec, FlagSpec, ShortcutSpec, ToolSpec};
 
 pub(crate) struct Command {
@@ -40,9 +41,43 @@ pub(crate) struct Registry {
     pub(crate) on_shutdown: Vec<HostFn>,
     pub(crate) on_surface: Vec<SurfaceFn>,
     pub(crate) on_footer: Vec<FooterFn>,
+    pub(crate) prepare: Vec<(String, PrepareFn)>,
+    pub(crate) call_renderers: Vec<(String, RenderFn<ToolCallRender>)>,
+    pub(crate) result_renderers: Vec<(String, RenderFn<ToolResultRender>)>,
+    pub(crate) message_renderers: Vec<(String, RenderFn<MessageRender>)>,
+    pub(crate) entry_renderers: Vec<(String, RenderFn<EntryRender>)>,
+}
+
+/// The entry of `key` in a `(key, value)` list; a later `put` replaces it.
+pub(crate) fn find<T: Clone>(list: &[(String, T)], key: &str) -> Option<T> {
+    list.iter()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.clone())
+}
+
+pub(crate) fn put<T>(list: &mut Vec<(String, T)>, key: &str, value: T) {
+    list.retain(|(name, _)| name != key);
+    list.push((key.to_owned(), value));
+}
+
+fn has_key<T>(list: &[(String, T)], key: &str) -> bool {
+    list.iter().any(|(name, _)| name == key)
+}
+
+fn keys<T>(list: &[(String, T)]) -> Vec<&str> {
+    list.iter().map(|(key, _)| key.as_str()).collect()
 }
 
 impl Registry {
+    /// `spec` with the `prepareArguments`, `renderCall`, and `renderResult` flags of its handlers.
+    pub(crate) fn tool_spec(&self, spec: &ToolSpec) -> ToolSpec {
+        let mut spec = spec.clone();
+        spec.prepare_arguments |= has_key(&self.prepare, &spec.name);
+        spec.render_call |= has_key(&self.call_renderers, &spec.name);
+        spec.render_result |= has_key(&self.result_renderers, &spec.name);
+        spec
+    }
+
     pub(crate) fn put_tool(&mut self, spec: ToolSpec, run: ToolFn) {
         self.tools
             .retain(|(existing, _)| existing.name != spec.name);
@@ -97,7 +132,11 @@ impl Registry {
     pub(crate) fn initialize_result(&self) -> Value {
         let mut result = Map::new();
         result.insert("protocolVersion".into(), json!(PROTOCOL_VERSION));
-        let tools: Vec<&ToolSpec> = self.tools.iter().map(|(spec, _)| spec).collect();
+        let tools: Vec<ToolSpec> = self
+            .tools
+            .iter()
+            .map(|(spec, _)| self.tool_spec(spec))
+            .collect();
         let commands: Vec<&CommandSpec> = self.commands.iter().map(|c| &c.spec).collect();
         let shortcuts: Vec<&ShortcutSpec> = self.shortcuts.iter().map(|(s, _)| s).collect();
         let providers: Vec<Value> = self
@@ -120,6 +159,8 @@ impl Registry {
             ("providers", json!(providers)),
             ("virtualModels", json!(models)),
             ("autocomplete", json!(autocomplete)),
+            ("messageRenderers", json!(keys(&self.message_renderers))),
+            ("entryRenderers", json!(keys(&self.entry_renderers))),
         ];
         for (key, value) in fields {
             if value.as_array().is_some_and(|items| !items.is_empty()) {

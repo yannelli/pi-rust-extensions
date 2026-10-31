@@ -1,6 +1,8 @@
-//! Interactive OAuth login of an extension slot through `ui.notify`, `ui.input`, and `exec`.
+//! Login of an extension slot: pi's `/login` dialog through `auth.login`, where pi stores and
+//! refreshes the token. pi without `auth.login` gets the older login of the router, through
+//! `ui.notify`, `ui.input`, and `exec`, with the token in the router's account file.
 
-use pi_ext_sdk::Host;
+use pi_ext_sdk::{Host, code};
 
 use crate::accounts::Account;
 use crate::family::Family;
@@ -99,8 +101,56 @@ async fn anthropic_login(
     .await
 }
 
-/// Logs in slot `slot` of `family`, stores the credential, and registers the provider.
+/// Logs in slot `slot` of `family` and registers the provider. `Ok(None)` when the user cancels.
 pub async fn login(
+    host: &Host,
+    state: &State,
+    family: Family,
+    slot: u32,
+) -> Result<Option<Account>, String> {
+    let account = Account::new(family, slot, None);
+    let previous = state.accounts.get(&account.provider);
+    // pi merges a new provider config over the old one, which would keep an old `apiKey`.
+    let _ = host.unregister_provider(&account.provider).await;
+    if let Err(err) = providers::register(host, &account).await {
+        restore(host, &account.provider, previous).await;
+        return Err(err.to_string());
+    }
+    match host.login(&account.provider).await {
+        Ok(true) => {}
+        Ok(false) => {
+            restore(host, &account.provider, previous).await;
+            return Ok(None);
+        }
+        Err(err) if err.code() == code::METHOD_NOT_FOUND => {
+            let _ = host.unregister_provider(&account.provider).await;
+            return own_login(host, state, family, slot).await.map(Some);
+        }
+        Err(err) => {
+            restore(host, &account.provider, previous).await;
+            return Err(err.to_string());
+        }
+    }
+    state
+        .accounts
+        .upsert(account.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    state.usage().forget(&account.provider);
+    Ok(Some(account))
+}
+
+/// Registers the slot as it was before a login that did not finish; removes a new slot.
+async fn restore(host: &Host, provider: &str, previous: Option<Account>) {
+    let _ = host.unregister_provider(provider).await;
+    let Some(previous) = previous else { return };
+    if let Err(err) = providers::register(host, &previous).await {
+        pi_ext_sdk::warn!("cannot register {provider} again: {err}");
+    }
+}
+
+/// The router's own login, for pi without `auth.login`.
+async fn own_login(
     host: &Host,
     state: &State,
     family: Family,
@@ -111,7 +161,7 @@ pub async fn login(
         Family::Codex => codex_login(host, state, &name).await?,
         Family::Anthropic => anthropic_login(host, state, &name).await?,
     };
-    let account = Account::new(family, slot, credential);
+    let account = Account::new(family, slot, Some(credential));
     state
         .accounts
         .upsert(account.clone())

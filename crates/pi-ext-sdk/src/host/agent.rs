@@ -191,6 +191,13 @@ impl Host {
         self.call_as("auth.getProviderAuth", params).await
     }
 
+    /// Opens pi's `/login` dialog for `provider`, which this extension registered with `oauth`.
+    /// `true` after a login, `false` when the user cancels it. pi stores and refreshes the token.
+    pub async fn login(&self, provider: &str) -> Result<bool> {
+        let params = json!({ "provider": provider });
+        self.call_as("auth.login", params).await
+    }
+
     /// Emits `data` on the `pi.events` bus.
     pub async fn emit(&self, channel: &str, data: impl Serialize) -> Result<()> {
         let params = json!({ "channel": channel, "data": serde_json::to_value(data)? });

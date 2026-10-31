@@ -1,5 +1,6 @@
-//! Credentials of extension-owned slots (`openai-codex-<n>`, `anthropic-<n>`, n >= 2) in
-//! `<agentDir>/ext/subscription-router/accounts.json`, mode 0600.
+//! Extension-owned slots (`openai-codex-<n>`, `anthropic-<n>`, n >= 2) in
+//! `<agentDir>/ext/subscription-router/accounts.json`, mode 0600. pi stores the login of a slot
+//! (`{ "type": "pi" }`); entries of older versions keep their own OAuth tokens until a new login.
 
 use std::future::Future;
 use std::io::ErrorKind;
@@ -34,11 +35,12 @@ pub struct Account {
     pub provider: String,
     pub family: Family,
     pub slot: u32,
-    pub credential: Credential,
+    /// The router's own tokens of an older entry; `None` when pi stores the login.
+    pub credential: Option<Credential>,
 }
 
 impl Account {
-    pub fn new(family: Family, slot: u32, credential: Credential) -> Self {
+    pub fn new(family: Family, slot: u32, credential: Option<Credential>) -> Self {
         Self {
             provider: family.provider(slot),
             family,
@@ -47,8 +49,15 @@ impl Account {
         }
     }
 
+    /// Only the router's own tokens need a refresh here; pi refreshes its logins.
     pub fn needs_refresh(&self, now: i64) -> bool {
-        self.credential.expires - now < REFRESH_MARGIN_MS
+        self.credential
+            .as_ref()
+            .is_some_and(|c| c.expires - now < REFRESH_MARGIN_MS)
+    }
+
+    fn expires(&self) -> i64 {
+        self.credential.as_ref().map_or(i64::MAX, |c| c.expires)
     }
 }
 
@@ -86,12 +95,16 @@ fn read_entries(path: &Path) -> std::io::Result<Entries> {
 
 fn parse_entry(provider: &str, value: &Value) -> Option<Account> {
     let (family, slot) = parse_provider(provider).filter(|(_, slot)| *slot >= 2)?;
-    let s = Stored::deserialize(value).ok()?;
-    let credential = Credential {
-        access: s.access,
-        refresh: s.refresh,
-        expires: s.expires,
-        account_id: s.account_id,
+    let credential = if value.get("type").and_then(Value::as_str) == Some(PI_OWNED) {
+        None
+    } else {
+        let s = Stored::deserialize(value).ok()?;
+        Some(Credential {
+            access: s.access,
+            refresh: s.refresh,
+            expires: s.expires,
+            account_id: s.account_id,
+        })
     };
     Some(Account {
         provider: provider.to_owned(),
@@ -118,7 +131,13 @@ fn parse_entries(entries: &Entries) -> (Vec<Account>, Vec<String>) {
     (accounts, bad)
 }
 
-fn stored(credential: &Credential) -> Value {
+/// The `type` of an entry whose login pi stores.
+const PI_OWNED: &str = "pi";
+
+fn stored(credential: Option<&Credential>) -> Value {
+    let Some(credential) = credential else {
+        return json!({ "type": PI_OWNED });
+    };
     let stored = Stored {
         kind: "oauth".into(),
         access: credential.access.clone(),
@@ -156,8 +175,10 @@ impl Locked<'_> {
     }
 
     pub fn upsert(&mut self, account: &Account) -> std::io::Result<()> {
-        self.entries
-            .insert(account.provider.clone(), stored(&account.credential));
+        self.entries.insert(
+            account.provider.clone(),
+            stored(account.credential.as_ref()),
+        );
         self.write()
     }
 
@@ -246,7 +267,7 @@ impl AccountStore {
         let current = locked
             .get(&account.provider)
             .ok_or_else(|| format!("{} is no longer stored", account.provider))?;
-        let newer = current.credential.expires > account.credential.expires;
+        let newer = current.expires() > account.expires();
         if newer || !current.needs_refresh(now_ms()) {
             return Ok(Refreshed {
                 account: current,
@@ -255,7 +276,7 @@ impl AccountStore {
         }
         let credential = refresh(current.clone()).await?;
         let account = Account {
-            credential,
+            credential: Some(credential),
             ..current
         };
         let save_error = locked.upsert(&account).err();
