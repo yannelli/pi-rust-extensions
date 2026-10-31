@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "protocolVersion": 1,
-  "minPiVersion": "0.7.7",
+  "minPiVersion": "0.8.5",
   "extensions": [
     {
       "name": "ask-user-question",
