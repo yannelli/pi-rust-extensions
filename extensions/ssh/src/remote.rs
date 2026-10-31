@@ -27,7 +27,7 @@ sh -c "$1" < "$directory/input" &
 task=$!
 supervisor=$$
 exec 3<&0
-(cat <&3 >/dev/null; kill -TERM "$supervisor" 2>/dev/null) &
+(cat <&3 >/dev/null; kill -TERM "$supervisor" 2>/dev/null) 2>/dev/null &
 watcher=$!
 wait "$task"
 code=$?
