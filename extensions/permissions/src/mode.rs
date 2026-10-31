@@ -93,6 +93,7 @@ fn needs_approval(mode: Mode, call: &Call, verdict: &Verdict) -> bool {
                     Target::File { path, write, plain } => {
                         !plain || !inside(path) || (*write && !edits_free)
                     }
+                    Target::Shell(_) => false,
                     _ => true,
                 }
         }),

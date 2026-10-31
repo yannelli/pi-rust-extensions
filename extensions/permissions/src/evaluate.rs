@@ -25,6 +25,8 @@ pub enum Target {
         plain: bool,
     },
     Url(String),
+    /// A script Codex cannot split, as the single call `["bash", "-lc", script]`.
+    Shell(Vec<String>),
     Call,
 }
 
@@ -38,6 +40,7 @@ impl Target {
                 format!("{verb} {}", path.display())
             }
             Target::Url(host) => host.clone(),
+            Target::Shell(words) => words.join(" "),
             Target::Call => "call".to_owned(),
         }
     }
@@ -101,6 +104,17 @@ pub fn targets(call: &Call) -> (Vec<Target>, bool, bool) {
                 .map(Target::Command)
                 .collect();
             targets.extend(bash_files(&script, call));
+            if !script.plain {
+                let command = input
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                targets.push(Target::Shell(vec![
+                    "bash".into(),
+                    "-lc".into(),
+                    command.into(),
+                ]));
+            }
             (targets, script.complete, script.plain)
         }
         t if READ_TOOLS.contains(&t) || EDIT_TOOLS.contains(&t) => {
@@ -149,9 +163,9 @@ pub fn evaluate(rules: &[Rule], call: &Call) -> Verdict {
             .cloned()
     };
     let all_allowed = !decided.is_empty()
-        && decided
-            .iter()
-            .all(|(target, rule)| rule.is_some() || inside_dirs(target, call));
+        && decided.iter().all(|(target, rule)| {
+            rule.is_some() || inside_dirs(target, call) || matches!(target, Target::Shell(_))
+        });
     let rule = pick(Decision::Deny)
         .or_else(|| pick(Decision::Ask))
         .or_else(|| all_allowed.then(|| pick(Decision::Allow)).flatten());
@@ -167,6 +181,13 @@ fn applies(rule: &Rule, call: &Call, target: &Target, plain: bool) -> bool {
         Kind::Codex(prefix) => match target {
             Target::Command(words) => {
                 (plain || rule.decision != Decision::Allow) && prefix.matches(&shell::values(words))
+            }
+            Target::Shell(words) => prefix.matches(words),
+            _ => false,
+        },
+        Kind::Network(network) => match target {
+            Target::Url(host) => {
+                FETCH_TOOLS.contains(&call.tool) && domain_matches(&network.host, host)
             }
             _ => false,
         },
@@ -300,6 +321,7 @@ pub fn suggestions(verdict: &Verdict, tool: &str) -> Vec<String> {
                 format!("{kind}(/{})", path.display())
             }
             Target::Url(host) => format!("WebFetch(domain:{host})"),
+            Target::Shell(_) => continue,
             Target::Call => claude_names(tool)[0].to_owned(),
         };
         if !out.contains(&text) {

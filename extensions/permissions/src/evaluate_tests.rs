@@ -421,3 +421,60 @@ fn agent_rules_match_subagent_calls() {
     let tasks = json!({ "tasks": [{ "task": "a", "agent": "build" }, { "task": "b" }] });
     assert_eq!(decide(&rules, "subagent", tasks), Some(Decision::Deny));
 }
+
+#[test]
+fn codex_rules_see_unsplittable_scripts_and_absolute_programs() {
+    let rules = codex(
+        r#"
+prefix_rule(pattern=["bash", "-lc"], decision="prompt")
+prefix_rule(pattern=["git", "push"], decision="forbidden")
+host_executable(name="git", paths=["/opt/homebrew/bin/git"])
+"#,
+    );
+    assert_eq!(bash(&rules, "echo $HOME > out.txt"), Some(Decision::Ask));
+    assert_eq!(bash(&rules, "git status && ls"), None);
+    assert_eq!(
+        bash(&rules, "/usr/bin/git push origin"),
+        Some(Decision::Deny)
+    );
+    let mut constrained = rules.clone();
+    for rule in &mut constrained {
+        if let Kind::Codex(prefix) = &mut rule.kind
+            && prefix.pattern[0][0] == "git"
+        {
+            prefix.hosts = Some(vec!["/opt/homebrew/bin/git".into()]);
+        }
+    }
+    assert_eq!(bash(&constrained, "/usr/bin/git push origin"), None);
+    assert_eq!(
+        bash(&constrained, "/opt/homebrew/bin/git push"),
+        Some(Decision::Deny)
+    );
+}
+
+#[test]
+fn codex_network_rules_decide_fetch_hosts() {
+    let parsed =
+        parse_rules(r#"network_rule(host="Evil.example", protocol="https", decision="deny")"#)
+            .unwrap();
+    let rules: Vec<Rule> = parsed
+        .network
+        .into_iter()
+        .map(|(rule, decision, justification, text)| Rule {
+            source: Source::CodexUser,
+            decision,
+            text,
+            file: PathBuf::from("/c.rules"),
+            justification,
+            kind: Kind::Network(rule),
+        })
+        .collect();
+    let fetch = |url: &str| decide(&rules, "fetch", json!({ "url": url }));
+    assert_eq!(fetch("https://evil.example/x"), Some(Decision::Deny));
+    assert_eq!(fetch("https://good.example/x"), None);
+    assert_eq!(
+        bash(&rules, "curl https://evil.example"),
+        None,
+        "bash network needs a sandbox"
+    );
+}

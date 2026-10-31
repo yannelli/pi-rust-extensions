@@ -32,6 +32,7 @@ pub enum Source {
     ClaudeUser,
     ClaudeProject,
     ClaudeLocal,
+    CodexManaged,
     CodexUser,
     CodexProject,
     PiGlobal,
@@ -39,11 +40,12 @@ pub enum Source {
 }
 
 impl Source {
-    pub const ALL: [Source; 8] = [
+    pub const ALL: [Source; 9] = [
         Source::ClaudeManaged,
         Source::ClaudeUser,
         Source::ClaudeProject,
         Source::ClaudeLocal,
+        Source::CodexManaged,
         Source::CodexUser,
         Source::CodexProject,
         Source::PiGlobal,
@@ -57,6 +59,7 @@ impl Source {
             Source::ClaudeUser => "claude-user",
             Source::ClaudeProject => "claude-project",
             Source::ClaudeLocal => "claude-local",
+            Source::CodexManaged => "codex-managed",
             Source::CodexUser => "codex-user",
             Source::CodexProject => "codex-project",
             Source::PiGlobal | Source::PiProject => "pi",
@@ -99,26 +102,49 @@ pub struct ClaudeRule {
 }
 
 /// One Codex `prefix_rule` with a single first token; each later position lists alternatives.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PrefixRule {
     pub pattern: Vec<Vec<String>>,
+    /// The `host_executable` paths of the program; `None` lets any absolute path fall back.
+    pub hosts: Option<Vec<String>>,
 }
 
 impl PrefixRule {
+    /// An exact first token matches first; an absolute program path falls back to its
+    /// basename when `host_executable` allows that path.
     pub fn matches(&self, words: &[String]) -> bool {
-        words.len() >= self.pattern.len()
+        let (Some(first), Some(program)) = (self.pattern.first(), words.first()) else {
+            return false;
+        };
+        let exact = first.contains(program);
+        let base = program.rsplit(['/', '\\']).next().unwrap_or_default();
+        let fallback = std::path::Path::new(program).is_absolute()
+            && first.iter().any(|alt| alt == base)
             && self
-                .pattern
+                .hosts
+                .as_ref()
+                .is_none_or(|hosts| hosts.contains(program));
+        words.len() >= self.pattern.len()
+            && (exact || fallback)
+            && self.pattern[1..]
                 .iter()
-                .zip(words)
+                .zip(&words[1..])
                 .all(|(alts, word)| alts.iter().any(|alt| alt == word))
     }
+}
+
+/// A Codex `network_rule`: a decision for one host, applied to pi's fetch tools.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetworkRule {
+    pub host: String,
+    pub protocol: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
     Claude(ClaudeRule),
     Codex(PrefixRule),
+    Network(NetworkRule),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -193,13 +219,19 @@ mod tests {
 
     #[test]
     fn prefix_rules_match_alternatives() {
-        let rule = PrefixRule {
+        let mut rule = PrefixRule {
             pattern: vec![vec!["git".into()], vec!["push".into(), "fetch".into()]],
+            hosts: None,
         };
         let words = |s: &str| s.split(' ').map(str::to_owned).collect::<Vec<_>>();
         assert!(rule.matches(&words("git push origin")));
         assert!(rule.matches(&words("git fetch")));
         assert!(!rule.matches(&words("git status")));
         assert!(!rule.matches(&words("git")));
+        assert!(rule.matches(&words("/usr/bin/git push")));
+        rule.hosts = Some(vec!["/opt/homebrew/bin/git".into()]);
+        assert!(!rule.matches(&words("/usr/bin/git push")));
+        assert!(rule.matches(&words("/opt/homebrew/bin/git push")));
+        assert!(rule.matches(&words("git push")));
     }
 }

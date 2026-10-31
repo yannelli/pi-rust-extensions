@@ -22,7 +22,21 @@ fn words(s: &str) -> Vec<String> {
 #[test]
 fn parses_prefix_rules() {
     let parsed = parse_rules(RULES).unwrap();
-    assert_eq!(parsed.skipped, ["host_executable", "network_rule"]);
+    assert!(parsed.skipped.is_empty());
+    assert_eq!(
+        parsed.hosts,
+        [("git".to_owned(), vec!["/usr/bin/git".to_owned()])]
+    );
+    let (network, decision, _, _) = &parsed.network[0];
+    assert_eq!(
+        (network.host.as_str(), network.protocol.as_str()),
+        ("example.com", "https")
+    );
+    assert_eq!(*decision, Decision::Deny);
+    assert!(parse_rules(r#"host_executable(name="git", paths=["/usr/bin/gitx"])"#).is_err());
+    assert!(
+        parse_rules(r#"network_rule(host="x.com", protocol="https", decision="maybe")"#).is_err()
+    );
     assert_eq!(parsed.rules.len(), 4);
     let push = &parsed.rules[0];
     assert_eq!(push.decision, Decision::Ask);

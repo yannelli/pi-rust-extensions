@@ -9,6 +9,7 @@ mod load;
 mod mode;
 mod paths;
 mod pattern;
+mod requirements;
 mod rules;
 mod settings;
 mod shell;

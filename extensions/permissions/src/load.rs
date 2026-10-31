@@ -10,6 +10,7 @@ use crate::mode::{self, Mode};
 use crate::paths::{Paths, project_root, up_to_root};
 use crate::rules::{ClaudeRule, Decision, Kind, Rule, Source, split_claude};
 use crate::settings::{Options, PiFile, global_file, project_file};
+use std::collections::HashMap;
 
 pub struct Env<'a> {
     pub paths: &'a Paths,
@@ -36,6 +37,7 @@ pub struct Loaded {
     pub claude_mode: Option<(String, Source)>,
     /// The mode for calls that no rule decides, with its label.
     pub mode: Option<(Mode, String)>,
+    hosts: HashMap<String, Vec<String>>,
 }
 
 pub fn load(env: &Env) -> Loaded {
@@ -79,6 +81,7 @@ pub fn load(env: &Env) -> Loaded {
                     pi_rules(&mut out, source, project, &env.cwd);
                 }
             }
+            Source::CodexManaged => codex_requirements(&mut out, env),
             Source::CodexUser | Source::CodexProject => codex_source(&mut out, source, env),
             _ => claude_source(&mut out, source, env, managed_only),
         }
@@ -87,6 +90,8 @@ pub fn load(env: &Env) -> Loaded {
         out.notes
             .push("project is not trusted; project sources are skipped".to_owned());
     }
+    let hosts = std::mem::take(&mut out.hosts);
+    attach_hosts(&mut out.rules, &hosts);
     out.mode = mode::effective(out.options.mode.as_deref(), out.claude_mode.as_ref());
     match (&out.mode, &out.claude_mode) {
         (Some((_, label)), _) => out.info.push(format!("mode for unmatched calls: {label}")),
@@ -259,6 +264,35 @@ fn codex_source(out: &mut Loaded, source: Source, env: &Env) {
     }
 }
 
+fn attach_hosts(rules: &mut [Rule], hosts: &HashMap<String, Vec<String>>) {
+    for rule in rules {
+        if let Kind::Codex(prefix) = &mut rule.kind {
+            let name = prefix.pattern.first().and_then(|alts| alts.first());
+            prefix.hosts = name.and_then(|n| hosts.get(n)).cloned();
+        }
+    }
+}
+
+fn codex_requirements(out: &mut Loaded, env: &Env) {
+    for file in &env.paths.codex_requirements {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        match crate::requirements::parse_requirements(&text) {
+            Ok(rules) => out.rules.extend(rules.into_iter().map(|r| Rule {
+                source: Source::CodexManaged,
+                decision: r.decision,
+                text: r.text,
+                file: file.clone(),
+                justification: r.justification,
+                kind: Kind::Codex(r.rule),
+            })),
+            Err(err) => out.notes.push(format!("{}: {err}", file.display())),
+        }
+        return;
+    }
+}
+
 fn codex_file(out: &mut Loaded, source: Source, file: &Path) {
     let text = std::fs::read_to_string(file).unwrap_or_default();
     match codex::parse_rules(&text) {
@@ -267,6 +301,19 @@ fn codex_file(out: &mut Loaded, source: Source, file: &Path) {
                 out.notes
                     .push(format!("{}: {name} is not applied", file.display()));
             }
+            for (name, paths) in parsed.hosts {
+                out.hosts.entry(name).or_default().extend(paths);
+            }
+            out.rules.extend(parsed.network.into_iter().map(
+                |(rule, decision, justification, text)| Rule {
+                    source,
+                    decision,
+                    text,
+                    file: file.to_path_buf(),
+                    justification,
+                    kind: Kind::Network(rule),
+                },
+            ));
             out.rules.extend(parsed.rules.into_iter().map(|r| Rule {
                 source,
                 decision: r.decision,
