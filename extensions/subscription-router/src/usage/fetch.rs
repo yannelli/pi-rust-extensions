@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 
+use super::core::{CoreRead, outcome};
 use super::service::{Outcome, REQUEST_TIMEOUT, Tokens, UsageService};
 use super::{CACHE_TTL_MS, Status, UsageSnapshot, parse_anthropic, parse_codex};
 use crate::family::{Family, parse_provider};
@@ -11,7 +12,13 @@ const ANTHROPIC_BETA: &str = "oauth-2025-04-20";
 const ANTHROPIC_USER_AGENT: &str = "claude-code/2.1";
 
 impl UsageService {
-    pub(super) async fn fetch(&self, provider: &str, tokens: &dyn Tokens, now: i64) -> Outcome {
+    pub(super) async fn fetch(
+        &self,
+        provider: &str,
+        tokens: &dyn Tokens,
+        now: i64,
+        refresh: bool,
+    ) -> Outcome {
         let unfetched = |status, message: &str| Outcome {
             snapshot: UsageSnapshot::error(provider, status, now, message),
             failed: false,
@@ -28,6 +35,11 @@ impl UsageService {
                 "No subscription usage collector exists for this provider.",
             );
         };
+        match tokens.core_usage(provider, refresh).await {
+            CoreRead::Usage(usage) => return outcome(provider, family, &usage, now),
+            CoreRead::Failed(message) => return failure(message, None),
+            CoreRead::Unsupported => {}
+        }
         let token = match tokio::time::timeout(REQUEST_TIMEOUT, tokens.token(provider)).await {
             Ok(Some(token)) if !token.is_empty() => token,
             Ok(_) => {

@@ -20,9 +20,18 @@ const RETRY_AFTER_CEILING_MS: i64 = 3_600_000;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Supplies the bearer token of a provider slot.
+/// Supplies the bearer token of a provider slot, and pi's own usage read when pi has one.
 pub trait Tokens: Send + Sync {
     fn token<'a>(&'a self, provider: &'a str) -> BoxFuture<'a, Option<String>>;
+
+    /// `usage.get` for `provider`; `refresh` skips pi's cache. The default reads here.
+    fn core_usage<'a>(
+        &'a self,
+        _provider: &'a str,
+        _refresh: bool,
+    ) -> BoxFuture<'a, super::CoreRead> {
+        Box::pin(async { super::CoreRead::Unsupported })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -198,7 +207,8 @@ impl UsageService {
             }
             self.lock().manual.insert(provider.to_owned(), now);
         }
-        let outcome = self.fetch(provider, tokens, now).await;
+        let refresh = options.force || options.fresh;
+        let outcome = self.fetch(provider, tokens, now, refresh).await;
         let result = {
             let mut inner = self.lock();
             if outcome.snapshot.status == Status::Available {

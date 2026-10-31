@@ -144,6 +144,7 @@ mod tests {
             used_percent: percent,
             resets_at: resets.map(str::to_string),
             window_minutes: minutes,
+            ..UsageWindow::default()
         }
     }
 

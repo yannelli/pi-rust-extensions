@@ -87,7 +87,7 @@ fn codex_reset(item: &Map<String, Value>, now: i64) -> Option<i64> {
             .get("reset_after_seconds")?
             .as_f64()
             .filter(|s| *s >= 0.0)?;
-        Some(now + (after * 1000.0) as i64)
+        now.checked_add((after * 1000.0) as i64)
     })
 }
 

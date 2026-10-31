@@ -18,6 +18,21 @@ pub struct ProviderUsage {
     /// Unix milliseconds.
     #[serde(deserialize_with = "null_default")]
     pub fetched_at: u64,
+    /// Codex credits.
+    pub credits: Option<UsageCredits>,
+    /// Why the fetch failed: `login`, `unsupported`, `rejected`, `rateLimited`, `http`, `network`,
+    /// or `response`. Older hosts send no kind.
+    pub error_kind: Option<String>,
+    /// The `retry-after` of a failed request, in milliseconds from `fetched_at`.
+    pub retry_after_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UsageCredits {
+    pub available: bool,
+    pub unlimited: bool,
+    pub balance: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -32,6 +47,17 @@ pub struct UsageWindow {
     pub resets_at: Option<String>,
     /// `300` for 5 hours, `10080` for a week.
     pub window_minutes: Option<u64>,
+    /// The exact window length in seconds, when the provider reports a whole number.
+    pub window_seconds: Option<u64>,
+    /// `provider` or `model`. Hosts before this field send none.
+    pub scope: Option<String>,
+    /// The model families of a `model` window, for example `opus`.
+    #[serde(deserialize_with = "null_default")]
+    pub families: Vec<String>,
+    /// The provider's name of the window, for example `five_hour` or `primary_window`.
+    pub id: Option<String>,
+    /// The reset in Unix milliseconds, as exact as the provider reports it.
+    pub resets_at_ms: Option<i64>,
 }
 
 #[derive(Default, Deserialize)]
