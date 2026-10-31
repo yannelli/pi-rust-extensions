@@ -2,6 +2,7 @@ mod ask;
 mod codex;
 mod codex_config;
 mod evaluate;
+mod file_rules;
 mod files;
 mod listing;
 mod load;
@@ -46,6 +47,7 @@ async fn tool_call(paths: Arc<Paths>, ev: EventCtx) -> Result<EventReply> {
         input: &event.input,
         cwd: &env.cwd,
         home: &paths.home,
+        dirs: &loaded.dirs,
     };
     let verdict = evaluate(&loaded.rules, &call);
     match (verdict.decision, &verdict.rule) {

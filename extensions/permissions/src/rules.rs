@@ -133,14 +133,12 @@ pub struct Rule {
 }
 
 impl Rule {
-    /// Precedence inside one target: deny, pi ask, pi allow, other ask, other allow.
+    /// Precedence inside one target: deny, then ask, then allow, the same for every source.
     pub fn rank(&self) -> u8 {
-        match (self.decision, self.source.is_pi()) {
-            (Decision::Deny, _) => 4,
-            (Decision::Ask, true) => 3,
-            (Decision::Allow, true) => 2,
-            (Decision::Ask, false) => 1,
-            (Decision::Allow, false) => 0,
+        match self.decision {
+            Decision::Deny => 2,
+            Decision::Ask => 1,
+            Decision::Allow => 0,
         }
     }
 

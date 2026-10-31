@@ -29,6 +29,10 @@ pub struct Loaded {
     pub project_file: PathBuf,
     pub trusted: bool,
     pub cwd: PathBuf,
+    /// The cwd and the Claude `additionalDirectories`.
+    pub dirs: Vec<PathBuf>,
+    /// The Claude `defaultMode` with the highest settings precedence, and its source.
+    pub claude_mode: Option<(String, Source)>,
 }
 
 pub fn load(env: &Env) -> Loaded {
@@ -37,6 +41,7 @@ pub fn load(env: &Env) -> Loaded {
         project_file: project_file(&env.cwd),
         trusted: env.trusted,
         cwd: env.cwd.clone(),
+        dirs: vec![env.cwd.clone()],
         ..Loaded::default()
     };
     let global = pi_file(&out.global_file, &mut out.notes);
@@ -44,6 +49,17 @@ pub fn load(env: &Env) -> Loaded {
         .trusted
         .then(|| pi_file(&out.project_file, &mut out.notes));
     out.options = Options::merge(&global, project.as_ref());
+    let managed_only = out.options.on(Source::ClaudeManaged)
+        && read_json(&env.paths.claude_managed).is_some_and(|json| {
+            json["allowManagedPermissionRulesOnly"] == true
+                || json["permissions"]["allowManagedPermissionRulesOnly"] == true
+        });
+    if managed_only {
+        out.notes.push(
+            "allowManagedPermissionRulesOnly: Claude user, project, and local rules are ignored"
+                .to_owned(),
+        );
+    }
     let mut skipped_project = false;
     for source in Source::ALL {
         if !out.options.on(source) {
@@ -61,7 +77,7 @@ pub fn load(env: &Env) -> Loaded {
                 }
             }
             Source::CodexUser | Source::CodexProject => codex_source(&mut out, source, env),
-            _ => claude_source(&mut out, source, env),
+            _ => claude_source(&mut out, source, env, managed_only),
         }
     }
     if skipped_project {
@@ -117,7 +133,21 @@ fn push_claude(
     });
 }
 
-fn claude_source(out: &mut Loaded, source: Source, env: &Env) {
+fn read_json(path: &Path) -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+/// Settings precedence of the Claude sources: managed, local, project, user.
+fn claude_precedence(source: Source) -> u8 {
+    match source {
+        Source::ClaudeManaged => 3,
+        Source::ClaudeLocal => 2,
+        Source::ClaudeProject => 1,
+        _ => 0,
+    }
+}
+
+fn claude_source(out: &mut Loaded, source: Source, env: &Env, managed_only: bool) {
     let root = project_root(&env.cwd, ".claude");
     let (file, anchor) = match source {
         Source::ClaudeManaged => {
@@ -143,7 +173,8 @@ fn claude_source(out: &mut Loaded, source: Source, env: &Env) {
         }
     };
     let permissions = &json["permissions"];
-    for decision in Decision::ALL {
+    let rules_ignored = managed_only && source != Source::ClaudeManaged;
+    for decision in Decision::ALL.into_iter().filter(|_| !rules_ignored) {
         let list = permissions[decision.name()]
             .as_array()
             .cloned()
@@ -155,10 +186,24 @@ fn claude_source(out: &mut Loaded, source: Source, env: &Env) {
     let mut info = Vec::new();
     if let Some(mode) = permissions["defaultMode"].as_str() {
         info.push(format!("defaultMode={mode}"));
+        let current = out.claude_mode.as_ref().map(|(_, s)| claude_precedence(*s));
+        if current.is_none_or(|rank| claude_precedence(source) > rank) {
+            out.claude_mode = Some((mode.to_owned(), source));
+        }
     }
     if let Some(dirs) = permissions["additionalDirectories"].as_array() {
         let dirs: Vec<&str> = dirs.iter().filter_map(Value::as_str).collect();
         info.push(format!("additionalDirectories={}", dirs.join(",")));
+        for dir in dirs {
+            let path = match dir.strip_prefix("~/") {
+                Some(rest) => env.paths.home.join(rest),
+                None => env.cwd.join(dir),
+            };
+            let path = crate::pattern::normalize(&path);
+            if !out.dirs.contains(&path) {
+                out.dirs.push(path);
+            }
+        }
     }
     if !info.is_empty() {
         out.info

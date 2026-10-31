@@ -172,6 +172,7 @@ async fn test(paths: &Paths, host: &Host, loaded: &Loaded, sample: &str) -> Resu
         input: &input,
         cwd: &loaded.cwd,
         home: &paths.home,
+        dirs: &loaded.dirs,
     };
     host.notify_info(explain(loaded, &call).join("\n")).await
 }

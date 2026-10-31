@@ -44,6 +44,7 @@ fn decide(rules: &[Rule], tool: &str, input: Value) -> Option<Decision> {
         input: &input,
         cwd: Path::new("/w"),
         home: Path::new("/h"),
+        dirs: &[PathBuf::from("/w")],
     };
     evaluate(rules, &call).decision
 }
@@ -100,7 +101,16 @@ fn precedence() {
     assert_eq!(bash(&rules, "git push"), Some(Decision::Ask));
     let pi_allow = claude(Source::PiGlobal, Decision::Allow, "Bash(git push)");
     let rules = [user(Decision::Ask, "Bash(git push *)"), pi_allow.clone()];
-    assert_eq!(bash(&rules, "git push"), Some(Decision::Allow));
+    assert_eq!(
+        bash(&rules, "git push"),
+        Some(Decision::Ask),
+        "ask wins in every scope"
+    );
+    let rules = [
+        user(Decision::Allow, "Bash(git push)"),
+        claude(Source::PiProject, Decision::Ask, "Bash(git push)"),
+    ];
+    assert_eq!(bash(&rules, "git push"), Some(Decision::Ask));
     let rules = [user(Decision::Deny, "Bash(git push *)"), pi_allow];
     assert_eq!(bash(&rules, "git push"), Some(Decision::Deny));
     let rules = [
@@ -225,6 +235,7 @@ fn suggestions_and_samples() {
         input: &input,
         cwd: Path::new("/w"),
         home: Path::new("/h"),
+        dirs: &[PathBuf::from("/w")],
     };
     let verdict = evaluate(&rules, &call);
     assert_eq!(
@@ -237,6 +248,7 @@ fn suggestions_and_samples() {
         input: &input,
         cwd: Path::new("/w"),
         home: Path::new("/h"),
+        dirs: &[PathBuf::from("/w")],
     };
     assert_eq!(
         suggestions(&evaluate(&[], &call), "write"),
@@ -258,4 +270,154 @@ fn suggestions_and_samples() {
         sample_call("ls"),
         ("bash".into(), json!({ "command": "ls" }))
     );
+}
+
+fn at(rules: &[Rule], tool: &str, input: Value, cwd: &Path) -> Option<Decision> {
+    let dirs = [cwd.to_path_buf()];
+    let call = Call {
+        tool,
+        input: &input,
+        cwd,
+        home: Path::new("/h"),
+        dirs: &dirs,
+    };
+    evaluate(rules, &call).decision
+}
+
+#[test]
+fn read_and_edit_rules_cover_bash_file_commands_and_redirects() {
+    let rules = [
+        user(Decision::Deny, "Read(./.env)"),
+        user(Decision::Ask, "Edit(./config/**)"),
+        user(Decision::Allow, "Bash(cat *)"),
+        user(Decision::Allow, "Bash(echo *)"),
+        user(Decision::Allow, "Bash(sed *)"),
+    ];
+    assert_eq!(bash(&rules, "cat .env"), Some(Decision::Deny));
+    assert_eq!(bash(&rules, "cd sub && cat ../.env"), Some(Decision::Deny));
+    assert_eq!(bash(&rules, "echo x < .env"), Some(Decision::Deny));
+    assert_eq!(
+        bash(&rules, "echo x > .env"),
+        Some(Decision::Deny),
+        "Read deny blocks writes"
+    );
+    assert_eq!(
+        bash(&rules, "echo x > config/app.toml"),
+        Some(Decision::Ask)
+    );
+    assert_eq!(
+        bash(&rules, "sed -i s/a/b/ config/app.toml"),
+        Some(Decision::Ask)
+    );
+    assert_eq!(
+        bash(&rules, "sed -n 1p config/app.toml"),
+        Some(Decision::Allow)
+    );
+    assert_eq!(
+        bash(&rules, "cat notes.txt > out.txt"),
+        Some(Decision::Allow)
+    );
+    assert_eq!(
+        bash(&rules, "cat notes.txt > /tmp/out.txt"),
+        None,
+        "outside the working dirs"
+    );
+    assert_eq!(
+        bash(&rules, "cat <<EOF\ncat .env\nEOF"),
+        Some(Decision::Allow)
+    );
+}
+
+#[test]
+fn heredoc_bodies_do_not_match_rules() {
+    let rules = [
+        user(Decision::Deny, "Bash(rm *)"),
+        user(Decision::Allow, "Bash(cat *)"),
+    ];
+    assert_eq!(
+        bash(&rules, "cat <<'EOF' > script.sh\nrm -rf /\nEOF"),
+        Some(Decision::Allow)
+    );
+    assert_eq!(
+        bash(&rules, "cat <<EOF\n$(rm -rf x)\nEOF"),
+        Some(Decision::Deny)
+    );
+}
+
+#[test]
+fn wildcard_allow_rules_do_not_approve_exec_wrappers_or_find_actions() {
+    let rules = [
+        user(Decision::Allow, "Bash(find *)"),
+        user(Decision::Allow, "Bash(watch *)"),
+        user(Decision::Allow, "Bash(find build -type f -delete)"),
+    ];
+    assert_eq!(bash(&rules, "find . -name x"), Some(Decision::Allow));
+    assert_eq!(bash(&rules, "find . -name x -delete"), None);
+    assert_eq!(bash(&rules, "find . -exec rm {} ;"), None);
+    assert_eq!(bash(&rules, "watch ls"), None);
+    assert_eq!(
+        bash(&rules, "find build -type f -delete"),
+        Some(Decision::Allow)
+    );
+}
+
+#[test]
+fn negation_carves_out_of_earlier_relative_rules_in_the_same_list() {
+    let rules = [
+        user(Decision::Deny, "Read(*.env)"),
+        user(Decision::Deny, "Read(!sample.env)"),
+        user(Decision::Deny, "Read(secrets/**)"),
+        user(Decision::Deny, "Read(!secrets/public/**)"),
+    ];
+    let read = |path: &str| decide(&rules, "read", json!({ "path": path }));
+    assert_eq!(read("prod.env"), Some(Decision::Deny));
+    assert_eq!(read("a/sample.env"), None);
+    assert_eq!(read("secrets/public/x.txt"), Some(Decision::Deny));
+    let mut other_file = claude(Source::ClaudeProject, Decision::Deny, "Read(!prod.env)");
+    other_file.file = PathBuf::from("/w/.claude/settings.json");
+    let rules = [user(Decision::Deny, "Read(*.env)"), other_file];
+    assert_eq!(
+        decide(&rules, "read", json!({ "path": "prod.env" })),
+        Some(Decision::Deny)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinks_match_deny_on_either_path_and_allow_on_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("work");
+    let secret = dir.path().join("secret");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::create_dir_all(&secret).unwrap();
+    std::fs::write(secret.join("key"), "k").unwrap();
+    std::os::unix::fs::symlink(secret.join("key"), cwd.join("link")).unwrap();
+    let deny = format!("Read(/{}/**)", secret.display());
+    let rules = [user(Decision::Deny, &deny)];
+    assert_eq!(
+        at(&rules, "read", json!({ "path": "link" }), &cwd),
+        Some(Decision::Deny)
+    );
+    let rules = [user(Decision::Allow, "Read(./**)")];
+    assert_eq!(at(&rules, "read", json!({ "path": "link" }), &cwd), None);
+    std::fs::write(cwd.join("plain.txt"), "p").unwrap();
+    assert_eq!(
+        at(&rules, "read", json!({ "path": "plain.txt" }), &cwd),
+        Some(Decision::Allow)
+    );
+}
+
+#[test]
+fn agent_rules_match_subagent_calls() {
+    let rules = [user(Decision::Deny, "Agent(Explore)")];
+    assert_eq!(
+        decide(&rules, "subagent", json!({ "task": "x" })),
+        Some(Decision::Deny)
+    );
+    assert_eq!(
+        decide(&rules, "subagent", json!({ "task": "x", "agent": "build" })),
+        None
+    );
+    let tasks = json!({ "tasks": [{ "task": "a", "agent": "build" }, { "task": "b" }] });
+    assert_eq!(decide(&rules, "subagent", tasks), Some(Decision::Deny));
 }
