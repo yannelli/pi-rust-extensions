@@ -39,6 +39,9 @@ pub struct PiFile {
     pub sources: BTreeMap<String, bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<Scope>,
+    /// `claude` applies the Claude `defaultMode`; a mode name sets the mode for pi.
+    #[serde(rename = "defaultMode", skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub allow: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -122,6 +125,7 @@ pub fn project_file(cwd: &Path) -> PathBuf {
 pub struct Options {
     sources: BTreeMap<String, bool>,
     pub scope: Scope,
+    pub mode: Option<String>,
 }
 
 impl Options {
@@ -129,13 +133,16 @@ impl Options {
     pub fn merge(global: &PiFile, project: Option<&PiFile>) -> Self {
         let mut sources = global.sources.clone();
         let mut scope = global.scope;
+        let mut mode = global.default_mode.clone();
         if let Some(project) = project {
             sources.extend(project.sources.clone());
             scope = project.scope.or(scope);
+            mode = project.default_mode.clone().or(mode);
         }
         Self {
             sources,
             scope: scope.unwrap_or_default(),
+            mode,
         }
     }
 

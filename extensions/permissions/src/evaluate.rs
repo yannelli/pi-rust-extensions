@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+use crate::file_rules::{bash_files, carved, inside_dirs, needs_exact_rule, path_rule_matches};
 use crate::pattern::{PathContext, bash_matches, domain_matches, name_glob, normalize, url_host};
 use crate::rules::{ClaudeRule, Decision, Kind, Rule, split_claude};
 use crate::shell::{self, Word, raw_text, strip_wrappers};
@@ -16,7 +17,16 @@ const FETCH_TOOLS: &[&str] = &["fetch", "web_fetch", "url_context"];
 pub enum Target {
     Command(Vec<Word>),
     Path(PathBuf),
+    /// A file that a Bash command or redirection reads or writes; `plain` is false for a
+    /// path with `~`, a glob, or a variable.
+    File {
+        path: PathBuf,
+        write: bool,
+        plain: bool,
+    },
     Url(String),
+    /// A script Codex cannot split, as the single call `["bash", "-lc", script]`.
+    Shell(Vec<String>),
     Call,
 }
 
@@ -25,7 +35,12 @@ impl Target {
         match self {
             Target::Command(words) => raw_text(words),
             Target::Path(path) => path.display().to_string(),
+            Target::File { path, write, .. } => {
+                let verb = if *write { "write" } else { "read" };
+                format!("{verb} {}", path.display())
+            }
             Target::Url(host) => host.clone(),
+            Target::Shell(words) => words.join(" "),
             Target::Call => "call".to_owned(),
         }
     }
@@ -36,6 +51,8 @@ pub struct Call<'a> {
     pub input: &'a Value,
     pub cwd: &'a Path,
     pub home: &'a Path,
+    /// The cwd and the additional directories.
+    pub dirs: &'a [PathBuf],
 }
 
 #[derive(Debug, Clone, Default)]
@@ -59,6 +76,7 @@ pub fn claude_names(tool: &str) -> Vec<&str> {
         "ls" => &["LS"],
         "powershell" => &["PowerShell"],
         "web_search" => &["WebSearch"],
+        "subagent" => &["Agent", "Task"],
         t if FETCH_TOOLS.contains(&t) => &["WebFetch"],
         _ => &[],
     };
@@ -79,7 +97,24 @@ pub fn targets(call: &Call) -> (Vec<Target>, bool, bool) {
     match call.tool {
         "bash" => {
             let script = shell::parse(input.get("command").and_then(Value::as_str).unwrap_or(""));
-            let targets = script.commands.into_iter().map(Target::Command).collect();
+            let mut targets: Vec<Target> = script
+                .commands
+                .iter()
+                .cloned()
+                .map(Target::Command)
+                .collect();
+            targets.extend(bash_files(&script, call));
+            if !script.plain {
+                let command = input
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                targets.push(Target::Shell(vec![
+                    "bash".into(),
+                    "-lc".into(),
+                    command.into(),
+                ]));
+            }
             (targets, script.complete, script.plain)
         }
         t if READ_TOOLS.contains(&t) || EDIT_TOOLS.contains(&t) => {
@@ -115,6 +150,7 @@ pub fn evaluate(rules: &[Rule], call: &Call) -> Verdict {
                 .iter()
                 .filter(|rule| complete || rule.decision != Decision::Allow)
                 .filter(|rule| applies(rule, call, &target, plain))
+                .filter(|rule| !carved(rules, rule, call, &target))
                 .max_by_key(|rule| rule.rank())
                 .cloned();
             (target, best)
@@ -126,7 +162,10 @@ pub fn evaluate(rules: &[Rule], call: &Call) -> Verdict {
             .find_map(|(_, rule)| rule.as_ref().filter(|r| r.decision == d))
             .cloned()
     };
-    let all_allowed = !decided.is_empty() && decided.iter().all(|(_, r)| r.is_some());
+    let all_allowed = !decided.is_empty()
+        && decided.iter().all(|(target, rule)| {
+            rule.is_some() || inside_dirs(target, call) || matches!(target, Target::Shell(_))
+        });
     let rule = pick(Decision::Deny)
         .or_else(|| pick(Decision::Ask))
         .or_else(|| all_allowed.then(|| pick(Decision::Allow)).flatten());
@@ -143,6 +182,13 @@ fn applies(rule: &Rule, call: &Call, target: &Target, plain: bool) -> bool {
             Target::Command(words) => {
                 (plain || rule.decision != Decision::Allow) && prefix.matches(&shell::values(words))
             }
+            Target::Shell(words) => prefix.matches(words),
+            _ => false,
+        },
+        Kind::Network(network) => match target {
+            Target::Url(host) => {
+                FETCH_TOOLS.contains(&call.tool) && domain_matches(&network.host, host)
+            }
             _ => false,
         },
         Kind::Claude(claude) => claude_applies(claude, rule.decision, call, target),
@@ -156,7 +202,9 @@ fn claude_applies(rule: &ClaudeRule, decision: Decision, call: &Call, target: &T
     };
     match (rule.tool.as_str(), target) {
         ("Bash", Target::Command(words)) if call.tool == "bash" => {
-            bash_matches(spec, &raw_text(strip_wrappers(words, restrict)))
+            let words = strip_wrappers(words, restrict);
+            let exact_only = !restrict && spec.contains('*') && needs_exact_rule(words);
+            !exact_only && bash_matches(spec, &raw_text(words))
         }
         ("Read" | "Edit", Target::Path(path)) => {
             let tool_ok = match rule.tool.as_str() {
@@ -171,8 +219,23 @@ fn claude_applies(rule: &ClaudeRule, decision: Decision, call: &Call, target: &T
                 home: call.home,
                 anchor: &rule.anchor,
             };
-            tool_ok && crate::pattern::path_matches(spec, &cx, path, restrict)
+            tool_ok && path_rule_matches(spec, &cx, path, decision)
         }
+        ("Read" | "Edit", Target::File { path, write, .. }) => {
+            let tool_ok = match rule.tool.as_str() {
+                "Read" => !*write || decision == Decision::Deny,
+                _ => *write,
+            };
+            let cx = PathContext {
+                cwd: call.cwd,
+                home: call.home,
+                anchor: &rule.anchor,
+            };
+            tool_ok && path_rule_matches(spec, &cx, path, decision)
+        }
+        ("Agent" | "Task", Target::Call) if call.tool == "subagent" => agent_names(call.input)
+            .iter()
+            .any(|agent| name_glob(&spec.to_lowercase(), agent)),
         ("WebFetch", Target::Url(host)) => spec
             .strip_prefix("domain:")
             .is_some_and(|d| domain_matches(d, host)),
@@ -197,6 +260,30 @@ fn name_matches(rule_tool: &str, decision: Decision, tool: &str) -> bool {
         return tool.starts_with(&format!("{rule_tool}__"));
     }
     names.contains(&rule_tool)
+}
+
+/// The lowercase agent names of a `subagent` call; `explore` when none is named.
+fn agent_names(input: &Value) -> Vec<String> {
+    let name = |v: &Value| {
+        v.get("agent")
+            .and_then(Value::as_str)
+            .map(str::to_lowercase)
+    };
+    let mut names: Vec<String> = input
+        .get("tasks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|task| {
+            name(task)
+                .or_else(|| name(input))
+                .unwrap_or_else(|| "explore".into())
+        })
+        .collect();
+    if names.is_empty() {
+        names.push(name(input).unwrap_or_else(|| "explore".into()));
+    }
+    names
 }
 
 /// `Tool(param:value)` for deny and ask rules; `*` in the value matches any text.
@@ -229,7 +316,12 @@ pub fn suggestions(verdict: &Verdict, tool: &str) -> Vec<String> {
                 };
                 format!("{kind}(/{})", path.display())
             }
+            Target::File { path, write, .. } => {
+                let kind = if *write { "Edit" } else { "Read" };
+                format!("{kind}(/{})", path.display())
+            }
             Target::Url(host) => format!("WebFetch(domain:{host})"),
+            Target::Shell(_) => continue,
             Target::Call => claude_names(tool)[0].to_owned(),
         };
         if !out.contains(&text) {
