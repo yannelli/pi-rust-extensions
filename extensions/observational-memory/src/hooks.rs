@@ -95,21 +95,25 @@ pub fn launch_compaction(state: Arc<State>, ev: &EventCtx) {
         let Some(_running) = runtime.claim(&runtime.compact_in_flight) else {
             return;
         };
-        // Observations finishing after the compaction entry would cover entries it already summarized;
-        // the next `agent_settled` retries.
-        if runtime.consolidating() {
+        runtime.wait_for_consolidation().await;
+        let latest = host.snapshot();
+        let current = latest.as_deref().unwrap_or(&snapshot);
+        if current.session_id != snapshot.session_id
+            || current.session_file != snapshot.session_file
+            || current.cwd != snapshot.cwd
+        {
             return;
         }
         let Ok(entries) = host.branch(None).await else {
             return;
         };
         let progress = raw_tokens_since_last_compaction(&entries);
-        let window = snapshot.model.as_ref().and_then(|m| m.context_window);
+        let window = current.model.as_ref().and_then(|m| m.context_window);
         let threshold = resolve_compact_after_tokens(&config, window);
         if progress < threshold {
             return;
         }
-        let has_ui = snapshot.has_ui;
+        let has_ui = current.has_ui;
         let notify = |message: String, kind: NotifyType| {
             let host = host.clone();
             async move {

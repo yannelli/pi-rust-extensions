@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::Value;
+use tokio::sync::Notify;
 
 /// Session operations the pipeline needs; `Host` implements it, tests use a fake.
 pub trait MemoryHost: Send + Sync {
@@ -41,6 +42,7 @@ pub struct Runtime {
     pub compact_hook_in_flight: AtomicBool,
     pub project_untrusted_notified: AtomicBool,
     pub state: Mutex<RunState>,
+    finished: Notify,
 }
 
 impl Runtime {
@@ -54,7 +56,10 @@ impl Runtime {
     pub fn claim<'a>(&'a self, flag: &'a AtomicBool) -> Option<FlagGuard<'a>> {
         flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .ok()
-            .map(|_| FlagGuard(flag))
+            .map(|_| FlagGuard {
+                flag,
+                finished: &self.finished,
+            })
     }
 
     /// Compaction from `agent_settled` or the `session_before_compact` hook is running.
@@ -65,6 +70,16 @@ impl Runtime {
 
     pub fn consolidating(&self) -> bool {
         self.consolidation_in_flight.load(Ordering::SeqCst)
+    }
+
+    pub async fn wait_for_consolidation(&self) {
+        loop {
+            let finished = self.finished.notified();
+            if !self.consolidating() {
+                return;
+            }
+            finished.await;
+        }
     }
 
     pub fn begin_consolidation(&self) {
@@ -90,10 +105,14 @@ impl Runtime {
     }
 }
 
-pub struct FlagGuard<'a>(&'a AtomicBool);
+pub struct FlagGuard<'a> {
+    flag: &'a AtomicBool,
+    finished: &'a Notify,
+}
 
 impl Drop for FlagGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        self.flag.store(false, Ordering::SeqCst);
+        self.finished.notify_waiters();
     }
 }

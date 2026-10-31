@@ -341,7 +341,16 @@ async fn concurrent_turn_ends_start_one_pipeline() {
 }
 
 #[tokio::test]
-async fn compaction_waits_while_consolidation_runs() {
+async fn compaction_resumes_when_consolidation_finishes() {
+    deferred_compaction(true).await;
+}
+
+#[tokio::test]
+async fn deferred_compaction_stops_when_the_agent_becomes_busy() {
+    deferred_compaction(false).await;
+}
+
+async fn deferred_compaction(idle: bool) {
     let mut host = TestHost::start(extension());
     host.initialize().await;
     let branch = json!(conversation(3, 400_000));
@@ -367,12 +376,6 @@ async fn compaction_waits_while_consolidation_runs() {
     host.request(41, "event", event("agent_settled", quiet_ctx()))
         .await;
     assert_eq!(host.expect_response(41).await["result"], json!({}));
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    host.answer(
-        &held,
-        json!({ "message": {}, "text": "{\"observations\": []}" }),
-    )
-    .await;
     let methods = methods_until_status(&mut host, 42, &branch).await;
     assert!(
         !methods
@@ -380,18 +383,22 @@ async fn compaction_waits_while_consolidation_runs() {
             .any(|m| m == "ctx.compact" || m == "ctx.isIdle"),
         "{methods:?}"
     );
-
-    host.request(43, "event", event("agent_settled", quiet_ctx()))
-        .await;
+    host.answer(
+        &held,
+        json!({ "message": {}, "text": "{\"observations\": []}" }),
+    )
+    .await;
     host.drive(
         |method, _| match method {
             "session.getBranch" => branch.clone(),
-            "ctx.isIdle" => json!(true),
+            "ctx.isIdle" => json!(idle),
             _ => Value::Null,
         },
-        |m| m["method"] == "ctx.compact",
+        |m| m["method"] == if idle { "ctx.compact" } else { "ctx.isIdle" },
     )
     .await;
+    let later = methods_until_status(&mut host, 43, &branch).await;
+    assert!(!later.iter().any(|m| m == "ctx.compact"), "{later:?}");
     host.finish().await.unwrap();
 }
 
