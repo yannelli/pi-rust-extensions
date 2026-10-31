@@ -166,9 +166,8 @@ async fn deliver(host: &Host, message: CustomMessage) {
     }
 }
 
-/// Applies a verdict while the goal still waits on this audit and returns its message;
-/// `generation` is `None` for an inline verdict. Pause, clear, abort, resume, or a newer audit
-/// make the verdict stale.
+/// Applies a current verdict; a goal change or newer audit makes an older verdict stale.
+/// A `generation` of `None` applies an inline verdict.
 async fn apply_verdict(
     app: &App,
     host: &Host,
