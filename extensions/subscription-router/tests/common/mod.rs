@@ -77,8 +77,9 @@ impl TestHost {
         response["result"].clone()
     }
 
-    /// Answers every host request with `answer(method, params)` until the response to `id`.
-    /// Returns the response and the requests seen, in order.
+    /// Answers every host request with `answer(method, params)` until the response to `id`; an
+    /// answer `{ "$error": { code, message } }` is sent as an error. Returns the response and
+    /// the requests seen, in order.
     pub async fn serve_until(
         &mut self,
         id: u64,
@@ -96,7 +97,13 @@ impl TestHost {
             let params = message["params"].clone();
             if let Some(request_id) = message.get("id").cloned() {
                 let result = answer(&method, &params);
-                self.answer(&request_id, result).await;
+                match result.get("$error") {
+                    Some(error) => {
+                        let message = json!({ "jsonrpc": "2.0", "id": request_id, "error": error });
+                        self.send(message).await;
+                    }
+                    None => self.answer(&request_id, result).await,
+                }
             }
             seen.push((method, params));
         }

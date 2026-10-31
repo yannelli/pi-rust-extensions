@@ -124,7 +124,11 @@ pub async fn login(
         }
         Err(err) if err.code() == code::METHOD_NOT_FOUND => {
             let _ = host.unregister_provider(&account.provider).await;
-            return own_login(host, state, family, slot).await.map(Some);
+            let result = own_login(host, state, family, slot).await;
+            if result.is_err() {
+                restore(host, &account.provider, previous).await;
+            }
+            return result.map(Some);
         }
         Err(err) => {
             restore(host, &account.provider, previous).await;
