@@ -58,6 +58,42 @@ async fn supervised_commands_preserve_output_input_and_exit_code() {
 }
 
 #[tokio::test]
+async fn watcher_cleanup_does_not_write_to_command_stderr() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = Temp::new();
+    let cat = temp.0.join("cat");
+    let ready = temp.0.join("ready");
+    std::fs::write(
+        &cat,
+        "#!/bin/sh\nprintf watcher-diagnostic >&2\nprintf ready > \"$SSH_WATCHER_READY\"\nexec /bin/cat \"$@\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&cat, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let script = format!(
+        "while [ ! -f {} ]; do sleep 0.01; done; printf out; printf err >&2; exit 7",
+        command::quote(ready.to_str().unwrap())
+    );
+    let mut command = local(&script);
+    command.env("SSH_WATCHER_READY", &ready).env(
+        "PATH",
+        format!(
+            "{}:{}",
+            temp.0.display(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    );
+    let output = process::run_remote(command, None, 5, CancellationToken::new(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        (output.stdout.as_str(), output.stderr.as_str()),
+        ("out", "err")
+    );
+    assert_eq!(output.code, Some(7));
+}
+
+#[tokio::test]
 async fn timeout_and_cancel_stop_remote_grandchildren() {
     for cancel in [false, true] {
         let temp = Temp::new();
