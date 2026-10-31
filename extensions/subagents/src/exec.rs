@@ -120,10 +120,7 @@ async fn collect_stderr(stderr: impl AsyncReadExt + Unpin, runs: &Runs, id: &str
 async fn stop(child: &mut Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
-        let _ = std::process::Command::new("kill")
-            .args(["-TERM", &format!("-{pid}")])
-            .stderr(Stdio::null())
-            .status();
+        let _ = group_signal_command("-TERM", pid).status();
     }
     if tokio::time::timeout(KILL_GRACE, child.wait())
         .await
@@ -131,11 +128,34 @@ async fn stop(child: &mut Child) {
     {
         #[cfg(unix)]
         if let Some(pid) = child.id() {
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", &format!("-{pid}")])
-                .stderr(Stdio::null())
-                .status();
+            let _ = group_signal_command("-KILL", pid).status();
         }
         let _ = child.kill().await;
+    }
+}
+
+#[cfg(unix)]
+fn group_signal_command(signal: &str, pid: u32) -> std::process::Command {
+    let mut command = std::process::Command::new("kill");
+    command
+        .args([signal, "--", &format!("-{pid}")])
+        .stderr(Stdio::null());
+    command
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::group_signal_command;
+
+    #[test]
+    fn process_group_signals_terminate_option_parsing() {
+        for signal in ["-TERM", "-KILL"] {
+            for pid in [42, 1_439_999, 2_147_483_000, i32::MAX as u32] {
+                let command = group_signal_command(signal, pid);
+                assert_eq!(command.get_program(), "kill");
+                let args: Vec<_> = command.get_args().collect();
+                assert_eq!(args, [signal, "--", &format!("-{pid}")]);
+            }
+        }
     }
 }
