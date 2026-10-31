@@ -793,7 +793,9 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "pi-ext-background-tasks",
  "pi-ext-e2e",
+ "pi-ext-goal",
  "pi-ext-sdk",
  "regex",
  "serde",

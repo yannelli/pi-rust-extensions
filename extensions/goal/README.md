@@ -1,6 +1,6 @@
 # pi-ext-goal
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-10-31.
 
 Persistent goals for pi. This is a Rust port of the `pi-goal-x` package (v0.34.1). It has guided drafting, a task tree, autonomous continuation turns, and a completion auditor. The tool names, the parameter names, and the command names are the same as upstream, so prompts written for pi-goal-x keep working. Run it as `pi-rust-ext goal`.
 
@@ -32,6 +32,10 @@ Tool profile: on each `before_agent_start`, the extension puts the profile tools
 - After a goal stops in a turn, `tool_call` blocks all tools except `get_goal` until the next turn.
 - The `pi-goal:wake` event channel (`{ goalId? }`) ends a wait at once.
 - The widget `goal` above the editor shows the status, the time, the tokens, and the open tasks. The status key `goal` shows a draft or an unfocused goal.
+
+## Compactor active work
+
+The extension publishes the focused open goal as the `[Active Work]` block `goal` of the compactor (channel `compactor:active-work`): objective, status, the blocked reason, a wait, the current task, and up to 8 open tasks. A draft shows as "drafting a new goal". A complete goal, or no focused goal, removes the block. It publishes on each change, also without a UI, and again for each `compactor:active-work:sync` request.
 
 ## Settings
 

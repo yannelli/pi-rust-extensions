@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use pi_ext_sdk::prelude::*;
 
 pub mod actions;
+pub mod active_work;
 pub mod agent;
 mod agents_edit;
 mod agents_menu;
@@ -30,6 +31,7 @@ pub fn extension() -> Extension {
     let command_app = app.clone();
     let prompt_app = app.clone();
     let surface_app = app.clone();
+    let sync_app = app.clone();
     let shutdown_app = app;
     Extension::new("subagents")
         .tool(tool::spec(), move |params: tool::Params, ctx: ToolCtx| {
@@ -61,6 +63,7 @@ pub fn extension() -> Extension {
                 Ok(())
             }
         })
+        .on_start(move |host: Host| active_work::serve(sync_app.clone(), host))
         .on_shutdown(move |_host: Host| {
             let app = shutdown_app.clone();
             async move {

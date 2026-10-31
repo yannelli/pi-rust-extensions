@@ -16,6 +16,7 @@ use crate::trigger::AutoState;
 pub const COMPACT_THEN: &str = "unipi:compact-then";
 pub const COMPACTED_CHANNEL: &str = "unipi:compactor:compacted";
 pub const ACTIVE_WORK_CHANNEL: &str = "compactor:active-work";
+pub const ACTIVE_WORK_SYNC: &str = "compactor:active-work:sync";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueMode {
@@ -36,6 +37,8 @@ pub struct State {
     pub compact_then: Option<(String, QueueMode)>,
     pub auto: AutoState,
     pub active_work: BTreeMap<String, String>,
+    /// The session the `active_work` blocks belong to; blocks of another session are dropped.
+    pub active_session: Option<String>,
     pub recall_queries: u64,
     pub compactions: u64,
 }
@@ -51,6 +54,29 @@ impl State {
         self.pending_method = method;
         self.command_compaction = method.is_some() && from_command;
         self.pending_command = method.and(command.map(str::to_owned));
+    }
+
+    /// A new or switched session: drop the blocks of the previous one.
+    pub fn start_active_work(&mut self, session: Option<String>) {
+        self.active_work.clear();
+        self.active_session = session;
+    }
+
+    /// Keeps or removes block `id`; `false` when `session` is another session's.
+    pub fn set_active_work(&mut self, id: &str, text: &str, session: Option<&str>) -> bool {
+        let current = self.active_session.as_deref();
+        if session
+            .zip(current)
+            .is_some_and(|(sent, current)| sent != current)
+        {
+            return false;
+        }
+        if text.is_empty() {
+            self.active_work.remove(id);
+        } else {
+            self.active_work.insert(id.to_owned(), text.to_owned());
+        }
+        true
     }
 
     pub fn active_work(&self) -> Vec<(String, String)> {
@@ -182,20 +208,49 @@ pub fn spawn_compact(
     });
 }
 
-/// Keeps `[Active Work]` blocks from other extensions: `{ id, text }` on the `compactor:active-work` channel.
+/// Asks producers to send their current `[Active Work]` blocks again, for the current session.
+pub async fn request_active_work(host: &Host, shared: &Shared) {
+    let session = shared.lock().active_session.clone();
+    if let Err(err) = host
+        .emit(ACTIVE_WORK_SYNC, json!({ "sessionId": session }))
+        .await
+    {
+        pi_ext_sdk::debug!("cannot request active work: {err}");
+    }
+}
+
+/// Keeps `{ id, text, sessionId? }` blocks on `compactor:active-work`.
+/// Requests current blocks after subscribing to recover earlier messages.
 pub async fn watch_active_work(host: Host, shared: Shared) -> pi_ext_sdk::Result<()> {
     let mut subscription = host.subscribe(ACTIVE_WORK_CHANNEL).await?;
+    request_active_work(&host, &shared).await;
     while let Some(data) = subscription.recv().await {
         let Some(id) = data["id"].as_str() else {
             continue;
         };
         let text = data["text"].as_str().map(str::trim).unwrap_or_default();
-        let mut state = shared.lock();
-        if text.is_empty() {
-            state.active_work.remove(id);
-        } else {
-            state.active_work.insert(id.to_owned(), text.to_owned());
-        }
+        shared
+            .lock()
+            .set_active_work(id, text, data["sessionId"].as_str());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod active_work_tests {
+    use super::State;
+
+    #[test]
+    fn blocks_of_another_session_are_dropped_and_a_switch_clears_the_rest() {
+        let mut state = State::default();
+        state.start_active_work(Some("s1".into()));
+        assert!(state.set_active_work("goal", "Goal: a", Some("s1")));
+        assert!(state.set_active_work("tasks", "Tasks: b", None));
+        state.start_active_work(Some("s2".into()));
+        assert!(state.active_work().is_empty());
+        assert!(!state.set_active_work("goal", "Goal: a", Some("s1")));
+        assert!(state.set_active_work("goal", "Goal: c", Some("s2")));
+        assert!(state.set_active_work("goal", "", Some("s2")));
+        assert!(state.active_work().is_empty());
+    }
 }

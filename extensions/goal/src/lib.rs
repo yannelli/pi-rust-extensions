@@ -1,5 +1,6 @@
 //! Persistent goals for pi: drafting, a task tree, autonomous continuation, and a completion auditor.
 
+mod active_work;
 mod app;
 mod auditor;
 mod commands;
@@ -136,6 +137,8 @@ fn events(mut ext: Extension, app: app::App) -> Extension {
             scheduler::on_settled(&app, ev.host(), aborted).await
         }
     });
+    let sync_app = app.clone();
+    ext = ext.on_start(move |host: Host| active_work::serve(sync_app.clone(), host));
     ext.on_start(move |host: Host| {
         let app = app.clone();
         async move {

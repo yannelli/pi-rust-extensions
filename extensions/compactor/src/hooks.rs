@@ -93,10 +93,14 @@ pub async fn on_settled(ev: EventCtx, shared: Shared) -> Result<EventReply> {
     Ok(EventReply::none())
 }
 
-pub async fn on_session_start(shared: Shared) -> Result<EventReply> {
-    let mut state = shared.lock();
-    state.auto = Default::default();
-    state.set_pending(None, true, None);
-    state.compact_then = None;
+pub async fn on_session_start(ev: EventCtx, shared: Shared) -> Result<EventReply> {
+    {
+        let mut state = shared.lock();
+        state.auto = Default::default();
+        state.set_pending(None, true, None);
+        state.compact_then = None;
+        state.start_active_work(ev.snapshot().session_id.clone());
+    }
+    crate::state::request_active_work(ev.host(), &shared).await;
     Ok(EventReply::none())
 }

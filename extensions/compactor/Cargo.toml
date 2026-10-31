@@ -18,6 +18,8 @@ chrono.workspace = true
 
 [dev-dependencies]
 pi-ext-e2e = { path = "../../crates/pi-ext-e2e" }
+pi-ext-goal = { path = "../goal" }
+pi-ext-background-tasks = { path = "../background-tasks" }
 
 [lints]
 workspace = true

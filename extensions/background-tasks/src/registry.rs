@@ -25,6 +25,7 @@ pub struct StartOptions {
 #[derive(Default)]
 pub struct Registry {
     inner: Mutex<Inner>,
+    pub published: crate::active_work::Published,
     pub monitor_started: AtomicBool,
     widget: Mutex<WidgetMode>,
 }
