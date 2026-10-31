@@ -209,3 +209,135 @@ async fn slot_registration_and_message_end_failover() {
     );
     host.finish().await.unwrap();
 }
+
+/// `/router add` for Anthropic, with `auth.login` answering `login`.
+async fn add_anthropic(name: &str, login: Value) -> (Vec<(String, Value)>, std::path::PathBuf) {
+    let mock = MockHttp::start(vec![]).await;
+    let dir = agent_dir(name, None);
+    let mut host = host_for(&dir, &mock);
+    host.initialize(dir.to_str().unwrap()).await;
+    let run = json!({ "name": "router", "args": "add", "ctx": ctx(None) });
+    host.request(1, "command.run", run).await;
+    let (_, seen) = host
+        .serve_until(1, |method, params| match method {
+            "ui.select" => json!("Anthropic"),
+            "auth.login" => login.clone(),
+            _ => pi(method, params),
+        })
+        .await;
+    host.finish().await.unwrap();
+    (seen, dir)
+}
+
+#[tokio::test]
+async fn router_add_logs_in_through_pi_and_keeps_no_token() {
+    let (seen, dir) = add_anthropic("add-pi", json!(true)).await;
+    let register = seen
+        .iter()
+        .find(|(m, _)| m == "provider.register")
+        .expect("provider.register");
+    assert_eq!(register.1["name"], "anthropic-2");
+    assert_eq!(
+        register.1["config"]["oauth"],
+        json!({ "builtin": "anthropic", "name": "Anthropic #2" })
+    );
+    assert!(register.1["config"].get("apiKey").is_none());
+    let login = seen
+        .iter()
+        .find(|(m, _)| m == "auth.login")
+        .expect("auth.login");
+    assert_eq!(login.1, json!({ "provider": "anthropic-2" }));
+    let notice = seen.iter().find(|(m, _)| m == "ui.notify").expect("notice");
+    assert_eq!(
+        notice.1["message"],
+        "Added Anthropic #2 as provider anthropic-2."
+    );
+    let file = std::fs::read_to_string(dir.join("ext/subscription-router/accounts.json")).unwrap();
+    let file: Value = serde_json::from_str(&file).unwrap();
+    assert_eq!(file["accounts"]["anthropic-2"], json!({ "type": "pi" }));
+}
+
+#[tokio::test]
+async fn a_cancelled_pi_login_removes_the_new_slot() {
+    let (seen, dir) = add_anthropic("add-cancel", json!(false)).await;
+    let methods: Vec<&str> = seen.iter().map(|(m, _)| m.as_str()).collect();
+    let login = methods
+        .iter()
+        .position(|m| *m == "auth.login")
+        .expect("auth.login");
+    assert!(
+        methods[login..].contains(&"provider.unregister"),
+        "{methods:?}"
+    );
+    assert!(!methods.contains(&"ui.notify"), "{methods:?}");
+    assert!(!dir.join("ext/subscription-router/accounts.json").exists());
+}
+
+#[tokio::test]
+async fn a_cancelled_login_on_pi_without_auth_login_keeps_the_old_slot() {
+    let mock = MockHttp::start(vec![]).await;
+    let token = "sk-ant-oat01-legacy";
+    let accounts = json!({ "version": 1, "accounts": { "anthropic-2": {
+        "type": "oauth", "access": token, "refresh": "r", "expires": now_ms() + 3_600_000 } } });
+    let dir = agent_dir("relogin-old-pi", Some(accounts.clone()));
+    let mut host = host_for(&dir, &mock);
+    host.initialize(dir.to_str().unwrap()).await;
+    let run = json!({ "name": "router", "args": "accounts", "ctx": ctx(None) });
+    host.request(1, "command.run", run).await;
+    let (mut lists, mut menus) = (0, 0);
+    let (_, seen) = host
+        .serve_until(1, |method, params| {
+            match (method, params["title"].as_str()) {
+                ("ui.select", Some("Accounts")) => {
+                    lists += 1;
+                    let options = params["options"].as_array().unwrap();
+                    let slot = options
+                        .iter()
+                        .find(|o| o.as_str().unwrap().contains("Anthropic #2"));
+                    if lists == 1 {
+                        slot.cloned().unwrap()
+                    } else {
+                        Value::Null
+                    }
+                }
+                ("ui.select", _) => {
+                    menus += 1;
+                    if menus == 1 {
+                        json!("Log in again")
+                    } else {
+                        Value::Null
+                    }
+                }
+                ("auth.login", _) => {
+                    json!({ "$error": { "code": -32601, "message": "Unknown method auth.login" } })
+                }
+                ("ui.input", _) => Value::Null,
+                _ => pi(method, params),
+            }
+        })
+        .await;
+    host.finish().await.unwrap();
+    let methods: Vec<&str> = seen.iter().map(|(m, _)| m.as_str()).collect();
+    let login = methods
+        .iter()
+        .position(|m| *m == "auth.login")
+        .expect("auth.login");
+    assert!(
+        methods[login..].contains(&"ui.input"),
+        "the router's own login did not run: {methods:?}"
+    );
+    let last = seen
+        .iter()
+        .rev()
+        .find(|(m, _)| m == "provider.register")
+        .expect("provider.register");
+    assert_eq!(last.1["name"], "anthropic-2");
+    assert_eq!(
+        last.1["config"]["apiKey"], token,
+        "the old registration was not restored"
+    );
+    assert!(last.1["config"].get("oauth").is_none());
+    let file = std::fs::read_to_string(dir.join("ext/subscription-router/accounts.json")).unwrap();
+    let file: Value = serde_json::from_str(&file).unwrap();
+    assert_eq!(file["accounts"]["anthropic-2"]["access"], token);
+}

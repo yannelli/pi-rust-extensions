@@ -44,6 +44,11 @@ pub(crate) async fn handle(
         "command.complete" => complete(state, params)?,
         "autocomplete.suggest" => autocomplete(state, params)?,
         "virtualModel.route" => route(state, params)?,
+        "tool.prepare" => prepare(state, params)?,
+        "render.toolCall" => render(state, params, "toolName", |r| &r.call_renderers)?,
+        "render.toolResult" => render(state, params, "toolName", |r| &r.result_renderers)?,
+        "render.message" => render(state, params, "customType", |r| &r.message_renderers)?,
+        "render.entry" => render(state, params, "customType", |r| &r.entry_renderers)?,
         other => return Err(Error::method_not_found(other)),
     };
     guarded(fut, token).await
@@ -238,6 +243,41 @@ fn route(state: &State, params: Value) -> Result<BoxFuture<Value>> {
     };
     let route = route.ok_or_else(missing)?;
     Ok(route(request, state.host.clone()))
+}
+
+fn prepare(state: &State, params: Value) -> Result<BoxFuture<Value>> {
+    let name: String = field(&params, "name")?;
+    let registry = state.host.inner.registry.read().expect("registry lock");
+    let prepare = crate::registry::find(&registry.prepare, &name);
+    drop(registry);
+    let args = params.get("args").cloned().unwrap_or(Value::Null);
+    let Some(prepare) = prepare else {
+        return Ok(Box::pin(std::future::ready(Ok(args))));
+    };
+    Ok(prepare(args, state.host.clone()))
+}
+
+/// A `render.*` request: the renderer of the `key` field answers `{ lines }`, or `null`.
+fn render<T: DeserializeOwned + Send + 'static>(
+    state: &State,
+    params: Value,
+    key: &str,
+    list: impl Fn(&crate::registry::Registry) -> &Vec<(String, crate::handler::RenderFn<T>)>,
+) -> Result<BoxFuture<Value>> {
+    let name: String = field(&params, key)?;
+    let registry = state.host.inner.registry.read().expect("registry lock");
+    let renderer = crate::registry::find(list(&registry), &name);
+    drop(registry);
+    let Some(renderer) = renderer else {
+        return Ok(Box::pin(std::future::ready(Ok(Value::Null))));
+    };
+    let request: T = serde_json::from_value(params).map_err(Error::invalid_params)?;
+    let lines = renderer(request, state.host.clone());
+    Ok(Box::pin(async move {
+        Ok(lines
+            .await?
+            .map_or(Value::Null, |lines| serde_json::json!({ "lines": lines })))
+    }))
 }
 
 /// Runs a handler in its own task: panics become -32603, and a cancelled handler that

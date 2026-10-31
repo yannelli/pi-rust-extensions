@@ -16,6 +16,18 @@ pub struct ToolSpec {
     pub prompt_guidelines: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_mode: Option<String>,
+    /// Set by [`crate::Extension::prepare_arguments`]: pi sends `tool.prepare` before validation.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub prepare_arguments: bool,
+    /// Set by [`crate::Extension::render_tool_call`].
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub render_call: bool,
+    /// Set by [`crate::Extension::render_tool_result`].
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub render_result: bool,
+    /// `"self"` when the renderers draw their own frame, `"default"` for pi's frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub render_shell: Option<String>,
 }
 
 impl ToolSpec {
@@ -28,6 +40,10 @@ impl ToolSpec {
             prompt_snippet: None,
             prompt_guidelines: Vec::new(),
             execution_mode: None,
+            prepare_arguments: false,
+            render_call: false,
+            render_result: false,
+            render_shell: None,
         }
     }
 
@@ -55,6 +71,40 @@ impl ToolSpec {
     pub fn execution_mode(mut self, mode: impl Into<String>) -> Self {
         self.execution_mode = Some(mode.into());
         self
+    }
+
+    /// The custom renderers draw the whole row; pi draws no frame around it.
+    pub fn self_shell(mut self) -> Self {
+        self.render_shell = Some("self".into());
+        self
+    }
+}
+
+/// `oauth` of a `provider.register` config: a login flow of pi under the provider's own id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OAuthSpec {
+    /// The pi provider id of the flow, for example `anthropic` or `openai-codex`.
+    pub builtin: String,
+    /// The name `/login` lists; pi uses the provider id when it is absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl OAuthSpec {
+    pub fn builtin(provider: impl Into<String>) -> Self {
+        Self {
+            builtin: provider.into(),
+            name: None,
+        }
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn to_value(&self) -> Value {
+        serde_json::to_value(self).unwrap_or(Value::Null)
     }
 }
 

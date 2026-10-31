@@ -36,7 +36,7 @@ pub async fn add(host: &Host, state: &Arc<State>) -> Result<()> {
     let family = Family::ALL[index];
     let slot = state.accounts.next_slot(family);
     match crate::login::login(host, state, family, slot).await {
-        Ok(account) => {
+        Ok(Some(account)) => {
             let message = format!(
                 "Added {} as provider {}.",
                 family.slot_name(slot),
@@ -44,6 +44,7 @@ pub async fn add(host: &Host, state: &Arc<State>) -> Result<()> {
             );
             host.notify_info(message).await
         }
+        Ok(None) => Ok(()),
         Err(err) => {
             host.notify_error(format!("{} login failed: {err}", family.slot_name(slot)))
                 .await
@@ -60,10 +61,11 @@ async fn relogin(host: &Host, state: &Arc<State>, family: Family, slot: u32) -> 
         return host.notify_info(message).await;
     }
     match crate::login::login(host, state, family, slot).await {
-        Ok(_) => {
+        Ok(Some(_)) => {
             host.notify_info(format!("Logged in to {}.", family.slot_name(slot)))
                 .await
         }
+        Ok(None) => Ok(()),
         Err(err) => {
             host.notify_error(format!("{} login failed: {err}", family.slot_name(slot)))
                 .await
@@ -81,7 +83,10 @@ async fn remove(host: &Host, state: &Arc<State>, family: Family, slot: u32) -> R
         host.notify_info(message).await?;
         return Ok(false);
     }
-    let message = format!("Unregister {name} and delete its stored credentials?");
+    let message = format!(
+        "Unregister {name} and delete its stored credentials? pi keeps a login it stored until /logout {}.",
+        family.provider(slot)
+    );
     if !host.confirm("Remove account", &message).await? {
         return Ok(false);
     }

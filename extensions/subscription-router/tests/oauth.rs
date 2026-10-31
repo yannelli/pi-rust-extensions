@@ -232,11 +232,11 @@ async fn account_store_writes_private_file_and_numbers_slots() {
         account_id: Some("x".into()),
     };
     store
-        .upsert(Account::new(Family::Codex, 2, credential.clone()))
+        .upsert(Account::new(Family::Codex, 2, Some(credential.clone())))
         .await
         .unwrap();
     store
-        .upsert(Account::new(Family::Anthropic, 2, credential))
+        .upsert(Account::new(Family::Anthropic, 2, Some(credential)))
         .await
         .unwrap();
     assert_eq!(store.next_slot(Family::Codex), 3);

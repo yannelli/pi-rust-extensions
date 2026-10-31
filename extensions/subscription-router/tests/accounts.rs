@@ -51,7 +51,7 @@ async fn corrupt_accounts_file_is_not_overwritten() {
     std::fs::write(&path, corrupt).unwrap();
     let store = AccountStore::load(path.clone());
     assert!(store.list().is_empty());
-    let account = Account::new(Family::Codex, 2, credential("r", now_ms()));
+    let account = Account::new(Family::Codex, 2, Some(credential("r", now_ms())));
     let error = store.upsert(account).await.unwrap_err();
     assert!(error.to_string().contains("fix or remove it"), "{error}");
     assert!(store.remove("openai-codex-2").await.is_err());
@@ -69,7 +69,7 @@ async fn one_bad_entry_keeps_the_others() {
     let store = AccountStore::load(path.clone());
     let providers: Vec<String> = store.list().into_iter().map(|a| a.provider).collect();
     assert_eq!(providers, ["anthropic-2", "openai-codex-2"]);
-    let account = Account::new(Family::Codex, 4, credential("r4", now_ms()));
+    let account = Account::new(Family::Codex, 4, Some(credential("r4", now_ms())));
     store.upsert(account).await.unwrap();
     let raw: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(raw["accounts"]["openai-codex-3"], bad);
@@ -82,7 +82,7 @@ async fn one_bad_entry_keeps_the_others() {
 async fn file_lock_serializes_concurrent_refreshers() {
     let dir = common::temp_dir("refresh-lock");
     let path = dir.join("accounts.json");
-    let stale = Account::new(Family::Anthropic, 2, credential("r1", now_ms()));
+    let stale = Account::new(Family::Anthropic, 2, Some(credential("r1", now_ms())));
     AccountStore::load(path.clone())
         .upsert(stale.clone())
         .await
@@ -101,12 +101,13 @@ async fn file_lock_serializes_concurrent_refreshers() {
             let refreshed = store
                 .refresh(&stale, |current| async move {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    anthropic::refresh(&client, &url, &current.credential.refresh).await
+                    anthropic::refresh(&client, &url, &current.credential.as_ref().unwrap().refresh)
+                        .await
                 })
                 .await
                 .unwrap();
             assert!(refreshed.save_error.is_none());
-            refreshed.account.credential.refresh
+            refreshed.account.credential.unwrap().refresh
         })
     };
     let first = refresher(AccountStore::load(path.clone()));
@@ -115,6 +116,6 @@ async fn file_lock_serializes_concurrent_refreshers() {
     assert_eq!((first.as_str(), second.as_str()), ("r2", "r2"));
     assert_eq!(mock.requests().len(), 1);
     let stored = AccountStore::load(path).get("anthropic-2").unwrap();
-    assert_eq!(stored.credential.refresh, "r2");
+    assert_eq!(stored.credential.unwrap().refresh, "r2");
     assert!(!dir.join("accounts.json.lock").exists());
 }

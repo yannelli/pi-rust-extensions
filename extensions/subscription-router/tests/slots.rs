@@ -145,7 +145,7 @@ fn slot_provider_config_copies_base_models() {
         json!({ "id": "gpt-5.5", "name": "GPT-5.5", "provider": "openai-codex", "api": "openai-codex-responses", "baseUrl": "https://chatgpt.com/backend-api", "contextWindow": 400000 }),
         json!({ "id": "gpt-5.5-mini", "provider": "openai-codex", "api": "openai-codex-responses", "baseUrl": "https://chatgpt.com/backend-api" }),
     ];
-    let config = provider_config(Family::Codex, 3, &base, "token-3").unwrap();
+    let config = provider_config(Family::Codex, 3, &base, Some("token-3")).unwrap();
     assert_eq!(config["name"], "OpenAI Codex #3");
     assert_eq!(config["api"], "openai-codex-responses");
     assert_eq!(config["baseUrl"], "https://chatgpt.com/backend-api");
@@ -153,5 +153,19 @@ fn slot_provider_config_copies_base_models() {
     assert_eq!(config["models"][1]["provider"], "openai-codex-3");
     assert_eq!(config["models"][0]["contextWindow"], 400000);
     assert!(config.get("oauth").is_none());
-    assert!(provider_config(Family::Codex, 2, &[], "t").is_none());
+    assert!(provider_config(Family::Codex, 2, &[], Some("t")).is_none());
+}
+
+#[test]
+fn a_pi_owned_slot_reuses_the_login_of_pi() {
+    let base = vec![
+        json!({ "id": "claude-sonnet-5", "provider": "anthropic", "api": "anthropic-messages", "baseUrl": "https://api.anthropic.com" }),
+    ];
+    let config = provider_config(Family::Anthropic, 2, &base, None).unwrap();
+    assert_eq!(
+        config["oauth"],
+        json!({ "builtin": "anthropic", "name": "Anthropic #2" })
+    );
+    assert!(config.get("apiKey").is_none());
+    assert_eq!(config["models"][0]["provider"], "anthropic-2");
 }

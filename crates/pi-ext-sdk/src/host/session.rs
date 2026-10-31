@@ -174,6 +174,34 @@ impl Host {
     pub async fn all_settings(&self) -> Result<Value> {
         self.call("settings.get", json!({})).await
     }
+
+    /// Writes `value` as the top-level key `namespace` of the `scope` settings file, keeping the
+    /// other keys; `Value::Null` removes it. pi refuses its own keys (-32602) and the project
+    /// scope of an untrusted project (-32003).
+    pub async fn set_settings(
+        &self,
+        namespace: &str,
+        value: impl serde::Serialize,
+        scope: crate::render::SettingsScope,
+    ) -> Result<()> {
+        let value = serde_json::to_value(value)?;
+        let params = json!({ "namespace": namespace, "value": value, "scope": scope });
+        self.call("settings.set", params).await.map(drop)
+    }
+
+    /// The key text of app keybindings, for example `"app.tools.expand"` to `"ctrl+o"` (upstream
+    /// `keyText` of renderers). Every app keybinding when `ids` is empty.
+    pub async fn keybindings(
+        &self,
+        ids: &[&str],
+    ) -> Result<std::collections::BTreeMap<String, String>> {
+        let params = if ids.is_empty() {
+            json!({})
+        } else {
+            json!({ "ids": ids })
+        };
+        self.call_as("keybindings.get", params).await
+    }
 }
 
 pub(crate) fn custom_data<T: DeserializeOwned>(entries: Vec<Value>, custom_type: &str) -> Vec<T> {

@@ -17,6 +17,7 @@ pub mod paths;
 mod peer;
 mod protocol;
 mod registry;
+pub mod render;
 mod reply;
 mod server;
 mod snapshot;
@@ -37,10 +38,13 @@ pub use host::{
 pub use keys::Key;
 pub use panel::{KeyInput, Panel, PanelBuilder, PanelEvent};
 pub use protocol::PROTOCOL_VERSION;
+pub use render::{
+    EntryRender, MessageRender, SettingsScope, ToolCallRender, ToolRenderContext, ToolResultRender,
+};
 pub use reply::{EventReply, ToolResult, content, entry};
 pub use snapshot::{ContextUsage, InitParams, Model, ScopedModel, Snapshot};
 pub use spec::{
-    AutocompleteRequest, CommandSpec, CompletionItem, FlagSpec, FlagType, RouteRequest,
+    AutocompleteRequest, CommandSpec, CompletionItem, FlagSpec, FlagType, OAuthSpec, RouteRequest,
     ShortcutSpec, Suggestions, ToolSpec,
 };
 pub use surface::{SurfaceEvent, SurfaceEvents};

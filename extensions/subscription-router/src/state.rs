@@ -135,7 +135,7 @@ impl State {
     }
 }
 
-/// Bearer tokens: the stored credential of an extension slot, else pi's auth for the provider.
+/// Bearer tokens: the router's own token of an older slot, else pi's auth for the provider.
 pub struct HostTokens<'a> {
     pub host: &'a Host,
     pub state: &'a State,
@@ -144,8 +144,9 @@ pub struct HostTokens<'a> {
 impl Tokens for HostTokens<'_> {
     fn token<'a>(&'a self, provider: &'a str) -> BoxFuture<'a, Option<String>> {
         Box::pin(async move {
-            if let Some(account) = self.state.accounts.get(provider) {
-                return Some(account.credential.access);
+            let own = self.state.accounts.get(provider).and_then(|a| a.credential);
+            if let Some(credential) = own {
+                return Some(credential.access);
             }
             self.host
                 .provider_auth(provider)

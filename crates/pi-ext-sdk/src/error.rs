@@ -13,6 +13,7 @@ pub mod code {
     pub const CANCELLED: i64 = -32800;
     pub const NO_UI: i64 = -32001;
     pub const NO_CONTEXT: i64 = -32002;
+    pub const NOT_TRUSTED: i64 = -32003;
 }
 
 /// A JSON-RPC error. `?` converts any `std::error::Error` or `anyhow::Error` into

@@ -25,6 +25,9 @@ pub(crate) type RouteFn = Arc<dyn Fn(RouteRequest, Host) -> BoxFuture<Value> + S
 pub(crate) type HostFn = Arc<dyn Fn(Host) -> BoxFuture<()> + Send + Sync>;
 pub(crate) type SurfaceFn = Arc<dyn Fn(SurfaceEvent, Host) -> BoxFuture<()> + Send + Sync>;
 pub(crate) type FooterFn = Arc<dyn Fn(Value, Host) -> BoxFuture<()> + Send + Sync>;
+pub(crate) type PrepareFn = Arc<dyn Fn(Value, Host) -> BoxFuture<Value> + Send + Sync>;
+/// A renderer: the lines for one request, or `None` for no lines.
+pub(crate) type RenderFn<T> = Arc<dyn Fn(T, Host) -> BoxFuture<Option<Vec<String>>> + Send + Sync>;
 
 pub(crate) fn tool<A, R, F, Fut>(f: F) -> ToolFn
 where
