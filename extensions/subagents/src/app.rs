@@ -17,6 +17,7 @@ pub const WIDGET: &str = "subagents";
 #[derive(Clone, Default)]
 pub struct App {
     pub runs: Runs,
+    pub published: crate::active_work::Published,
     widget_ticking: Arc<AtomicBool>,
     widget_shown: Arc<AtomicBool>,
     warned_untrusted: Arc<AtomicBool>,

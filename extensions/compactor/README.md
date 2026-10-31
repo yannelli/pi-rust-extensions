@@ -1,6 +1,6 @@
 # compactor
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-10-31.
 
 Rust port of `@pi-unipi/compactor` 3.0.0 for pi-rust (`pi-rust-ext compactor`). The extension replaces pi's compaction summary with one of two methods:
 
@@ -39,7 +39,7 @@ An `overflow` compaction goes to pi's summarizer before any method is chosen. Wh
 
 `session_before_compact`, `session_compact` (appends a `unipi-compaction` card entry when `notify` is on or a command ran), `context` (removes the old `compactor-auto-continue` and `unipi-compactor-resume` custom messages), `input` (origin marks for extension-sent user text, `/unipi:compact-then`), `turn_end` (the `percent` trigger and steered compact-then as boundary compaction drafts), `agent_end` and `agent_settled` (follow-up compact-then; a steered compact-then still queued is cancelled), `session_start` (state reset).
 
-Other extensions can add `[Active Work]` blocks: emit `{ "id": "<id>", "text": "<text>" }` on the `pi.events` channel `compactor:active-work`. Empty text removes the block. After each compaction the extension emits `unipi:compactor:compacted` with `{ method, summarized, kept, tokensBefore, tokensAfter, tokensSaved }`.
+Other extensions can add `[Active Work]` blocks: emit `{ "id": "<id>", "text": "<text>", "sessionId"?: "<session id>" }` on the `pi.events` channel `compactor:active-work`. Empty text removes the block. On each `session_start`, and after it subscribes, the extension drops all blocks and emits `compactor:active-work:sync` `{ sessionId }`; producers answer with their current block. A block whose `sessionId` is not the current session is ignored. The goal (`goal`), background-tasks (`background-tasks`), and subagents (`subagents`) extensions publish blocks. After each compaction the extension emits `unipi:compactor:compacted` with `{ method, summarized, kept, tokensBefore, tokensAfter, tokensSaved }`.
 
 ## Config
 
@@ -69,6 +69,6 @@ Legacy keys: `method: "jev"` reads as `vcc`. `overrideDefaultCompaction: false` 
 - Origin marks (`compactor-origin`) use a 64-bit FNV-1a key. Marks that upstream wrote (SHA-256) do not match, so the known-pattern filter handles those sessions.
 - Recall hits show the session entry index (`#N`), which `expand` and drill-down accept. Upstream shows the block index. `expand` returns all blocks of an entry. `scope: "all"` searches `session.getEntries` (all branches).
 - Regex queries use the Rust `regex` crate: no lookaround or backreferences (such queries search as literal text), and no search time limit is necessary.
-- Active work comes from the `compactor:active-work` channel. Upstream reads goal, ralph, and kanboard providers from `@pi-unipi/core`. No marketplace extension publishes on that channel, so `[Active Work]` stays empty until one emits `{ "id": "<id>", "text": "<text>" }` there (an empty `text` removes the block).
+- Active work comes from the `compactor:active-work` channel. Upstream reads goal, ralph, and kanboard providers from `@pi-unipi/core`. Here the goal, background-tasks, and subagents extensions publish on that channel; there is no ralph or kanboard extension.
 - A steered `/unipi:compact-then` that is still queued when the run ends is cancelled with a notice; it does not carry over to the next run.
 - Not available over the native protocol: the `unipi-compaction` entry renderer (the card entry is data only), the info-screen group, the unipi bus `MODULE_READY` event, the `compactor` skill directory, and the `tool_result` diff width clamp (the extension does not know the terminal width). The `/unipi:compact-then` autocomplete item shows only after `/unipi:compact-t` or `/compact-t`, because a native suggestion list replaces pi's list.

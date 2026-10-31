@@ -1,6 +1,6 @@
 # background-tasks
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-10-31.
 
 Durable background shell jobs for pi, ported from the core of `pi-background-tasks` (v2.6.10). The agent starts long-running commands (tests, builds, dev servers, watchers) without blocking a turn. A notification reports the end state. Jobs keep running across `/reload`. Fusion, delegated agents, attested runs and Anthropic attribution are not ported.
 
@@ -32,6 +32,10 @@ When a task completes, fails, times out or is lost, the extension sends a `backg
 | `/bg-clear` | Removes finished tasks and their output files. |
 
 The footer status `background-tasks` shows counts by state (`bg: 1 running, 2 completed`). A widget below the editor lists up to 3 running tasks with elapsed time. With more running tasks, it shows one line with the count and `/tasks`. `/tasks widget` changes between one line and a list of up to 20 tasks; `/tasks widget collapse`, `expand`, or `auto` sets the view.
+
+## Compactor active work
+
+The extension publishes its running tasks as the `[Active Work]` block `background-tasks` of the compactor (channel `compactor:active-work`): one line with id, name, and command (or description) per task, at most 10. The text has no times, so a running task sends no updates. A finished or killed task leaves the block; no running task removes it. It publishes on each change, also without a UI, and again for each `compactor:active-work:sync` request.
 
 ## Reload and shutdown
 

@@ -54,6 +54,11 @@ pub fn start(
     let id = app
         .runs
         .start(&job.agent.name, &job.task, background, cancel.clone());
+    let (publish_app, publish_host) = (app.clone(), host.clone());
+    tokio::spawn(
+        async move { crate::active_work::publish(&publish_app, &publish_host, false).await },
+    );
+    let (finish_app, finish_host) = (app.clone(), host.clone());
     let spec = command::build(ChildInput {
         agent: &job.agent,
         task: &job.task,
@@ -110,6 +115,7 @@ pub fn start(
             .map(|run| run.progress.output())
             .unwrap_or_default();
         runs.finish(&run_id, status, keep);
+        crate::active_work::publish(&finish_app, &finish_host, false).await;
         let _ = events_tx.send(scope(status.as_str(), Value::Null));
         let _ = events_tx.send((
             STOP_CHANNEL,

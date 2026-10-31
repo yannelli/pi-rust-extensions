@@ -147,9 +147,14 @@ impl Inner {
 #[derive(Clone, Default)]
 pub struct App {
     inner: Arc<Mutex<Inner>>,
+    published: crate::active_work::Published,
 }
 
 impl App {
+    pub fn published(&self) -> &crate::active_work::Published {
+        &self.published
+    }
+
     pub fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner
             .lock()

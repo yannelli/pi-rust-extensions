@@ -69,7 +69,7 @@ pub fn extension() -> Extension {
         .command("unipi:compact-doctor", "Check compaction settings and leftovers", |_, ctx| commands::doctor_command(ctx))
         .command("unipi:compact-help", "Show compactor help", |_, ctx| commands::help_command(ctx))
         .autocomplete(&["/"], |request, _host| commands::compact_then_suggestions(request))
-        .on("session_start", move |_| hooks::on_session_start(s4.clone()))
+        .on("session_start", move |ev| hooks::on_session_start(ev, s4.clone()))
         .on("context", hooks::on_context)
         .on("input", move |ev| hooks::on_input(ev, s5.clone()))
         .on("session_before_compact", move |ev| compact::on_before_compact(ev, s6.clone()))

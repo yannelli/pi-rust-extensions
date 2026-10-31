@@ -98,6 +98,7 @@ fn view(inner: &Inner, width: usize) -> View {
 }
 
 pub async fn refresh(app: &App, host: &Host) -> Result<()> {
+    crate::active_work::publish(app, host, false).await;
     if !host.has_ui() {
         return Ok(());
     }

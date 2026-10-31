@@ -1,6 +1,6 @@
 # pi-ext-subagents
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-10-31.
 
 Runs tasks in child pi processes. Three built-in agents: `explore` (read-only search), `build` (full tools), and `advisor` (read-only review with a recommendation). You can change them and add your own. Run it with `pi-rust-ext subagents`. Simplified from `pi-subagents`.
 
@@ -53,6 +53,10 @@ You review code...
 - `/agents list`, or `/agents` without UI: shows the agent list as a notification.
 
 The system prompt section `subagents` lists the agents when the `subagent` tool is active.
+
+## Compactor active work
+
+The extension publishes its running runs as the `[Active Work]` block `subagents` of the compactor (channel `compactor:active-work`): one line with run id, agent, and the first line of the task per run, at most 10. A finished, failed, or cancelled run leaves the block; no running run removes it. It publishes when a run starts or ends, and again for each `compactor:active-work:sync` request.
 
 ## Config
 

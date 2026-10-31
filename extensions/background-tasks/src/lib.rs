@@ -1,5 +1,6 @@
 //! Durable background shell jobs: `bg_run`, `bg_status`, `bg_logs`, `bg_kill`, `/tasks`.
 
+mod active_work;
 mod command;
 mod identity;
 mod panel;
@@ -56,6 +57,7 @@ pub fn extension() -> Extension {
     let ext = Extension::new("background-tasks");
     let ext = tools::register(ext, registry.clone());
     let ext = command::register(ext, registry.clone());
+    let sync = registry.clone();
     let (start, shutdown, surface) = (registry.clone(), registry.clone(), registry);
     ext.on("before_agent_start", |_ev: EventCtx| async move {
         Ok(EventReply::section(POLICY_SECTION, POLICY))
@@ -79,6 +81,7 @@ pub fn extension() -> Extension {
             ui::refresh(&host, &registry).await
         }
     })
+    .on_start(move |host: Host| active_work::serve(host, sync.clone()))
     .on_surface(move |event: SurfaceEvent, host: Host| {
         let registry = surface.clone();
         async move {

@@ -190,6 +190,7 @@ pub fn notification_text(task: &Task) -> String {
 
 /// Redraws the footer status and the widget.
 pub async fn refresh(host: &Host, registry: &Registry) -> Result<()> {
+    crate::active_work::publish(host, registry, false).await;
     if !host.has_ui() {
         return Ok(());
     }
