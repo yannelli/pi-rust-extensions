@@ -60,9 +60,10 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
 
 ## Mode for calls no rule decides
 
-- Claude `defaultMode` in managed settings always applies. Otherwise a pi file sets `"defaultMode": "claude"` (the Claude settings by precedence: local, project, user) or a mode name. Without it, pi decides the calls that no rule matches, and the panel shows the Claude mode as not applied.
+- Claude `defaultMode` applies to the calls no rule decides: managed settings first, then local, project, and user settings. A pi file with a mode name in `"defaultMode"` sets the mode for pi instead; `"defaultMode": "pi"` turns the Claude mode off and leaves those calls to pi. Managed settings apply in both cases. The panel shows the mode and its source.
 - `default` (also `manual`, and `auto`, because pi has no classifier) asks before `edit` and `write`, Bash commands outside Claude's read-only set (`ls`, `cat`, `echo`, `pwd`, `head`, `tail`, `grep`, `find` without actions, `wc`, `which`, `diff`, `stat`, `du`, `cd`, read-only `git`), Bash writes and reads outside the working directories, fetches, `web_search`, MCP tools, and reads outside the working directories. The working directories are the cwd and Claude `additionalDirectories`.
-- `acceptEdits` also runs `edit`, `write`, Bash writes, and `mkdir`, `touch`, `mv`, and `cp` inside the working directories. `plan` denies `edit` and `write`. `dontAsk` denies every call that would ask, including calls an ask rule matches. `bypassPermissions` leaves the calls to pi; ask and deny rules still apply.
+- A path is inside the working directories only when the requested path and the file it resolves to are both inside, so a symlink that points out of the cwd counts as outside.
+- `acceptEdits` also runs `edit`, `write`, Bash writes, and `mkdir`, `touch`, `mv`, and `cp` inside the working directories. `plan` denies `edit`, `write`, and Bash writes it recognizes (redirect targets, `tee`, `sed -i`, and the other write commands under Matching). `dontAsk` denies every call that would ask, including calls an ask rule matches. `bypassPermissions` leaves the calls to pi; ask and deny rules still apply.
 
 ## Ask dialog
 

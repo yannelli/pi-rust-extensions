@@ -197,12 +197,14 @@ pub fn inside_dirs(target: &Target, call: &Call) -> bool {
     match target {
         Target::File {
             path, plain: true, ..
-        } => {
-            let real = resolve(path);
-            call.dirs
-                .iter()
-                .any(|dir| path.starts_with(dir) && real.starts_with(resolve(dir)))
-        }
+        } => within(path, call.dirs),
         _ => false,
     }
+}
+
+/// `path` and the file it resolves to are both inside one of `dirs`.
+pub fn within(path: &Path, dirs: &[PathBuf]) -> bool {
+    let real = resolve(path);
+    dirs.iter()
+        .any(|dir| path.starts_with(dir) && real.starts_with(resolve(dir)))
 }

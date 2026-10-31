@@ -96,7 +96,7 @@ pub fn load(env: &Env) -> Loaded {
     match (&out.mode, &out.claude_mode) {
         (Some((_, label)), _) => out.info.push(format!("mode for unmatched calls: {label}")),
         (None, Some((name, _))) => out.info.push(format!(
-            "Claude defaultMode {name} is not applied; set \"defaultMode\": \"claude\" in a pi file"
+            "Claude defaultMode {name} is not applied: a pi file sets \"defaultMode\": \"pi\""
         )),
         _ => {}
     }

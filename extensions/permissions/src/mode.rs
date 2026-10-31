@@ -1,7 +1,7 @@
 //! Claude `defaultMode` for the calls that no allow, ask, or deny rule decides.
 
 use crate::evaluate::{Call, Target, Verdict};
-use crate::file_rules::needs_exact_rule;
+use crate::file_rules::{needs_exact_rule, within};
 use crate::rules::{Decision, Source};
 use crate::shell::{Word, strip_wrappers};
 
@@ -42,12 +42,13 @@ pub fn effective(pi: Option<&str>, claude: Option<&(String, Source)>) -> Option<
     if let Some((name, Source::ClaudeManaged)) = claude {
         return Mode::parse(name).map(|m| (m, format!("{name} (claude-managed)")));
     }
-    match pi? {
-        "claude" => {
+    match pi {
+        Some("pi") => None,
+        None | Some("claude") => {
             let (name, source) = claude?;
             Mode::parse(name).map(|m| (m, format!("{name} ({})", source.label())))
         }
-        name => Mode::parse(name).map(|m| (m, format!("{name} (pi)"))),
+        Some(name) => Mode::parse(name).map(|m| (m, format!("{name} (pi)"))),
     }
 }
 
@@ -56,10 +57,13 @@ pub fn decide(mode: Mode, call: &Call, verdict: &Verdict) -> Outcome {
     if mode == Mode::Bypass || !needs_approval(mode, call, verdict) {
         return Outcome::Run;
     }
+    let writes = matches!(call.tool, "edit" | "write")
+        || verdict
+            .targets
+            .iter()
+            .any(|(t, _)| matches!(t, Target::File { write: true, .. }));
     match mode {
-        Mode::Plan if matches!(call.tool, "edit" | "write") => {
-            Outcome::Deny("Claude plan mode does not edit files.".to_owned())
-        }
+        Mode::Plan if writes => Outcome::Deny("Claude plan mode does not edit files.".to_owned()),
         Mode::DontAsk => {
             Outcome::Deny("Claude dontAsk mode denies calls that would ask.".to_owned())
         }
@@ -68,7 +72,7 @@ pub fn decide(mode: Mode, call: &Call, verdict: &Verdict) -> Outcome {
 }
 
 fn needs_approval(mode: Mode, call: &Call, verdict: &Verdict) -> bool {
-    let inside = |path: &std::path::Path| call.dirs.iter().any(|dir| path.starts_with(dir));
+    let inside = |path: &std::path::Path| within(path, call.dirs);
     let edits_free = mode == Mode::AcceptEdits;
     match call.tool {
         "edit" | "write" => {
@@ -159,7 +163,8 @@ mod tests {
     fn modes_resolve_with_managed_first() {
         let user = ("plan".to_owned(), Source::ClaudeUser);
         let managed = ("dontAsk".to_owned(), Source::ClaudeManaged);
-        assert_eq!(effective(None, Some(&user)), None);
+        assert_eq!(effective(None, Some(&user)).unwrap().0, Mode::Plan);
+        assert_eq!(effective(Some("pi"), Some(&user)), None);
         assert_eq!(
             effective(Some("claude"), Some(&user)).unwrap().0,
             Mode::Plan
@@ -211,8 +216,55 @@ mod tests {
         );
         assert!(matches!(write(Mode::Plan, "a.txt"), Outcome::Deny(_)));
         assert_eq!(bash(Mode::Plan, "npm test"), Outcome::Ask);
+        assert!(matches!(
+            bash(Mode::Plan, "echo x > notes.txt"),
+            Outcome::Deny(_)
+        ));
+        assert!(matches!(
+            bash(Mode::Plan, "make | tee build.log"),
+            Outcome::Deny(_)
+        ));
+        assert!(matches!(
+            bash(Mode::Plan, "sed -i s/a/b/ f.txt"),
+            Outcome::Deny(_)
+        ));
+        assert_eq!(bash(Mode::Plan, "cat a.txt"), Outcome::Run);
         assert!(matches!(bash(Mode::DontAsk, "npm test"), Outcome::Deny(_)));
         assert_eq!(bash(Mode::DontAsk, "git log"), Outcome::Run);
         assert_eq!(bash(Mode::Bypass, "rm -rf build"), Outcome::Run);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_out_of_the_working_dirs_is_outside() {
+        let root = tempfile::tempdir().unwrap();
+        let (work, outside) = (root.path().join("work"), root.path().join("outside"));
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("x.txt"), "x").unwrap();
+        std::os::unix::fs::symlink(&outside, work.join("link")).unwrap();
+        let dirs = [work.clone()];
+        let run = |mode, tool: &str, input: Value| {
+            let call = Call {
+                tool,
+                input: &input,
+                cwd: &work,
+                home: Path::new("/h"),
+                dirs: &dirs,
+            };
+            decide(mode, &call, &evaluate(&[], &call))
+        };
+        let write = json!({ "path": "link/out.txt" });
+        assert_eq!(run(Mode::AcceptEdits, "write", write), Outcome::Ask);
+        assert_eq!(
+            run(Mode::AcceptEdits, "write", json!({ "path": "own.txt" })),
+            Outcome::Run
+        );
+        assert_eq!(
+            run(Mode::Default, "read", json!({ "path": "link/x.txt" })),
+            Outcome::Ask
+        );
+        let echo = json!({ "command": "echo x > link/out.txt" });
+        assert_eq!(run(Mode::AcceptEdits, "bash", echo), Outcome::Ask);
     }
 }
