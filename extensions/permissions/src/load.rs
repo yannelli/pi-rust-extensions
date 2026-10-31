@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::codex;
 use crate::codex_config;
+use crate::mode::{self, Mode};
 use crate::paths::{Paths, project_root, up_to_root};
 use crate::rules::{ClaudeRule, Decision, Kind, Rule, Source, split_claude};
 use crate::settings::{Options, PiFile, global_file, project_file};
@@ -33,6 +34,8 @@ pub struct Loaded {
     pub dirs: Vec<PathBuf>,
     /// The Claude `defaultMode` with the highest settings precedence, and its source.
     pub claude_mode: Option<(String, Source)>,
+    /// The mode for calls that no rule decides, with its label.
+    pub mode: Option<(Mode, String)>,
 }
 
 pub fn load(env: &Env) -> Loaded {
@@ -83,6 +86,14 @@ pub fn load(env: &Env) -> Loaded {
     if skipped_project {
         out.notes
             .push("project is not trusted; project sources are skipped".to_owned());
+    }
+    out.mode = mode::effective(out.options.mode.as_deref(), out.claude_mode.as_ref());
+    match (&out.mode, &out.claude_mode) {
+        (Some((_, label)), _) => out.info.push(format!("mode for unmatched calls: {label}")),
+        (None, Some((name, _))) => out.info.push(format!(
+            "Claude defaultMode {name} is not applied; set \"defaultMode\": \"claude\" in a pi file"
+        )),
+        _ => {}
     }
     out
 }

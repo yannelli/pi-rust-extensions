@@ -37,30 +37,34 @@ fn summary(call: &Call) -> String {
     format!("{}: {detail}", call.tool)
 }
 
+/// Asks about a call that an ask rule matched, or that `mode` (a Claude `defaultMode` label)
+/// asks about. Only a mode ask offers "Allow always": an ask rule wins over every allow rule.
 pub async fn ask(
     host: &Host,
     loaded: &Loaded,
     verdict: &Verdict,
     call: &Call<'_>,
+    mode: Option<&str>,
 ) -> Result<EventReply> {
-    let Some(rule) = &verdict.rule else {
-        return Ok(EventReply::none());
+    let asked_by = match (&verdict.rule, mode) {
+        (Some(rule), _) if rule.decision == Decision::Ask => {
+            format!("permission rule {}", rule.describe())
+        }
+        (_, Some(mode)) => format!("Claude defaultMode {mode}"),
+        _ => return Ok(EventReply::none()),
     };
     if !host.has_ui() {
         return Ok(EventReply::block(format!(
-            "Permission rule {} from {} asks before this call, and there is no UI to ask the user.",
-            rule.text,
-            rule.source.label()
+            "The {asked_by} asks before this call, and there is no UI to ask the user."
         )));
     }
-    let title = format!(
-        "Allow this call?\n{}\nAsked by {}",
-        summary(call),
-        rule.describe()
-    );
-    let choice = host
-        .select(&title, &[ALLOW_ONCE, ALLOW_ALWAYS, DENY, DENY_REASON])
-        .await?;
+    let title = format!("Allow this call?\n{}\nAsked by {asked_by}", summary(call));
+    let options: &[&str] = if mode.is_some() && verdict.decision.is_none() {
+        &[ALLOW_ONCE, ALLOW_ALWAYS, DENY, DENY_REASON]
+    } else {
+        &[ALLOW_ONCE, DENY, DENY_REASON]
+    };
+    let choice = host.select(&title, options).await?;
     match choice.as_deref() {
         Some(ALLOW_ONCE) => Ok(EventReply::none()),
         Some(ALLOW_ALWAYS) => {

@@ -58,15 +58,15 @@ async fn codex_forbidden_rule_blocks_with_justification() {
 }
 
 #[tokio::test]
-async fn ask_allow_always_saves_to_the_chosen_scope() {
+async fn mode_ask_allow_always_saves_to_the_chosen_scope() {
     let fx = fx();
     claude_settings(
         &fx.paths.claude_dir.join("settings.json"),
-        json!({ "ask": ["Bash(npm publish *)"] }),
+        json!({ "defaultMode": "default" }),
     );
     write(
         &fx.agent.join("ext/permissions.json"),
-        r#"{"scope": "project"}"#,
+        r#"{"scope": "project", "defaultMode": "claude"}"#,
     );
     let mut host = start(&fx).await;
     let mut ui = Ui::default();
@@ -233,5 +233,59 @@ async fn panel_adds_rules_and_switches_scope() {
         text.starts_with("bash: deny") && text.contains("Bash(git push *)"),
         "{text}"
     );
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_ask_rule_asks_every_time_and_wins_over_pi_allow_rules() {
+    let fx = fx();
+    claude_settings(
+        &fx.paths.claude_dir.join("settings.json"),
+        json!({ "ask": ["Bash(npm publish *)"] }),
+    );
+    write(
+        &fx.agent.join("ext/permissions.json"),
+        r#"{"allow": ["Bash(npm publish --dry-run)"]}"#,
+    );
+    let mut host = start(&fx).await;
+    let mut ui = Ui::default();
+    ui.selects.push_back(json!("Allow once"));
+    let result = bash(
+        &mut host,
+        1,
+        "npm publish --dry-run",
+        ctx(&fx, true, false),
+        &mut ui,
+    )
+    .await;
+    assert_eq!(blocked(&result), None);
+    let selects = ui.methods("ui.select");
+    assert_eq!(
+        selects[0]["options"],
+        json!(["Allow once", "Deny", "Deny with a reason"])
+    );
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn dont_ask_mode_turns_asks_into_denies() {
+    let fx = fx();
+    claude_settings(
+        &fx.paths.claude_dir.join("settings.json"),
+        json!({ "ask": ["Bash(npm publish *)"], "defaultMode": "dontAsk" }),
+    );
+    write(
+        &fx.agent.join("ext/permissions.json"),
+        r#"{"defaultMode": "claude"}"#,
+    );
+    let mut host = start(&fx).await;
+    let mut ui = Ui::default();
+    let ask_rule = bash(&mut host, 1, "npm publish", ctx(&fx, true, false), &mut ui).await;
+    assert!(blocked(&ask_rule).unwrap().contains("dontAsk"));
+    let unmatched = bash(&mut host, 2, "npm test", ctx(&fx, true, false), &mut ui).await;
+    assert!(blocked(&unmatched).unwrap().contains("dontAsk"));
+    let read_only = bash(&mut host, 3, "git status", ctx(&fx, true, false), &mut ui).await;
+    assert_eq!(blocked(&read_only), None);
+    assert!(ui.methods("ui.select").is_empty());
     host.finish().await.unwrap();
 }
