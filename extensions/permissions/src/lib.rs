@@ -2,10 +2,14 @@ mod ask;
 mod codex;
 mod codex_config;
 mod evaluate;
+mod file_rules;
+mod files;
 mod listing;
 mod load;
+mod mode;
 mod paths;
 mod pattern;
+mod requirements;
 mod rules;
 mod settings;
 mod shell;
@@ -24,6 +28,7 @@ pub use paths::Paths;
 
 use evaluate::{Call, evaluate};
 use load::{Env, load};
+use mode::{Mode, Outcome};
 use rules::Decision;
 
 fn env_for<'a>(paths: &'a Paths, host: &Host, snap: &Snapshot) -> Env<'a> {
@@ -45,12 +50,26 @@ async fn tool_call(paths: Arc<Paths>, ev: EventCtx) -> Result<EventReply> {
         input: &event.input,
         cwd: &env.cwd,
         home: &paths.home,
+        dirs: &loaded.dirs,
     };
     let verdict = evaluate(&loaded.rules, &call);
+    let mode = loaded.mode.as_ref();
+    let dont_ask = mode.is_some_and(|(m, _)| *m == Mode::DontAsk);
     match (verdict.decision, &verdict.rule) {
         (Some(Decision::Deny), Some(rule)) => Ok(EventReply::block(ask::deny_reason(rule))),
-        (Some(Decision::Ask), _) => ask::ask(host, &loaded, &verdict, &call).await,
-        _ => Ok(EventReply::none()),
+        (Some(Decision::Ask), Some(rule)) if dont_ask => Ok(EventReply::block(format!(
+            "{} Claude dontAsk mode denies calls that would ask.",
+            ask::deny_reason(rule)
+        ))),
+        (Some(Decision::Ask), _) => ask::ask(host, &loaded, &verdict, &call, None).await,
+        (Some(Decision::Allow), _) => Ok(EventReply::none()),
+        _ => match mode.map(|(m, label)| (mode::decide(*m, &call, &verdict), label)) {
+            Some((Outcome::Ask, label)) => {
+                ask::ask(host, &loaded, &verdict, &call, Some(label)).await
+            }
+            Some((Outcome::Deny(reason), _)) => Ok(EventReply::block(reason)),
+            _ => Ok(EventReply::none()),
+        },
     }
 }
 

@@ -22,6 +22,7 @@ pub fn fx() -> Fx {
         claude_dir: root.join("home/.claude"),
         claude_managed: root.join("managed/managed-settings.json"),
         codex_home: root.join("home/.codex"),
+        codex_requirements: vec![root.join("etc/codex/requirements.toml")],
         agent_dir: Some(root.join("agent")),
     };
     Fx {

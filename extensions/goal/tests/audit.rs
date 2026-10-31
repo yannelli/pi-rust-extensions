@@ -1,4 +1,4 @@
-//! Races between a detached completion audit and pause, clear, Esc, and resubmission.
+//! Races between a pending completion audit and pause, clear, Esc, and resubmission.
 
 mod common;
 
@@ -33,19 +33,29 @@ fn complete() -> Value {
     json!({ "status": "complete", "completion_summary": "Notes written." })
 }
 
-/// Requests completion and returns once the auditor's model request is held.
-async fn submit(host: &mut Host) {
+/// Requests completion and returns the pending `update_goal` call once the auditor's model
+/// request is held.
+async fn submit(host: &mut Host) -> u64 {
     host.hold.push("llm.complete");
-    let complete = complete();
-    let (submitted, failed) = host.tool("update_goal", complete).await;
-    assert!(
-        !failed && submitted.starts_with("Completion submitted"),
-        "{submitted}"
-    );
+    let ctx = host.ctx.clone();
+    let call = json!({ "toolCallId": format!("call-complete-{}", host.called("llm.complete").len()),
+        "name": "update_goal", "params": complete(), "ctx": ctx });
+    let pending = host.begin("tool.execute", call).await;
     host.wait_for("llm.complete").await;
     let (summary, _) = host.tool("get_goal", json!({})).await;
     assert!(summary.contains("auditing"), "{summary}");
+    pending
 }
+
+/// The text the pending `update_goal` call returns to the model.
+async fn verdict_text(host: &mut Host, pending: u64) -> String {
+    let result = host.finish(pending).await;
+    let blocks = result["content"].as_array().cloned().unwrap_or_default();
+    let texts: Vec<&str> = blocks.iter().filter_map(|b| b["text"].as_str()).collect();
+    texts.join("\n")
+}
+
+const STOPPED: &str = "The audit stopped before a verdict";
 
 async fn command(host: &mut Host, name: &str) {
     let ctx = host.ctx.clone();
@@ -66,9 +76,10 @@ fn audit_messages(host: &Host) -> Vec<String> {
 #[tokio::test]
 async fn pause_discards_a_late_approval() {
     let (mut host, _work, _agent) = start("pause").await;
-    submit(&mut host).await;
+    let pending = submit(&mut host).await;
     command(&mut host, "goal-pause").await;
     host.release("llm.complete", verdict("<approved/>")).await;
+    assert!(verdict_text(&mut host, pending).await.starts_with(STOPPED));
     host.drain(QUIET).await;
     let (summary, _) = host.tool("get_goal", json!({})).await;
     assert!(summary.contains(OBJECTIVE), "{summary}");
@@ -83,13 +94,14 @@ async fn pause_discards_a_late_approval() {
 #[tokio::test]
 async fn esc_during_audit_pauses_and_discards_a_rejection() {
     let (mut host, _work, _agent) = start("esc").await;
-    submit(&mut host).await;
+    let pending = submit(&mut host).await;
     host.event("agent_start", json!({ "type": "agent_start" }))
         .await;
     let settled = json!({ "type": "agent_settled", "aborted": true });
     host.event("agent_settled", settled).await;
     host.release("llm.complete", verdict("Missing.\n<disapproved/>"))
         .await;
+    assert!(verdict_text(&mut host, pending).await.starts_with(STOPPED));
     host.drain(QUIET).await;
     let (summary, _) = host.tool("get_goal", json!({})).await;
     assert!(summary.contains("paused"), "{summary}");
@@ -105,10 +117,11 @@ async fn esc_during_audit_pauses_and_discards_a_rejection() {
 #[tokio::test]
 async fn clear_discards_a_late_rejection() {
     let (mut host, _work, _agent) = start("clear").await;
-    submit(&mut host).await;
+    let pending = submit(&mut host).await;
     command(&mut host, "goal-clear").await;
     host.release("llm.complete", verdict("Missing.\n<disapproved/>"))
         .await;
+    assert!(verdict_text(&mut host, pending).await.starts_with(STOPPED));
     host.drain(QUIET).await;
     let (summary, _) = host.tool("get_goal", json!({})).await;
     assert_eq!(summary, "No focused goal.");
@@ -122,26 +135,25 @@ async fn clear_discards_a_late_rejection() {
 #[tokio::test]
 async fn only_the_latest_audit_applies() {
     let (mut host, _work, _agent) = start("resubmit").await;
-    submit(&mut host).await;
+    let first = submit(&mut host).await;
     command(&mut host, "goal-pause").await;
     command(&mut host, "goal-resume").await;
-    submit(&mut host).await;
+    assert!(verdict_text(&mut host, first).await.starts_with(STOPPED));
+    let second = submit(&mut host).await;
     host.release("llm.complete", verdict("<approved/>")).await;
     host.drain(QUIET).await;
     let (summary, _) = host.tool("get_goal", json!({})).await;
     assert!(summary.contains("auditing"), "{summary}");
+
+    host.release("llm.complete", verdict("Missing.\n<disapproved/>"))
+        .await;
+    let text = verdict_text(&mut host, second).await;
+    assert!(text.contains("[GOAL AUDIT REJECTED"), "{text}");
     assert!(
         audit_messages(&host).is_empty(),
         "{:?}",
         audit_messages(&host)
     );
-
-    host.release("llm.complete", verdict("Missing.\n<disapproved/>"))
-        .await;
-    host.drain(QUIET).await;
-    let messages = audit_messages(&host);
-    assert_eq!(messages.len(), 1, "{messages:?}");
-    assert!(messages[0].contains("[GOAL AUDIT REJECTED"), "{messages:?}");
     let (summary, _) = host.tool("get_goal", json!({})).await;
     assert!(summary.contains("running"), "{summary}");
 }
@@ -158,7 +170,11 @@ async fn pause_during_submit_refresh_cancels_the_audit() {
     command(&mut host, "goal-pause").await;
     let audits = host.called("llm.complete").len();
     host.release("ui.setStatus", Value::Null).await;
-    host.finish(submitted).await;
+    assert!(
+        verdict_text(&mut host, submitted)
+            .await
+            .starts_with(STOPPED)
+    );
     host.drain(QUIET).await;
     assert_eq!(host.called("llm.complete").len(), audits);
     let (summary, _) = host.tool("get_goal", json!({})).await;
@@ -173,15 +189,13 @@ async fn pause_during_submit_refresh_cancels_the_audit() {
 #[tokio::test]
 async fn audits_of_two_goals_run_independently() {
     let (mut host, _work, _agent) = start("two").await;
-    submit(&mut host).await;
+    let first = submit(&mut host).await;
     create(&mut host, "Publish the version 2 blog post").await;
-    submit(&mut host).await;
+    let second = submit(&mut host).await;
     host.release("llm.complete", verdict("Missing.\n<disapproved/>"))
         .await;
-    host.drain(QUIET).await;
-    let messages = audit_messages(&host);
-    assert_eq!(messages.len(), 1, "{messages:?}");
-    assert!(messages[0].contains("[GOAL AUDIT REJECTED"), "{messages:?}");
+    let text = verdict_text(&mut host, first).await;
+    assert!(text.contains("[GOAL AUDIT REJECTED"), "{text}");
     let (summary, _) = host.tool("get_goal", json!({})).await;
     assert!(
         summary.contains("blog post") && summary.contains("auditing"),
@@ -189,8 +203,11 @@ async fn audits_of_two_goals_run_independently() {
     );
 
     host.release("llm.complete", verdict("<approved/>")).await;
-    host.drain(QUIET).await;
-    let messages = audit_messages(&host);
-    assert_eq!(messages.len(), 2, "{messages:?}");
-    assert!(messages[1].starts_with("Goal complete"), "{messages:?}");
+    let text = verdict_text(&mut host, second).await;
+    assert!(text.starts_with("Goal complete"), "{text}");
+    assert!(
+        audit_messages(&host).is_empty(),
+        "{:?}",
+        audit_messages(&host)
+    );
 }

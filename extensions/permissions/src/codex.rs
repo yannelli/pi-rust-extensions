@@ -1,6 +1,6 @@
 //! Codex execpolicy `.rules` files: the `prefix_rule` subset of Starlark.
 
-use crate::rules::{Decision, PrefixRule};
+use crate::rules::{Decision, NetworkRule, PrefixRule};
 use crate::shell;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -14,8 +14,11 @@ pub struct CodexRule {
 #[derive(Debug, Default, PartialEq)]
 pub struct Parsed {
     pub rules: Vec<CodexRule>,
-    /// Calls the extension reads past without applying, such as `network_rule`.
+    /// Calls the extension reads past without applying.
     pub skipped: Vec<String>,
+    /// `host_executable` names with their absolute paths.
+    pub hosts: Vec<(String, Vec<String>)>,
+    pub network: Vec<(NetworkRule, Decision, Option<String>, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,7 +66,8 @@ pub fn parse_rules(text: &str) -> Result<Parsed, String> {
         i += 1;
         match name.as_str() {
             "prefix_rule" => parsed.rules.extend(prefix_rule(&args)?),
-            "host_executable" | "network_rule" => parsed.skipped.push(name.clone()),
+            "host_executable" => parsed.hosts.push(host_executable(&args)?),
+            "network_rule" => parsed.network.push(network_rule(&args)?),
             other => return Err(format!("unknown function `{other}`")),
         }
     }
@@ -105,6 +109,85 @@ fn strings(val: &Val) -> Option<Vec<String>> {
             .collect(),
         Val::Other(_) => None,
     }
+}
+
+fn arg<'a>(args: &'a [(Option<String>, Val)], key: &str) -> Option<&'a Val> {
+    args.iter()
+        .find(|(k, _)| k.as_deref() == Some(key))
+        .map(|(_, v)| v)
+}
+
+fn host_executable(args: &[(Option<String>, Val)]) -> Result<(String, Vec<String>), String> {
+    let Some(Val::Str(name)) = arg(args, "name") else {
+        return Err("host_executable needs a name".into());
+    };
+    if name.is_empty() || name.contains(['/', '\\']) {
+        return Err(format!("host_executable name `{name}` must be a bare name"));
+    }
+    let paths = arg(args, "paths")
+        .and_then(strings)
+        .ok_or("host_executable needs paths")?;
+    for path in &paths {
+        let base = path.rsplit(['/', '\\']).next().unwrap_or_default();
+        if !std::path::Path::new(path).is_absolute() || base != name {
+            return Err(format!(
+                "host_executable path `{path}` must have basename `{name}`"
+            ));
+        }
+    }
+    Ok((name.clone(), paths))
+}
+
+type ParsedNetwork = (NetworkRule, Decision, Option<String>, String);
+
+fn network_rule(args: &[(Option<String>, Val)]) -> Result<ParsedNetwork, String> {
+    let text = |key: &str| match arg(args, key) {
+        Some(Val::Str(s)) => Ok(s.clone()),
+        _ => Err(format!("network_rule needs `{key}`")),
+    };
+    let (host, protocol, decision) = (text("host")?, text("protocol")?, text("decision")?);
+    let parsed = match decision.as_str() {
+        "deny" | "forbidden" => Decision::Deny,
+        "prompt" => Decision::Ask,
+        "allow" => Decision::Allow,
+        other => return Err(format!("unknown network_rule decision `{other}`")),
+    };
+    let justification = match arg(args, "justification") {
+        Some(Val::Str(j)) if j.trim().is_empty() => {
+            return Err("justification cannot be empty".into());
+        }
+        Some(Val::Str(j)) => Some(j.clone()),
+        _ => None,
+    };
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let shown =
+        format!("network_rule(host=\"{host}\", protocol=\"{protocol}\", decision=\"{decision}\")");
+    Ok((NetworkRule { host, protocol }, parsed, justification, shown))
+}
+
+/// One rule per alternative of the first token, as the Codex parser builds them.
+pub fn expand(
+    alts: &[Vec<String>],
+    decision: Decision,
+    justification: Option<String>,
+    text: &str,
+) -> Vec<CodexRule> {
+    alts[0]
+        .iter()
+        .map(|head| {
+            let mut pattern = vec![vec![head.clone()]];
+            pattern.extend(alts[1..].iter().cloned());
+            CodexRule {
+                rule: PrefixRule {
+                    pattern,
+                    hosts: None,
+                },
+                decision,
+                justification: justification.clone(),
+                text: text.to_owned(),
+            }
+        })
+        .collect()
 }
 
 fn prefix_rule(args: &[(Option<String>, Val)]) -> Result<Vec<CodexRule>, String> {
@@ -152,19 +235,7 @@ fn prefix_rule(args: &[(Option<String>, Val)]) -> Result<Vec<CodexRule>, String>
             Decision::Deny => "forbidden",
         }
     );
-    let rules: Vec<CodexRule> = alts[0]
-        .iter()
-        .map(|head| {
-            let mut pattern = vec![vec![head.clone()]];
-            pattern.extend(alts[1..].iter().cloned());
-            CodexRule {
-                rule: PrefixRule { pattern },
-                decision,
-                justification: justification.clone(),
-                text: text.clone(),
-            }
-        })
-        .collect();
+    let rules = expand(&alts, decision, justification, &text);
     for (key, want) in [("match", true), ("not_match", false)] {
         let Some(Val::List(examples)) = get(key) else {
             continue;

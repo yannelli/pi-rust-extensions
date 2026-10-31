@@ -7,6 +7,8 @@ pub struct Paths {
     pub claude_dir: PathBuf,
     pub claude_managed: PathBuf,
     pub codex_home: PathBuf,
+    /// Codex `requirements.toml` files, highest priority first.
+    pub codex_requirements: Vec<PathBuf>,
     /// Overrides the agent dir from `initialize`.
     pub agent_dir: Option<PathBuf>,
 }
@@ -25,10 +27,23 @@ impl Paths {
             claude_dir: var("CLAUDE_CONFIG_DIR").unwrap_or_else(|| home.join(".claude")),
             codex_home: var("CODEX_HOME").unwrap_or_else(|| home.join(".codex")),
             claude_managed: managed_settings(),
+            codex_requirements: codex_requirements(),
             agent_dir: None,
             home,
         }
     }
+}
+
+/// The system `requirements.toml` and, on Unix, the legacy `managed_config.toml`.
+fn codex_requirements() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        let data = std::env::var_os("ProgramData").unwrap_or_else(|| r"C:\ProgramData".into());
+        return vec![PathBuf::from(data).join(r"OpenAI\Codex\requirements.toml")];
+    }
+    vec![
+        PathBuf::from("/etc/codex/requirements.toml"),
+        PathBuf::from("/etc/codex/managed_config.toml"),
+    ]
 }
 
 /// Claude Code managed settings for this platform.

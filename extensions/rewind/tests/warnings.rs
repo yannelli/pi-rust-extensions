@@ -162,3 +162,47 @@ fn a_failed_checkpoint_warns_once_per_prompt() {
         .collect();
     assert_eq!(failed.len(), 1, "{}", output.stderr);
 }
+
+#[test]
+fn checkpoints_work_without_a_session_file() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let write = json!({"path": "note.txt", "content": "hello\n"});
+    let output = run(
+        rewind().pi_args(["--no-session"]),
+        vec![Turn::tool_call("write", write), Turn::text("Wrote it.")],
+    );
+    assert_silent(&output);
+    assert_eq!(checkpoint_files(&output), 1);
+}
+
+#[test]
+fn a_large_first_snapshot_runs_in_budgeted_steps_without_warnings() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let budget = json!({"ayu": {"checkpoint": {"stageBudgetSeconds": 0.001}}});
+    let mut setup = rewind().settings(budget);
+    for i in 0..1200 {
+        setup = setup.file(format!("work/d{}/f{i}.txt", i / 100), format!("{i}\n"));
+    }
+    let write = json!({"path": "note.txt", "content": "hello\n"});
+    let output = run(
+        setup,
+        vec![Turn::tool_call("write", write), Turn::text("Wrote it.")],
+    );
+    assert_silent(&output);
+    assert!(
+        output
+            .stderr
+            .contains("snapshot staged 500 files, 700 left"),
+        "{}",
+        output.stderr
+    );
+    assert!(
+        !output.stderr.contains("info: checkpoint "),
+        "{}",
+        output.stderr
+    );
+}

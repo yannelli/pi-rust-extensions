@@ -111,3 +111,21 @@ fn malformed_files_are_reported() {
             .starts_with("Ignored malformed")
     );
 }
+
+#[test]
+fn durations_fall_back_on_values_that_do_not_fit() {
+    use super::{DEFAULT_GIT_TIMEOUT, DEFAULT_STAGE_BUDGET};
+    use std::time::Duration;
+    let parse = |budget: Value, timeout: Value| {
+        let config = Config::from_value(&json!({
+            "checkpoint": { "stageBudgetSeconds": budget, "gitTimeoutSeconds": timeout }
+        }));
+        (config.stage_budget, config.git_timeout)
+    };
+    let defaults = (DEFAULT_STAGE_BUDGET, DEFAULT_GIT_TIMEOUT);
+    assert_eq!(parse(json!(1e308), json!(1e300)), defaults);
+    assert_eq!(parse(json!(-1), json!(0)), defaults);
+    assert_eq!(parse(json!("10"), json!(null)), defaults);
+    let fractional = (Duration::from_millis(250), Duration::from_secs(30));
+    assert_eq!(parse(json!(0.25), json!(30)), fractional);
+}

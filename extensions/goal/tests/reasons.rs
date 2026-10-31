@@ -93,22 +93,22 @@ fn pause() -> Turn {
 #[test]
 fn audit_rejection_reaches_the_model() {
     let finding = "Missing: the upgrade section for version 2.";
-    // The agent turn and the auditor race for the next scripted turn, so both get the verdict.
-    let verdict = format!("{finding}\n<disapproved/>");
     let Some(output) = run(vec![
         Turn::tool_call("create_goal", json!({"objective": OBJECTIVE})),
         Turn::tool_call(
             "update_goal",
             json!({"status": "complete", "completion_summary": "Notes written."}),
         ),
-        Turn::text(verdict.clone()),
-        Turn::text(verdict),
+        Turn::text(format!("{finding}\n<disapproved/>")),
         pause(),
         Turn::text("Paused."),
     ]) else {
         return;
     };
+    assert!(is_auditor(&output.requests[2]), "{}", dump(&output));
     assert_sent(&output, &["[GOAL AUDIT REJECTED", finding]);
+    let rejected = output.tool_result_text("update_goal").unwrap_or_default();
+    assert!(rejected.contains(finding), "{}", dump(&output));
 }
 
 #[test]
