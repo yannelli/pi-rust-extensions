@@ -1,6 +1,6 @@
 # Release
 
-Created 2026-10-29. Last updated 2026-10-29.
+Created 2026-10-29. Last updated 2026-10-31.
 
 ## Start a release
 
@@ -28,6 +28,7 @@ The archive root holds the binary, `LICENSE`, and `README.md`.
 The binary is `pi-rust-ext`, or `pi-rust-ext.exe` on Windows.
 
 The workflow runs `cargo test --workspace --locked` before it builds the archives.
+Before the tests, `scripts/fetch-ci-pi.py` installs the published pi host v0.9.2 for the runner, and the tests run with `PI_REQUIRE_E2E=1` (see [Real-pi tests](#real-pi-tests)).
 Linux builds use `cargo-zigbuild` 0.24.0 and Zig 0.15.2.
 The `index` job writes `SHA256SUMS` with `sha256sum`. It then runs `marketplace-index` to write `index.json`.
 
@@ -91,6 +92,35 @@ To check local artifacts, pass the directory as the second argument.
 For test keys, use `--public-key <base64-raw-key>` before the tag.
 `bash scripts/test-verify-release.sh` generates a local release and a temporary key to test verification failures.
 CI also loads `marketplace.json` through the index generator to validate its entries.
+
+## Real-pi tests
+
+Tests that start pi call `pi_ext_e2e::pi_bin_or_skip`:
+
+| Environment | Result |
+| --- | --- |
+| `PI_REQUIRE_E2E=1` without `PI_BIN` | The test fails |
+| `PI_BIN` set to a path that is not an executable file | The test fails, also locally |
+| `PI_BIN` set to an executable file | The test runs that pi |
+| Neither set, and the default `pi-dev` path is missing | The test prints `skipping: pi binary ...` and passes |
+
+CI (`check` on Ubuntu and macOS) and the release `check-tag` job do the following:
+
+1. `python3 scripts/fetch-ci-pi.py --dest "$RUNNER_TEMP/pi-host"` takes the `yannelli/pi-rust` release `v0.9.2` asset for the runner (`aarch64-apple-darwin`, `x86_64-apple-darwin`, or the Linux musl builds).
+2. It checks the asset against the pinned SHA-256, the release API digest, and `SHA256SUMS`, and extracts only the regular file `pi`.
+3. It runs `pi --version`, then appends `PI_BIN` and `PI_HOST_SHA256` to `$GITHUB_ENV`.
+4. The workspace tests then run with `PI_REQUIRE_E2E=1`.
+
+To change the host release, update `TAG` and `PINNED` in the script from a verified release.
+
+The CI job `lens-exit` (Ubuntu and macOS) runs `python3 scripts/lens_probe/check.py --pi "$PI_BIN" --pi-sha256 "$PI_HOST_SHA256" --marketplace-tag v0.3.0 --out <new dir>`:
+
+1. It installs the published `marketplace:lens@v0.3.0` into isolated directories.
+2. It drives the pi TUI against a loopback mock model, and starts a stalled LSP through a `write app.py` turn.
+3. It quits with Ctrl+D and then with SIGTERM.
+4. It passes when both quits exit 0 within 12 s and the Lens process (the installed `pi-rust-ext lens`), the LSP, and its child are gone 3 s later.
+
+The job uploads `report.json` and the screen captures, also on failure.
 
 ## Action versions
 

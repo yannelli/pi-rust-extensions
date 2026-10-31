@@ -45,3 +45,51 @@ fn deny_rule_blocks_bash_and_the_model_sees_the_reason() {
         "{last_request}"
     );
 }
+
+#[test]
+fn read_deny_blocks_bash_cat_of_the_file_and_the_model_never_sees_it() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let sentinel = "E2E_SENTINEL_9f3c41d2";
+    let claude = tempfile::tempdir().unwrap();
+    let settings = json!({ "permissions": { "deny": ["Read(./.env)"] } });
+    std::fs::write(claude.path().join("settings.json"), settings.to_string()).unwrap();
+    let output = Run::new(cargo_bin("pi-rust-ext", "pi-rust-ext"))
+        .args(["permissions"])
+        .env("CLAUDE_CONFIG_DIR", claude.path().display().to_string())
+        .file("work/.env", format!("SECRET={sentinel}\n"))
+        .turns([
+            Turn::tool_call("bash", json!({ "command": "cat .env" })),
+            Turn::text("done"),
+        ])
+        .prompt("Show the env file")
+        .run()
+        .unwrap();
+    let results: Vec<String> = output
+        .tool_results("bash")
+        .iter()
+        .map(|e| e["result"]["content"].to_string())
+        .collect();
+    assert_eq!(results.len(), 1, "stderr: {}", output.stderr);
+    assert!(
+        results[0].contains("Read(./.env) from claude-user"),
+        "{results:?}"
+    );
+    assert!(
+        !results[0].contains(sentinel),
+        "bash read .env: {results:?}"
+    );
+    let requests: Vec<String> = output.requests.iter().map(ToString::to_string).collect();
+    assert_eq!(requests.len(), 2, "stderr: {}", output.stderr);
+    assert!(
+        requests[1].contains("Blocked by permission rule Read(./.env)"),
+        "{}",
+        requests[1]
+    );
+    assert!(
+        requests.iter().all(|request| !request.contains(sentinel)),
+        "the file content reached the model"
+    );
+    assert!(!output.stdout.contains(sentinel) && !output.stderr.contains(sentinel));
+}

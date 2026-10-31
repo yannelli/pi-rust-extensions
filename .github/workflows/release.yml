@@ -19,7 +19,7 @@ env:
 jobs:
   check-tag:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,8 +36,15 @@ jobs:
             echo "::error::Tag $TAG does not match workspace version $version"
             exit 1
           fi
+      - name: Fetch the published pi host
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/fetch-ci-pi.py --dest "$RUNNER_TEMP/pi-host"
+        timeout-minutes: 10
       - name: Test workspace before release builds
-        timeout-minutes: 20
+        timeout-minutes: 40
+        env:
+          PI_REQUIRE_E2E: "1"
         run: cargo test --workspace --locked
 
   build:

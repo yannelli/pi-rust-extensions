@@ -20,7 +20,7 @@ jobs:
   check:
     name: check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -37,8 +37,16 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
         timeout-minutes: 15
+      - name: Fetch the published pi host
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/fetch-ci-pi.py --dest "$RUNNER_TEMP/pi-host"
+        timeout-minutes: 10
+      # PI_REQUIRE_E2E makes every real-pi test run against PI_BIN instead of skipping.
       - run: cargo test --workspace --locked --no-fail-fast
-        timeout-minutes: 15
+        timeout-minutes: 30
+        env:
+          PI_REQUIRE_E2E: "1"
       - name: Validate marketplace.json with the index generator
         run: cargo test --locked -p marketplace-index tests::repository_catalog_is_valid -- --exact
         timeout-minutes: 5
@@ -46,3 +54,39 @@ jobs:
       - name: Verify a local signed release
         run: bash scripts/test-verify-release.sh
         timeout-minutes: 10
+
+  lens-exit:
+    name: lens exit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the published pi host
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/fetch-ci-pi.py --dest "$RUNNER_TEMP/pi-host"
+        timeout-minutes: 10
+      - name: Quit pi with a stalled Lens LSP (published pi and Lens)
+        run: >-
+          python3 scripts/lens_probe/check.py --pi "$PI_BIN" --pi-sha256 "$PI_HOST_SHA256"
+          --marketplace-tag v0.3.0 --out "$RUNNER_TEMP/lens-probe"
+        timeout-minutes: 15
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: lens-exit-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/lens-probe/report.json
+            ${{ runner.temp }}/lens-probe/pi-version.*
+            ${{ runner.temp }}/lens-probe/*/capture.txt
+            ${{ runner.temp }}/lens-probe/*/install.*
+            ${{ runner.temp }}/lens-probe/*/lens.json
+            ${{ runner.temp }}/lens-probe/*/pids.json
+            ${{ runner.temp }}/pi-host/host.json
+          if-no-files-found: warn
