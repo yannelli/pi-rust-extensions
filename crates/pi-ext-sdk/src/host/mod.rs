@@ -7,7 +7,7 @@ mod usage;
 pub use agent::{ExecOutput, ExecRequest, LlmRequest, LlmResponse, ProviderAuth};
 pub use session::{CustomMessage, DeliverAs};
 pub use ui::{InputOptions, NotifyType, Placement};
-pub use usage::{ProviderUsage, UsageWindow};
+pub use usage::{ProviderUsage, UsageCredits, UsageWindow};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

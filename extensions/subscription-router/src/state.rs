@@ -14,7 +14,8 @@ use crate::family::{Family, parse_provider};
 use crate::router::{RouteDecision, RouteEnv, Router};
 use crate::slots::SlotInfo;
 use crate::usage::{
-    BoxFuture, GetOptions, Tokens, Urls, UsageDecision, UsageService, decision_for,
+    BoxFuture, CoreRead, GetOptions, Tokens, Urls, UsageDecision, UsageService, decision_for,
+    from_older_host,
 };
 
 const RECENT_DECISIONS: usize = 5;
@@ -154,6 +155,31 @@ impl Tokens for HostTokens<'_> {
                 .ok()
                 .flatten()?
                 .api_key
+        })
+    }
+
+    /// pi reads the usage of a slot whose login it stores; a slot with the router's own token,
+    /// and pi without `usage.get` or without slot and scope support, are read here.
+    fn core_usage<'a>(&'a self, provider: &'a str, refresh: bool) -> BoxFuture<'a, CoreRead> {
+        Box::pin(async move {
+            if self
+                .state
+                .accounts
+                .get(provider)
+                .is_some_and(|a| a.credential.is_some())
+            {
+                return CoreRead::Unsupported;
+            }
+            match self.host.usage_with(Some(provider), refresh).await {
+                Err(err) if err.code() == pi_ext_sdk::code::METHOD_NOT_FOUND => {
+                    CoreRead::Unsupported
+                }
+                Err(err) => CoreRead::Failed(format!("pi usage.get failed: {err}")),
+                Ok(list) => match list.into_iter().find(|usage| usage.provider == provider) {
+                    Some(usage) if !from_older_host(&usage) => CoreRead::Usage(usage),
+                    _ => CoreRead::Unsupported,
+                },
+            }
         })
     }
 }
