@@ -253,3 +253,65 @@ async fn tree_navigation_syncs_files_when_always() {
     );
     assert!(!work.path().join("b.txt").exists());
 }
+
+#[tokio::test]
+async fn an_unfinished_turn_snapshot_is_dropped_and_not_given_later_edits() {
+    let work = TestDir::new("proto-attr-work");
+    let agent = TestDir::new("proto-attr-agent");
+    std::fs::write(work.path().join("a.txt"), "one\n").unwrap();
+    std::fs::create_dir_all(agent.path().join("ext")).unwrap();
+    let budget = json!({ "checkpoint": { "stageBudgetSeconds": 0.001 } });
+    std::fs::write(agent.path().join("ext/rewind.json"), budget.to_string()).unwrap();
+    let mut host = Host::start();
+    let ctx = start(&mut host, work.path(), agent.path(), false).await;
+    let assistant = json!({ "type": "message_start", "message": { "role": "assistant" } });
+
+    let first = json!([user("u1", "edit a")]);
+    let mut on_first = |method: &str, _: &Value| match method {
+        "session.getBranch" => first.clone(),
+        _ => Value::Null,
+    };
+    host.event("message_start", assistant.clone(), &ctx, &mut on_first)
+        .await;
+    std::fs::write(work.path().join("a.txt"), "two\n").unwrap();
+    for i in 0..1200 {
+        let dir = work.path().join(format!("gen/d{}", i / 100));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("f{i}.txt")), format!("{i}\n")).unwrap();
+    }
+    let end = json!({ "type": "agent_end" });
+    host.event("agent_end", end.clone(), &ctx, &mut |_, _| Value::Null)
+        .await;
+
+    let second = json!([user("u1", "edit a"), user("u2", "edit c")]);
+    let mut on_second = |method: &str, _: &Value| match method {
+        "session.getBranch" => second.clone(),
+        _ => Value::Null,
+    };
+    host.event("message_start", assistant, &ctx, &mut on_second)
+        .await;
+    std::fs::write(work.path().join("c.txt"), "later\n").unwrap();
+    for _ in 0..3 {
+        host.event("agent_end", end.clone(), &ctx, &mut |_, _| Value::Null)
+            .await;
+    }
+
+    for entry in host.called("session.appendEntry") {
+        let data = &entry["data"];
+        let files = data["fileChanges"].to_string();
+        assert!(
+            data["userEntryId"] != "u1" || !files.contains("c.txt"),
+            "turn u1 got a later edit: {data}"
+        );
+    }
+    let notices = host.called("ui.notify");
+    let dropped = notices
+        .iter()
+        .filter(|n| {
+            n["message"]
+                .to_string()
+                .contains("checkpoint of the previous turn")
+        })
+        .count();
+    assert_eq!(dropped, 1, "{notices:?}");
+}

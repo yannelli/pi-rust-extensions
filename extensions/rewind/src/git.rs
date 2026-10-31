@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use pi_ext_sdk::{Error, Result, bail, info};
 use serde::{Deserialize, Serialize};
 
-use crate::gitcmd::{failure, git_output, path_str, run_git};
+use crate::gitcmd::{GIT_TIMEOUT, path_str, run_git};
 use crate::nested;
+use crate::stage::Staged;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -14,11 +16,19 @@ pub struct FileChange {
     pub removed: u64,
 }
 
+/// A snapshot commit, or the staging progress when the deadline passed first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Taken {
+    Commit(String),
+    Partial { staged: usize, remaining: usize },
+}
+
 /// A bare repo under the extension state dir whose work tree is the session cwd.
 #[derive(Debug, Clone)]
 pub struct ShadowRepo {
     git_dir: PathBuf,
     work_tree: PathBuf,
+    add_timeout: Duration,
 }
 
 impl ShadowRepo {
@@ -26,11 +36,42 @@ impl ShadowRepo {
         Self {
             git_dir: storage.join(".git"),
             work_tree: work_tree.to_path_buf(),
+            add_timeout: GIT_TIMEOUT,
         }
+    }
+
+    /// How long git may take to store one batch of files.
+    pub fn with_add_timeout(mut self, timeout: Duration) -> Self {
+        self.add_timeout = timeout;
+        self
+    }
+
+    pub fn add_timeout(&self) -> Duration {
+        self.add_timeout
+    }
+
+    fn skip_file(&self) -> PathBuf {
+        self.git_dir.join("info").join("pi-rewind-skip")
+    }
+
+    /// Leaves `path` out of later snapshots.
+    pub(crate) fn skip_path(&self, path: &str) -> Result<()> {
+        use std::io::Write;
+        std::fs::create_dir_all(self.git_dir.join("info"))?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.skip_file())?;
+        writeln!(file, "{}", exclude_line(path))?;
+        Ok(())
     }
 
     pub fn git_dir(&self) -> &Path {
         &self.git_dir
+    }
+
+    pub fn work_tree(&self) -> &Path {
+        &self.work_tree
     }
 
     pub fn exists(&self) -> bool {
@@ -84,7 +125,7 @@ impl ShadowRepo {
         self.configure().await
     }
 
-    fn full_args<'a>(&'a self, args: &[&'a str]) -> Result<Vec<&'a str>> {
+    pub(crate) fn full_args<'a>(&'a self, args: &[&'a str]) -> Result<Vec<&'a str>> {
         let mut full = vec![
             "--git-dir",
             path_str(&self.git_dir)?,
@@ -102,6 +143,9 @@ impl ShadowRepo {
     pub async fn write_exclude(&self, patterns: &[String]) -> Result<()> {
         let mut lines = patterns.to_vec();
         lines.extend(nested::nested_repos(&self.work_tree, patterns));
+        if let Ok(skipped) = std::fs::read_to_string(self.skip_file()) {
+            lines.extend(skipped.lines().map(String::from));
+        }
         if let Ok(inside) = self.git_dir.strip_prefix(&self.work_tree) {
             lines.push(format!("/{}/", inside.parent().unwrap_or(inside).display()));
         }
@@ -111,9 +155,13 @@ impl ShadowRepo {
         Ok(())
     }
 
-    /// Stages the work tree into the shadow index, skipping files over `max_bytes`.
+    /// Stages the whole work tree into the shadow index, skipping files over `max_bytes`.
     pub async fn stage_all(&self, patterns: &[String], max_bytes: Option<u64>) -> Result<()> {
-        self.write_exclude(patterns).await?;
+        self.stage(patterns, max_bytes, None).await.map(drop)
+    }
+
+    /// Drops index entries that the excludes now ignore.
+    pub(crate) async fn unstage_ignored(&self) -> Result<()> {
         let ignored = self
             .git(&["ls-files", "-z", "-i", "-c", "--exclude-standard"])
             .await?;
@@ -123,26 +171,7 @@ impl ShadowRepo {
             args.extend_from_slice(chunk);
             self.git(&args).await?;
         }
-        let oversized = self.oversized(max_bytes).await?;
-        let excludes: Vec<String> = oversized
-            .iter()
-            .map(|path| format!(":(exclude,literal){path}"))
-            .collect();
-        let mut args = vec!["add", "-A", "--ignore-errors", "--", "."];
-        args.extend(excludes.iter().map(String::as_str));
-        let full = self.full_args(&args)?;
-        let output = git_output(Some(&self.work_tree), &full).await?;
-        if output.status.success() {
-            return Ok(());
-        }
-        let unreadable = unreadable_files(&String::from_utf8_lossy(&output.stderr));
-        match unreadable {
-            Some(paths) => {
-                info!("checkpoint skipped unreadable files: {}", paths.join(", "));
-                Ok(())
-            }
-            None => bail!("{}", failure(&full, &output)),
-        }
+        Ok(())
     }
 
     /// Removes git lock files of a killed git run. Callers hold the storage lock, so no
@@ -161,24 +190,6 @@ impl ShadowRepo {
                 info!("removed stale {}", path.display());
             }
         }
-    }
-
-    async fn oversized(&self, max_bytes: Option<u64>) -> Result<Vec<String>> {
-        let Some(max) = max_bytes else {
-            return Ok(Vec::new());
-        };
-        let listed = self
-            .git(&["ls-files", "-z", "-m", "-o", "--exclude-standard"])
-            .await?;
-        Ok(listed
-            .split('\0')
-            .filter(|path| !path.is_empty())
-            .filter(|path| {
-                std::fs::metadata(self.work_tree.join(path))
-                    .is_ok_and(|meta| meta.is_file() && meta.len() > max)
-            })
-            .map(String::from)
-            .collect())
     }
 
     async fn head(&self) -> Option<String> {
@@ -236,6 +247,21 @@ impl ShadowRepo {
         self.commit_staged(message, base).await
     }
 
+    /// [`Self::snapshot`] that commits only when staging finishes before `deadline`.
+    pub async fn snapshot_within(
+        &self,
+        message: &str,
+        base: Option<&str>,
+        patterns: &[String],
+        max_bytes: Option<u64>,
+        deadline: Instant,
+    ) -> Result<Taken> {
+        match self.stage(patterns, max_bytes, Some(deadline)).await? {
+            Staged::Complete => self.commit_staged(message, base).await.map(Taken::Commit),
+            Staged::Partial { staged, remaining } => Ok(Taken::Partial { staged, remaining }),
+        }
+    }
+
     pub async fn numstat(&self, from: &str, to: &str) -> Result<Vec<FileChange>> {
         if from == to {
             return Ok(Vec::new());
@@ -254,7 +280,7 @@ impl ShadowRepo {
 }
 
 /// Paths `git add --ignore-errors` could not read, or `None` when it failed for another reason.
-fn unreadable_files(stderr: &str) -> Option<Vec<String>> {
+pub(crate) fn unreadable_files(stderr: &str) -> Option<Vec<String>> {
     let mut paths = Vec::new();
     for line in stderr
         .lines()
@@ -286,6 +312,21 @@ pub fn parse_numstat(out: &str) -> Vec<FileChange> {
         .collect()
 }
 
+/// An anchored exclude pattern that matches only `path`.
+fn exclude_line(path: &str) -> String {
+    let mut line = String::from("/");
+    for c in path.chars() {
+        if matches!(c, '\\' | '*' | '?' | '[') {
+            line.push('\\');
+        }
+        line.push(c);
+    }
+    if line.ends_with(' ') {
+        line.insert(line.trim_end_matches(' ').len(), '\\');
+    }
+    line
+}
+
 fn valid_ref(commit: &str) -> bool {
     !commit.trim().is_empty() && !commit.contains(['\0', '\n', '\r']) && !commit.starts_with('-')
 }
@@ -311,6 +352,13 @@ mod tests {
         assert_eq!(unreadable_files(locked), None);
         assert_eq!(unreadable_files(&format!("{skipped}{locked}")), None);
         assert_eq!(unreadable_files(""), None);
+    }
+
+    #[test]
+    fn exclude_lines_match_one_literal_path() {
+        assert_eq!(exclude_line("a/b.bin"), "/a/b.bin");
+        assert_eq!(exclude_line("x*[1]?.iso"), "/x\\*\\[1]\\?.iso");
+        assert_eq!(exclude_line("trail "), "/trail\\ ");
     }
 
     #[test]

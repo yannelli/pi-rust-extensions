@@ -14,6 +14,8 @@ pub mod lifecycle;
 pub mod lock;
 mod nested;
 pub mod rewind;
+mod stage;
+pub use stage::Staged;
 pub mod state;
 #[doc(hidden)]
 pub mod testdir;
