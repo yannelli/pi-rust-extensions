@@ -106,6 +106,9 @@ pub struct ExecRequest {
     /// Written to the process's standard input, which then closes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stdin: Option<String>,
+    /// Combined stdout and stderr bytes before pi stops the command (default 256 MiB).
+    #[serde(rename = "maxBuffer", skip_serializing_if = "Option::is_none")]
+    pub max_buffer: Option<u64>,
 }
 
 impl ExecRequest {
@@ -131,6 +134,13 @@ impl ExecRequest {
         self.stdin = Some(stdin.into());
         self
     }
+
+    /// Stop the command after `bytes` of stdout and stderr together; the output is then
+    /// [`ExecOutput::truncated`]. Hosts before `maxBuffer` cap the output at 16 MiB.
+    pub fn max_buffer(mut self, bytes: u64) -> Self {
+        self.max_buffer = Some(bytes);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -140,6 +150,8 @@ pub struct ExecOutput {
     pub stderr: String,
     pub code: Option<i64>,
     pub killed: bool,
+    /// The output went over `maxBuffer` and is incomplete; `false` from older hosts.
+    pub truncated: bool,
 }
 
 impl ExecOutput {
@@ -248,6 +260,23 @@ mod tests {
             piped,
             json!({ "command": "cat", "args": ["-"], "stdin": "text" })
         );
+    }
+
+    #[test]
+    fn exec_max_buffer_is_sent_and_truncated_defaults_to_false() {
+        let capped =
+            serde_json::to_value(ExecRequest::new("yes", &[] as &[&str]).max_buffer(1024)).unwrap();
+        assert_eq!(
+            capped,
+            json!({ "command": "yes", "args": [], "maxBuffer": 1024 })
+        );
+        let new_host =
+            json!({ "stdout": "y", "stderr": "", "code": 1, "killed": true, "truncated": true });
+        let output: ExecOutput = serde_json::from_value(new_host).unwrap();
+        assert!(output.truncated && output.killed && !output.success());
+        let old_host = json!({ "stdout": "ok", "stderr": "", "code": 0, "killed": false });
+        let output: ExecOutput = serde_json::from_value(old_host).unwrap();
+        assert!(!output.truncated && output.success());
     }
 
     #[test]
