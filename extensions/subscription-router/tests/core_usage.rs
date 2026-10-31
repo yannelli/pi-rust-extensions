@@ -123,7 +123,7 @@ async fn codex_reads_map_durations_credits_and_skip_extra_limits() {
     let service = UsageService::new(urls(&mock), None);
     let answer = json!({ "provider": "openai-codex-2", "plan": "pro", "fetchedAt": 5, "credits": { "available": true, "unlimited": false, "balance": "3" },
         "windows": [
-            { "label": "5h", "usedPercent": 10, "windowMinutes": 300, "scope": "provider", "id": "primary_window", "resetsAtMs": 900 },
+            { "label": "5h", "usedPercent": 10, "windowMinutes": 300, "windowSeconds": 18000, "scope": "provider", "id": "primary_window", "resetsAtMs": 900 },
             { "label": "Secondary", "usedPercent": 20, "windowMinutes": null, "scope": "provider", "id": "secondary_window" },
             { "label": "Spark 5h", "usedPercent": 99, "windowMinutes": 300, "scope": "provider", "id": "Spark/primary_window" }
         ] });

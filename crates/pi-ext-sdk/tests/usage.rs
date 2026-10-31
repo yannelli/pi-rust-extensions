@@ -53,11 +53,13 @@ async fn usage_decodes_windows_and_tolerates_nulls() {
                 used_percent: 42.5,
                 resets_at: Some("2026-10-30T17:00:00Z".into()),
                 window_minutes: Some(300),
+                ..UsageWindow::default()
             },
             UsageWindow::default(),
         ],
         error: None,
         fetched_at: 1_793_379_600_000,
+        ..ProviderUsage::default()
     };
     let cursor = ProviderUsage {
         provider: "cursor".into(),
