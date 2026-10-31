@@ -124,6 +124,11 @@ impl Panel {
         self.host.surfaces().width(&self.surface)
     }
 
+    /// The terminal rows from the last `ui.resize`; `None` when pi did not send a height.
+    pub fn height(&self) -> Option<usize> {
+        self.host.surfaces().height(&self.surface)
+    }
+
     /// Replaces the panel lines (`ui.update`).
     pub fn set_lines<I, S>(&self, lines: I) -> Result<()>
     where

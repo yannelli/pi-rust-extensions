@@ -271,4 +271,6 @@ impl View {
 }
 
 #[cfg(test)]
+mod height_tests;
+#[cfg(test)]
 mod tests;

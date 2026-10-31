@@ -117,14 +117,14 @@ fn renders_within_40_and_100_columns() {
             view.mode = Mode::List;
             view.query.clear();
             press(&mut view, &rows, keys);
-            for line in view.render(&rows, width) {
+            for line in view.render(&rows, width, None) {
                 assert!(style::visible_width(&line) <= width, "{width}: {line:?}");
             }
         }
     }
     view.mode = Mode::List;
     view.query.clear();
-    let wide = plain(&view.render(&rows, 100)).join("\n");
+    let wide = plain(&view.render(&rows, 100, None)).join("\n");
     for text in [
         "[All (5)]",
         "Claude Code (2)",
@@ -140,7 +140,7 @@ fn renders_within_40_and_100_columns() {
     ] {
         assert!(wide.contains(text), "missing {text}:\n{wide}");
     }
-    let narrow = plain(&view.render(&rows, 40));
+    let narrow = plain(&view.render(&rows, 40, None));
     assert!(
         narrow.iter().any(|l| l.contains("● PreToolUse Bash G✓")),
         "{narrow:#?}"
@@ -160,7 +160,7 @@ fn renders_within_40_and_100_columns() {
     ] {
         assert!(footer.contains(key), "missing {key}: {footer}");
     }
-    println!("{}", plain(&view.render(&rows, 100)).join("\n"));
+    println!("{}", plain(&view.render(&rows, 100, None)).join("\n"));
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn details_show_command_timeout_flags_and_file() {
     let rows = rows();
     let mut view = View::new(true);
     press(&mut view, &rows, &["\r"]);
-    let text = plain(&view.render(&rows, 40)).join("\n");
+    let text = plain(&view.render(&rows, 40, None)).join("\n");
     for part in [
         "PreToolUse · Bash",
         "Claude Code, global",
@@ -271,7 +271,7 @@ fn add_asks_for_scope_and_refuses_untrusted_project() {
             .as_deref()
             .is_some_and(|s| s.contains("not trusted"))
     );
-    let text = plain(&view.render(&rows, 40)).join("\n");
+    let text = plain(&view.render(&rows, 40, None)).join("\n");
     assert!(text.contains("not trusted"), "{text}");
     assert_eq!(
         press(&mut view, &rows, &["a", "g"]),
