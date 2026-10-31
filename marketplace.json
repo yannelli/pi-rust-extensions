@@ -7,7 +7,7 @@
       "name": "ask-user-question",
       "displayName": "Ask User Question",
       "description": "Tabbed questionnaire tool (ask_user_question) for structured answers from the user.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "ask-user-question"
       ],
@@ -20,7 +20,7 @@
       "name": "background-tasks",
       "displayName": "Background Tasks",
       "description": "Durable background shell jobs with output and task management.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "background-tasks"
       ],
@@ -33,7 +33,7 @@
       "name": "chrome",
       "displayName": "Chrome",
       "description": "Control Chrome through the DevTools Protocol with session authorization.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "chrome"
       ],
@@ -46,7 +46,7 @@
       "name": "claude-marketplace",
       "displayName": "Claude Marketplace",
       "description": "Add Claude Code plugin marketplaces and install their commands, skills, agents, hooks, and MCP servers into pi.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "claude-marketplace"
       ],
@@ -60,7 +60,7 @@
       "name": "computer-use",
       "displayName": "Computer Use",
       "description": "Observe desktop windows and send keyboard and pointer input.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "computer-use"
       ],
@@ -73,7 +73,7 @@
       "name": "context-include",
       "displayName": "Context Include",
       "description": "Expand @path.md lines in AGENTS.md context files into an extra system prompt section.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "context-include"
       ],
@@ -85,7 +85,7 @@
       "name": "goal",
       "displayName": "Goal",
       "description": "Persistent goals, task trees, autonomous continuation, and completion audits.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "goal"
       ],
@@ -98,7 +98,7 @@
       "name": "hooks",
       "displayName": "Hooks",
       "description": "Run Claude Code and Codex hooks (PreToolUse, PostToolUse, Stop, and more) from pi, with per-hook trust.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "hooks"
       ],
@@ -113,7 +113,7 @@
       "name": "iterm2",
       "displayName": "iTerm2",
       "description": "iTerm2 integration: tab color follows the agent state, session badge, status bar user variables, attention requests, and /terminal-setup.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "iterm2"
       ],
@@ -126,7 +126,7 @@
       "name": "lens",
       "displayName": "Lens",
       "description": "Post-write formatters, linters, type checks, LSP diagnostics and a read-before-edit guard.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "lens"
       ],
@@ -141,7 +141,7 @@
       "name": "ollama",
       "displayName": "Ollama",
       "description": "Discovers models from a local Ollama, registers the ollama provider, and manages models with /ollama.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "ollama"
       ],
@@ -155,7 +155,7 @@
       "name": "permissions",
       "displayName": "Permissions",
       "description": "Allow, ask, and deny rules for pi tool calls, loaded from Claude Code settings, Codex rules files, and pi's own rules, with /permissions to pick sources and scope.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "permissions"
       ],
@@ -170,7 +170,7 @@
       "name": "rewind",
       "displayName": "Rewind",
       "description": "Per-turn shadow git checkpoints and conversation restoration.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "rewind"
       ],
@@ -183,7 +183,7 @@
       "name": "ssh",
       "displayName": "SSH",
       "description": "Reusable SSH profiles, shared connections, remote tools, and remote bash mode.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "ssh"
       ],
@@ -197,7 +197,7 @@
       "name": "statusline",
       "displayName": "Status line",
       "description": "Configurable footer status line: builtin presets and themes, command scripts, Claude Code, Cursor, and Codex status lines, and the /statusline editor.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "statusline"
       ],
@@ -210,7 +210,7 @@
       "name": "subagents",
       "displayName": "Subagents",
       "description": "Delegate tasks to child pi agents (explore, build, advisor, custom) in the foreground, background, or in parallel.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "subagents"
       ],
@@ -224,7 +224,7 @@
       "name": "todo",
       "displayName": "Todo",
       "description": "Phased todo plans with dependencies, per-subagent scopes, a widget above the editor, and /todos.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "todo"
       ],
@@ -237,7 +237,7 @@
       "name": "typesafe",
       "displayName": "TypeSafe",
       "description": "Structured TypeSafe judgments with session controls and usage limits.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "typesafe"
       ],
@@ -251,7 +251,7 @@
       "name": "web-search",
       "displayName": "Web Search",
       "description": "Search the web and read URLs with model-native and search providers.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "web-search"
       ],
@@ -264,7 +264,7 @@
       "name": "compactor",
       "displayName": "Compactor",
       "description": "Zero-LLM structured compaction summaries or LLM summaries with an active-work header, plus session recall and context budget tools.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "compactor"
       ],
@@ -277,7 +277,7 @@
       "name": "observational-memory",
       "displayName": "Observational Memory",
       "description": "Records observations and reflections during a session, uses them as the compaction summary, and adds a recall tool.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "observational-memory"
       ],
@@ -290,7 +290,7 @@
       "name": "subscription-router",
       "displayName": "Subscription Router",
       "description": "Several ChatGPT Codex and Anthropic subscription accounts as provider slots, quota-aware slot selection, 429 failover, and router/<profile> virtual models.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "args": [
         "subscription-router"
       ],
