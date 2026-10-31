@@ -88,12 +88,8 @@ async fn submit(host: &mut Host) -> String {
     let (updated, failed) = host.tool("update_goal_task", done).await;
     assert!(!failed && updated.contains("1/1 complete"), "{updated}");
     let complete = json!({ "status": "complete", "completion_summary": "Notes written." });
-    let (submitted, failed) = host.tool("update_goal", complete).await;
-    assert!(
-        !failed && submitted.starts_with("Completion submitted"),
-        "{submitted}"
-    );
-    let message = host.wait_for("session.sendMessage").await;
+    let (verdict, failed) = host.tool("update_goal", complete).await;
+    assert!(!failed, "{verdict}");
     let request = host.called("llm.complete");
     assert_eq!(request.len(), 1);
     let prompt = request[0]["prompt"].as_str().unwrap_or_default();
@@ -101,7 +97,7 @@ async fn submit(host: &mut Host) -> String {
         prompt.contains(OBJECTIVE) && prompt.contains("Notes written."),
         "{prompt}"
     );
-    message["content"].as_str().unwrap_or_default().to_string()
+    verdict
 }
 
 #[tokio::test]
