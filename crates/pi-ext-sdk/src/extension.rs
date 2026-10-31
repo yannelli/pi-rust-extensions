@@ -9,7 +9,8 @@ use crate::ctx::{CommandCtx, EventCtx, ToolCtx};
 use crate::error::Result;
 use crate::handler;
 use crate::host::Host;
-use crate::registry::{Command, Registry, VirtualModel};
+use crate::registry::{Command, Registry, VirtualModel, put};
+use crate::render::{EntryRender, MessageRender, ToolCallRender, ToolResultRender};
 use crate::reply::{EventReply, ToolResult};
 use crate::spec::{
     AutocompleteRequest, CommandSpec, CompletionItem, FlagSpec, RouteRequest, ShortcutSpec,
@@ -44,6 +45,78 @@ impl Extension {
         Fut: Future<Output = Result<R>> + Send + 'static,
     {
         self.registry.put_tool(spec, handler::tool(run));
+        self
+    }
+
+    /// Prepares the raw arguments of tool `name` before pi validates them (upstream
+    /// `prepareArguments`), for example to accept an old argument shape. Returns the new arguments.
+    pub fn prepare_arguments<F, Fut>(mut self, name: &str, prepare: F) -> Self
+    where
+        F: Fn(Value, Host) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Value>> + Send + 'static,
+    {
+        put(
+            &mut self.registry.prepare,
+            name,
+            handler::with_host(prepare),
+        );
+        self
+    }
+
+    /// Draws the call row of tool `name` (upstream `renderCall`). pi asks once per width and
+    /// input, and draws the lines when they arrive; `None` draws no lines.
+    pub fn render_tool_call<F, Fut>(mut self, name: &str, render: F) -> Self
+    where
+        F: Fn(ToolCallRender, Host) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+    {
+        put(
+            &mut self.registry.call_renderers,
+            name,
+            handler::with_host(render),
+        );
+        self
+    }
+
+    /// Draws the result row of tool `name` (upstream `renderResult`).
+    pub fn render_tool_result<F, Fut>(mut self, name: &str, render: F) -> Self
+    where
+        F: Fn(ToolResultRender, Host) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+    {
+        put(
+            &mut self.registry.result_renderers,
+            name,
+            handler::with_host(render),
+        );
+        self
+    }
+
+    /// Draws custom messages of `custom_type` (upstream `registerMessageRenderer`).
+    pub fn message_renderer<F, Fut>(mut self, custom_type: &str, render: F) -> Self
+    where
+        F: Fn(MessageRender, Host) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+    {
+        put(
+            &mut self.registry.message_renderers,
+            custom_type,
+            handler::with_host(render),
+        );
+        self
+    }
+
+    /// Draws custom session entries of `custom_type` (upstream `registerEntryRenderer`).
+    pub fn entry_renderer<F, Fut>(mut self, custom_type: &str, render: F) -> Self
+    where
+        F: Fn(EntryRender, Host) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+    {
+        put(
+            &mut self.registry.entry_renderers,
+            custom_type,
+            handler::with_host(render),
+        );
         self
     }
 

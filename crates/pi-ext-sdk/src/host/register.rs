@@ -7,7 +7,8 @@ use super::Host;
 use crate::ctx::{CommandCtx, EventCtx, ToolCtx};
 use crate::error::Result;
 use crate::handler;
-use crate::registry::{Command, VirtualModel};
+use crate::registry::{Command, VirtualModel, put};
+use crate::render::{EntryRender, MessageRender};
 use crate::reply::{EventReply, ToolResult};
 use crate::spec::{
     AutocompleteRequest, CommandSpec, FlagSpec, RouteRequest, ShortcutSpec, Suggestions, ToolSpec,
@@ -26,8 +27,12 @@ impl Host {
         F: Fn(A, ToolCtx) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<R>> + Send + 'static,
     {
-        let params = serde_json::to_value(&spec)?;
-        self.registry().put_tool(spec, handler::tool(run));
+        let params = {
+            let mut registry = self.registry();
+            let params = serde_json::to_value(registry.tool_spec(&spec))?;
+            registry.put_tool(spec, handler::tool(run));
+            params
+        };
         self.call("register.tool", params).await.map(drop)
     }
 
@@ -116,6 +121,42 @@ impl Host {
             .autocomplete
             .push((triggers, handler::with_host(run)));
         self.call("register.autocomplete", params).await.map(drop)
+    }
+
+    /// [`crate::Extension::message_renderer`] after `initialize`.
+    pub async fn register_message_renderer<F, Fut>(
+        &self,
+        custom_type: &str,
+        render: F,
+    ) -> Result<()>
+    where
+        F: Fn(MessageRender, Host) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+    {
+        put(
+            &mut self.registry().message_renderers,
+            custom_type,
+            handler::with_host(render),
+        );
+        let params = json!({ "customType": custom_type });
+        self.call("register.messageRenderer", params)
+            .await
+            .map(drop)
+    }
+
+    /// [`crate::Extension::entry_renderer`] after `initialize`.
+    pub async fn register_entry_renderer<F, Fut>(&self, custom_type: &str, render: F) -> Result<()>
+    where
+        F: Fn(EntryRender, Host) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+    {
+        put(
+            &mut self.registry().entry_renderers,
+            custom_type,
+            handler::with_host(render),
+        );
+        let params = json!({ "customType": custom_type });
+        self.call("register.entryRenderer", params).await.map(drop)
     }
 
     /// Registers a virtual model; pi sends `virtualModel.route` to `route` for each request.

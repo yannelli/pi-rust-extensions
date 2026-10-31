@@ -1,6 +1,6 @@
 # pi-ext-sdk
 
-Created 2026-10-29. Last updated 2026-10-29.
+Created 2026-10-29. Last updated 2026-10-31.
 
 Rust SDK for pi-rust native extensions. pi starts the extension as a child process and talks JSON-RPC 2.0 with it, one JSON object per line on stdin and stdout. The protocol is in `docs/extensions/native-protocol.md` in the pi-rust repo (protocol version 1). The SDK runs the protocol loop. You register tools, commands, and event handlers, and you call pi through a `Host` handle.
 
@@ -57,7 +57,10 @@ pub fn main() -> ExitCode {
 | `.shortcut(key, description, \|ctx: CommandCtx\| ...)` | Adds a shortcut such as `ctrl+shift+t`. |
 | `.flag(FlagSpec::boolean("plan").default(false))` | Adds a CLI flag. |
 | `.on(event, \|ev: EventCtx\| async { Ok(EventReply) })` | Handles a pi event. `Ok(())` also works and means no change. |
-| `.provider(name, config)` | Declares a provider (`baseUrl`, `api`, `apiKey`, `headers`, `models`, `oauth`). |
+| `.provider(name, config)` | Declares a provider (`baseUrl`, `api`, `apiKey`, `headers`, `models`, `oauth`). `OAuthSpec::builtin("anthropic").name("Anthropic #2").to_value()` gives it a login flow of pi. |
+| `.prepare_arguments(tool, \|args: Value, host\| ...)` | Changes the raw arguments of a tool before pi validates them. Returns the new arguments. |
+| `.render_tool_call(tool, \|req: ToolCallRender, host\| ...)`, `.render_tool_result(tool, ...)` | Draws the call or result row of a tool. Return `Some(lines)` for `req.width` columns, or `None` for no lines. |
+| `.message_renderer(custom_type, ...)`, `.entry_renderer(custom_type, ...)` | Draws custom messages or custom session entries of one type. |
 | `.virtual_model(definition, \|req: RouteRequest, host\| ...)` | Declares a virtual model and its route handler. |
 | `.autocomplete(&["@"], \|req: AutocompleteRequest, host\| ...)` | Editor suggestions. Return `None` to keep the suggestions of pi. |
 | `.on_start(\|host\| ...)` | Runs in its own task at the first `session_start`, when `host.snapshot()` holds the session ctx. |
@@ -111,14 +114,23 @@ When you drop a `Host` request future, the SDK sends `$/cancelRequest` to pi. pi
 | Surfaces | `surface_events()` (resize and close of `widget:<key>` and `footer`), `surface_width(surface)` |
 | Session | `send_message(CustomMessage)`, `send_user_message`, `append_entry(custom_type, &T)`, `entries()`, `branch(from_id)`, `entries_of::<T>(custom_type)`, `set_session_name`, `session_name` |
 | Model and tools | `model`, `set_model`, `thinking_level`, `set_thinking_level`, `active_tools`, `set_active_tools`, `all_tools`, `all_commands`, `flag::<T>(name)` |
-| Settings | `settings::<T>(namespace)` returns `Option<T>`, `all_settings()` |
+| Settings | `settings::<T>(namespace)` returns `Option<T>`, `all_settings()`, `set_settings(namespace, value, SettingsScope::Global)` |
 | Context | `compact`, `abort`, `is_idle`, `context_usage`, `system_prompt` |
-| Other | `complete(LlmRequest)`, `provider_auth`, `usage(provider)` and `usage_with(provider, refresh)` (`usage.get`), `emit(channel, data)`, `subscribe(channel)`, `exec(cmd, &args)`, `exec_with(ExecRequest)`, `register_provider`, `unregister_provider` |
-| Later registration | `register_tool`, `register_command`, `register_shortcut`, `register_flag`, `on(event, handler)`, `register_autocomplete`, `register_virtual_model`, `unregister_virtual_model` |
+| Other | `complete(LlmRequest)`, `provider_auth`, `login(provider)` (pi's `/login` dialog), `keybindings(&ids)`, `usage(provider)` and `usage_with(provider, refresh)` (`usage.get`), `emit(channel, data)`, `subscribe(channel)`, `exec(cmd, &args)`, `exec_with(ExecRequest)`, `register_provider`, `unregister_provider` |
+| Later registration | `register_tool`, `register_command`, `register_shortcut`, `register_flag`, `on(event, handler)`, `register_autocomplete`, `register_message_renderer`, `register_entry_renderer`, `register_virtual_model`, `unregister_virtual_model` |
 
 `subscribe` returns a `Subscription`. Call `recv().await` or `recv_as::<T>().await`. When you drop the last subscription of a channel, the SDK sends `events.unsubscribe`.
 
 `entries_of::<T>(custom_type)` reads `session.getBranch` and returns the `data` of each `custom` entry with that `customType`. It skips entries whose data does not deserialize into `T`.
+
+## Renderers
+
+pi asks a renderer for the lines of one row at one width, and draws the row when the answer arrives. pi does not wait: the row shows its last lines until then. pi keeps the lines of each width, so one input and width costs one request. The protocol section "Renderers" has the details. `examples/cards.rs` draws a tool row, a custom message, and a session entry.
+
+- Keep renderers fast and free of side effects. A slow renderer delays only its own row.
+- Fit each line to `req.width` with `style::truncate`. pi cuts longer lines.
+- For key hints, read `host.keybindings(&["app.tools.expand"])` once and keep the map (upstream `keyHint`).
+- pi-rust 0.8.5 and older ignore renderers and `prepare_arguments`. They draw the default rows and validate the raw arguments.
 
 ## Panels
 
