@@ -55,23 +55,42 @@ pub enum Fg {
     Rgb([u8; 3]),
 }
 
-/// One segment to draw. `bg` is the block color; `fg` is the color for text-only shapes.
+impl Fg {
+    /// The color as sRGB; a token uses its stand-in, as a block background does.
+    pub fn rgb(self) -> [u8; 3] {
+        match self {
+            Fg::Token(token) => token.rgb(),
+            Fg::Rgb(rgb) => rgb,
+        }
+    }
+}
+
+/// One segment to draw. `bg` is the block color; `fg` is the color for text-only shapes and the dot;
+/// `ink`, when set, paints the text of every shape in place of `fg` and of the contrast pick on blocks.
 pub struct Piece {
     pub text: String,
     pub fg: Fg,
     pub bg: [u8; 3],
+    pub ink: Option<Fg>,
 }
 
 /// Draws `pieces`; `right` mirrors the arrows of `powerline` and `slanted` for a right-aligned group.
 pub fn join(chip: Chip, pieces: &[Piece], separator: &str, right: bool) -> String {
     let fg = foreground;
     let bg = background;
-    let ink = |rgb: [u8; 3]| fg(ink_for(rgb));
-    let colored = |piece: &Piece, text: &str| match piece.fg {
+    let paint = |color: Fg, text: &str| match color {
         Fg::Token(token) => token.paint(text),
         Fg::Rgb(rgb) => format!("{}{text}{RESET}", fg(rgb)),
     };
-    let block = |piece: &Piece| format!("{}{} {} ", bg(piece.bg), ink(piece.bg), piece.text);
+    let colored = |piece: &Piece, text: &str| paint(piece.ink.unwrap_or(piece.fg), text);
+    let block = |piece: &Piece| match piece.ink {
+        Some(ink) => format!(
+            "{}{}",
+            bg(piece.bg),
+            paint(ink, &format!(" {} ", piece.text))
+        ),
+        None => format!("{}{} {} ", bg(piece.bg), fg(ink_for(piece.bg)), piece.text),
+    };
     let joined = |parts: Vec<String>| parts.join(&ThemeColor::Dim.paint(separator));
     match chip {
         Chip::Plain => joined(
@@ -89,7 +108,12 @@ pub fn join(chip: Chip, pieces: &[Piece], separator: &str, right: bool) -> Strin
         Chip::Dot => joined(
             pieces
                 .iter()
-                .map(|piece| format!("{} {}", colored(piece, "●"), piece.text))
+                .map(|piece| {
+                    let text = piece
+                        .ink
+                        .map_or_else(|| piece.text.clone(), |ink| paint(ink, &piece.text));
+                    format!("{} {text}", paint(piece.fg, "●"))
+                })
                 .collect(),
         ),
         Chip::Block => joined(

@@ -1,6 +1,8 @@
 //! A configurable footer status line for pi-rust: builtin presets, `command` scripts, and the
 //! status lines of Claude Code, Cursor, and Codex.
 
+pub mod badge_colors;
+pub mod badge_editor;
 pub mod builtin;
 pub mod chips;
 pub mod clock;

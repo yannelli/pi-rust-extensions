@@ -6,6 +6,8 @@ use pi_ext_sdk::Key;
 use pi_ext_sdk::style::{self, truncate};
 use serde_json::{Value, json};
 
+use crate::badge_colors::badge_lines;
+use crate::badge_editor::{BadgeEditor, BadgeOutput};
 use crate::builtin::BuiltinStatusLine;
 use crate::colors::ThemeColor;
 use crate::config::{StatusLineSettings, status_line_choice};
@@ -89,6 +91,8 @@ pub struct StatusLineEditor {
     pub value: Value,
     list: SettingsList,
     layout: Option<(Vec<Vec<Value>>, SettingsList)>,
+    badges: Option<BadgeEditor>,
+    badge_defaults: Value,
     save: Save,
     home: PathBuf,
     config_path: PathBuf,
@@ -106,6 +110,8 @@ impl StatusLineEditor {
             value,
             list,
             layout: None,
+            badges: None,
+            badge_defaults: json!({}),
             save,
             home,
             config_path: PathBuf::from("~/.pi/agent/ext/statusline.json"),
@@ -123,11 +129,35 @@ impl StatusLineEditor {
         self
     }
 
+    /// The inherited settings (global, for a project) that Badge colors shows under this scope's value.
+    /// Saving still writes only this scope's value with the edited `segments`.
+    pub fn with_badge_defaults(mut self, defaults: Value) -> Self {
+        self.badge_defaults = defaults;
+        self
+    }
+
+    fn over_defaults(&self, value: &Value) -> Value {
+        let mut merged = self.badge_defaults.as_object().cloned().unwrap_or_default();
+        merged.extend(value.as_object().cloned().unwrap_or_default());
+        Value::Object(merged)
+    }
+
     pub fn handle_input(&mut self, data: &str) {
         self.handle_key(&Key::parse(data));
     }
 
     pub fn handle_key(&mut self, key: &Key) {
+        if let Some(mut badges) = self.badges.take() {
+            match badges.handle_key(key) {
+                BadgeOutput::Cancel => {}
+                BadgeOutput::Apply(lines) => {
+                    self.apply_change("segments", &json!(lines).to_string());
+                    self.list.select_item("badges");
+                }
+                BadgeOutput::None => self.badges = Some(badges),
+            }
+            return;
+        }
         if let Some((mut lines, mut list)) = self.layout.take() {
             match list.handle_key(key) {
                 ListOutput::Cancel => return,
@@ -146,6 +176,10 @@ impl StatusLineEditor {
         match self.list.handle_key(key) {
             ListOutput::Cancel => self.closed = true,
             ListOutput::Change(id, selected) => self.apply_change(&id, &selected),
+            ListOutput::Open(id) if id == "badges" => {
+                let lines = badge_lines(&self.over_defaults(&self.value));
+                self.badges = Some(BadgeEditor::new(lines));
+            }
             ListOutput::Open(_) => {
                 let settings: StatusLineSettings =
                     serde_json::from_value(self.value.clone()).unwrap_or_default();
@@ -163,6 +197,13 @@ impl StatusLineEditor {
     /// The value the footer previews: the highlighted choice of an open value list or the
     /// unapplied layout, else the saved value. Other sources than builtin are not previewed.
     pub fn preview_value(&self) -> Value {
+        if let Some(badges) = &self.badges {
+            let lines = json!(badges.preview_lines()).to_string();
+            return match edit_value(&self.value, "segments", &lines, &self.home) {
+                Ok(value) => self.over_defaults(&value),
+                Err(_) => self.value.clone(),
+            };
+        }
         let highlighted = match &self.layout {
             Some((lines, list)) => match list.highlighted() {
                 Some((id, selected)) => {
@@ -207,9 +248,10 @@ impl StatusLineEditor {
         }
         lines.extend(preview.iter().cloned());
         lines.push(style::dim(&"─".repeat(width.min(60))));
-        match &self.layout {
-            Some((_, list)) => lines.extend(list.render(width)),
-            None => lines.extend(self.list.render(width)),
+        match (&self.badges, &self.layout) {
+            (Some(badges), _) => lines.extend(badges.render(width)),
+            (None, Some((_, list))) => lines.extend(list.render(width)),
+            (None, None) => lines.extend(self.list.render(width)),
         }
         lines
             .into_iter()
