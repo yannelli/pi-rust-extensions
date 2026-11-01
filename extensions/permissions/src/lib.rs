@@ -4,6 +4,7 @@ mod codex_config;
 mod evaluate;
 mod file_rules;
 mod files;
+mod guards;
 mod listing;
 mod load;
 mod mode;
@@ -56,10 +57,17 @@ async fn tool_call(paths: Arc<Paths>, ev: EventCtx) -> Result<EventReply> {
         dirs: &loaded.dirs,
     };
     let verdict = evaluate(&loaded.rules, &call);
+    if let (Some(Decision::Deny), Some(rule)) = (verdict.decision, &verdict.rule) {
+        return Ok(EventReply::block(ask::deny_reason(rule)));
+    }
+    match guards::guard(&loaded, &call, &verdict) {
+        Some(guards::Guard::Deny(reason)) => return Ok(EventReply::block(reason)),
+        Some(guards::Guard::Ask(reason)) => return ask::ask_protected(host, &call, &reason).await,
+        None => {}
+    }
     let mode = loaded.mode.as_ref();
     let dont_ask = mode.is_some_and(|(m, _)| *m == Mode::DontAsk);
     match (verdict.decision, &verdict.rule) {
-        (Some(Decision::Deny), Some(rule)) => Ok(EventReply::block(ask::deny_reason(rule))),
         (Some(Decision::Ask), Some(rule)) if dont_ask => Ok(EventReply::block(format!(
             "{} Claude dontAsk mode denies calls that would ask.",
             ask::deny_reason(rule)

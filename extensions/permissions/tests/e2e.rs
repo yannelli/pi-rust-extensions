@@ -292,3 +292,49 @@ network_rule(host="evil.example", protocol="ftp", decision="deny")"#,
         output.stderr
     );
 }
+
+#[test]
+fn a_write_to_a_claude_protected_path_is_blocked_without_a_ui_even_with_an_allow_rule() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let claude = tempfile::tempdir().unwrap();
+    let settings =
+        json!({ "permissions": { "defaultMode": "acceptEdits", "allow": ["Edit(./.claude/**)"] } });
+    std::fs::write(claude.path().join("settings.json"), settings.to_string()).unwrap();
+    let output = Run::new(cargo_bin("pi-rust-ext", "pi-rust-ext"))
+        .args(["permissions"])
+        .env("CLAUDE_CONFIG_DIR", claude.path().display().to_string())
+        .turns([
+            Turn::tool_call(
+                "write",
+                json!({ "path": ".claude/settings.json", "content": "{}" }),
+            ),
+            Turn::tool_call(
+                "write",
+                json!({ "path": "notes.txt", "content": "e2e-notes-ok" }),
+            ),
+            Turn::tool_call("read", json!({ "path": "notes.txt" })),
+            Turn::text("done"),
+        ])
+        .prompt("Write the files")
+        .run()
+        .unwrap();
+    let results: Vec<String> = output
+        .tool_results("write")
+        .iter()
+        .map(|e| e["result"]["content"].to_string())
+        .collect();
+    assert_eq!(results.len(), 2, "stderr: {}", output.stderr);
+    assert!(results[0].contains("Claude protected path"), "{results:?}");
+    let written = output.tool_results("write")[1];
+    assert!(
+        written["isError"] != true && written["result"]["isError"] != true,
+        "{written}"
+    );
+    let read = result_texts(&output, "read");
+    assert!(
+        read.len() == 1 && read[0].contains("e2e-notes-ok"),
+        "the ordinary write landed: {read:?}"
+    );
+}

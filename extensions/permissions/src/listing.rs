@@ -79,7 +79,11 @@ pub fn explain(loaded: &Loaded, call: &Call) -> Vec<String> {
         return vec![format!("{}: blocked ({reason})", call.tool)];
     }
     let verdict = evaluate(&loaded.rules, call);
-    let mut lines = vec![format!("{}: {}", call.tool, outcome(&verdict))];
+    let guard = (verdict.decision != Some(Decision::Deny))
+        .then(|| crate::guards::guard(loaded, call, &verdict))
+        .flatten();
+    let first = guard.map_or_else(|| outcome(&verdict), |guard| guard.describe());
+    let mut lines = vec![format!("{}: {first}", call.tool)];
     for (target, rule) in &verdict.targets {
         let why = match rule {
             Some(rule) => format!("{} by {}", rule.decision.name(), rule.describe()),

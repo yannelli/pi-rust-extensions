@@ -65,16 +65,36 @@ pub async fn ask(
         &[ALLOW_ONCE, DENY, DENY_REASON]
     };
     let choice = host.select(&title, options).await?;
-    match choice.as_deref() {
-        Some(ALLOW_ONCE) => Ok(EventReply::none()),
-        Some(ALLOW_ALWAYS) => {
-            let rules = suggestions(verdict, call.tool);
-            if save_always(host, loaded, &rules).await? {
-                Ok(EventReply::none())
-            } else {
-                Ok(EventReply::block(USER_DENIED))
-            }
+    if choice.as_deref() == Some(ALLOW_ALWAYS) {
+        let rules = suggestions(verdict, call.tool);
+        if save_always(host, loaded, &rules).await? {
+            return Ok(EventReply::none());
         }
+        return Ok(EventReply::block(USER_DENIED));
+    }
+    answer(host, choice.as_deref()).await
+}
+
+/// Asks about a write to a Claude protected path, without "Allow always": an allow rule would not apply.
+pub async fn ask_protected(host: &Host, call: &Call<'_>, reason: &str) -> Result<EventReply> {
+    if !host.has_ui() {
+        return Ok(EventReply::block(format!(
+            "Claude asks before this call: {reason}. There is no UI to ask the user."
+        )));
+    }
+    let title = format!(
+        "Allow this call?\n{}\nAsked because {reason}",
+        summary(call)
+    );
+    let choice = host
+        .select(&title, &[ALLOW_ONCE, DENY, DENY_REASON])
+        .await?;
+    answer(host, choice.as_deref()).await
+}
+
+async fn answer(host: &Host, choice: Option<&str>) -> Result<EventReply> {
+    match choice {
+        Some(ALLOW_ONCE) => Ok(EventReply::none()),
         Some(DENY_REASON) => {
             let reason = host.input("Reason for the model", None).await?;
             Ok(EventReply::block(
