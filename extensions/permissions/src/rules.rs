@@ -33,6 +33,7 @@ pub enum Source {
     ClaudeProject,
     ClaudeLocal,
     CodexManaged,
+    CodexSystem,
     CodexUser,
     CodexProject,
     PiGlobal,
@@ -40,12 +41,13 @@ pub enum Source {
 }
 
 impl Source {
-    pub const ALL: [Source; 9] = [
+    pub const ALL: [Source; 10] = [
         Source::ClaudeManaged,
         Source::ClaudeUser,
         Source::ClaudeProject,
         Source::ClaudeLocal,
         Source::CodexManaged,
+        Source::CodexSystem,
         Source::CodexUser,
         Source::CodexProject,
         Source::PiGlobal,
@@ -60,6 +62,7 @@ impl Source {
             Source::ClaudeProject => "claude-project",
             Source::ClaudeLocal => "claude-local",
             Source::CodexManaged => "codex-managed",
+            Source::CodexSystem => "codex-system",
             Source::CodexUser => "codex-user",
             Source::CodexProject => "codex-project",
             Source::PiGlobal | Source::PiProject => "pi",

@@ -38,8 +38,25 @@ pub struct Loaded {
     /// The mode for calls that no rule decides, with its label.
     pub mode: Option<(Mode, String)>,
     hosts: HashMap<String, Vec<String>>,
-    /// Codex user and project rules files that failed to parse.
+    /// Codex system, user, and project rules files that failed to parse.
     codex_failed: Vec<PathBuf>,
+    /// Codex rules folders and files that could not be read; Codex does not start then.
+    pub codex_unreadable: Vec<String>,
+}
+
+impl Loaded {
+    /// Why every tool call is blocked: a Codex rules folder or file cannot be read.
+    pub fn blocked(&self) -> Option<String> {
+        let first = self.codex_unreadable.first()?;
+        Some(format!(
+            "Codex rules cannot be read: {first}. Fix the path or turn off its source in /permissions."
+        ))
+    }
+
+    fn unreadable(&mut self, what: String) {
+        self.notes.push(format!("cannot read Codex rules {what}"));
+        self.codex_unreadable.push(what);
+    }
 }
 
 pub fn load(env: &Env) -> Loaded {
@@ -84,7 +101,9 @@ pub fn load(env: &Env) -> Loaded {
                 }
             }
             Source::CodexManaged => codex_requirements(&mut out, env),
-            Source::CodexUser | Source::CodexProject => codex_source(&mut out, source, env),
+            Source::CodexSystem | Source::CodexUser | Source::CodexProject => {
+                codex_source(&mut out, source, env)
+            }
             _ => claude_source(&mut out, source, env, managed_only),
         }
     }
@@ -242,7 +261,9 @@ fn claude_source(out: &mut Loaded, source: Source, env: &Env, managed_only: bool
 }
 
 fn codex_source(out: &mut Loaded, source: Source, env: &Env) {
-    let dirs: Vec<PathBuf> = if source == Source::CodexUser {
+    let dirs: Vec<PathBuf> = if source == Source::CodexSystem {
+        vec![env.paths.codex_system.join("rules")]
+    } else if source == Source::CodexUser {
         let root = project_root(&env.cwd, ".git");
         let config = codex_config::read_config(&env.paths.codex_home.join("config.toml"), &root);
         let fields = [
@@ -264,18 +285,35 @@ fn codex_source(out: &mut Loaded, source: Source, env: &Env) {
         dirs.into_iter().map(|d| d.join(".codex/rules")).collect()
     };
     for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        let mut files: Vec<PathBuf> = entries
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "rules"))
-            .collect();
-        files.sort();
-        for file in files {
-            codex_file(out, source, &file);
+        match rules_files(&dir) {
+            Ok(files) => {
+                for file in files {
+                    codex_file(out, source, &file);
+                }
+            }
+            Err(err) => out.unreadable(format!("{}: {err}", dir.display())),
         }
     }
+}
+
+/// The regular `*.rules` files of `dir` by name, as in Codex `collect_policy_files`: a missing `dir` has
+/// none, and a symlink or folder is skipped.
+fn rules_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_file() && path.extension().is_some_and(|x| x == "rules") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
 }
 
 fn attach_hosts(rules: &mut [Rule], hosts: &HashMap<String, Vec<String>>) {
@@ -308,7 +346,10 @@ fn codex_requirements(out: &mut Loaded, env: &Env) {
 }
 
 fn codex_file(out: &mut Loaded, source: Source, file: &Path) {
-    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(err) => return out.unreadable(format!("{}: {err}", file.display())),
+    };
     match codex::parse_rules(&text) {
         Ok(parsed) => {
             for name in parsed.skipped {
@@ -345,13 +386,17 @@ fn codex_file(out: &mut Loaded, source: Source, file: &Path) {
 }
 
 /// Like Codex `load_exec_policy_with_warning` (openai/codex 67f0994b `core/src/exec_policy.rs`): one bad
-/// user or project rules file drops every user and project rule and `host_executable`, and keeps managed rules.
+/// rules file drops every system, user, and project rule and `host_executable`, and keeps managed rules.
 fn drop_codex_rules_after_a_failure(out: &mut Loaded) {
     if out.codex_failed.is_empty() {
         return;
     }
-    out.rules
-        .retain(|rule| !matches!(rule.source, Source::CodexUser | Source::CodexProject));
+    out.rules.retain(|rule| {
+        !matches!(
+            rule.source,
+            Source::CodexSystem | Source::CodexUser | Source::CodexProject
+        )
+    });
     out.hosts.clear();
     let files: Vec<String> = out
         .codex_failed
@@ -359,7 +404,7 @@ fn drop_codex_rules_after_a_failure(out: &mut Loaded) {
         .map(|f| f.display().to_string())
         .collect();
     out.notes.push(format!(
-        "Codex user and project rules are not applied because these files have errors: {}",
+        "Codex system, user, and project rules are not applied because these files have errors: {}",
         files.join(", ")
     ));
 }
@@ -371,3 +416,7 @@ mod tests;
 #[cfg(test)]
 #[path = "load_mode_tests.rs"]
 mod mode_settings_tests;
+
+#[cfg(test)]
+#[path = "load_codex_tests.rs"]
+mod codex_loading_tests;

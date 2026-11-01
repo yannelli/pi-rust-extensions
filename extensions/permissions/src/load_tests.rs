@@ -2,14 +2,14 @@
 
 use super::*;
 
-struct Fixture {
+pub(super) struct Fixture {
     _dir: tempfile::TempDir,
-    paths: Paths,
-    agent: PathBuf,
-    cwd: PathBuf,
+    pub(super) paths: Paths,
+    pub(super) agent: PathBuf,
+    pub(super) cwd: PathBuf,
 }
 
-fn fixture() -> Fixture {
+pub(super) fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let cwd = root.join("project");
@@ -19,6 +19,7 @@ fn fixture() -> Fixture {
         claude_dir: root.join("home/.claude"),
         claude_managed: root.join("managed/managed-settings.json"),
         codex_home: root.join("home/.codex"),
+        codex_system: root.join("etc/codex"),
         codex_requirements: vec![root.join("etc/codex/requirements.toml")],
         agent_dir: Some(root.join("agent")),
     };
@@ -30,13 +31,13 @@ fn fixture() -> Fixture {
     }
 }
 
-fn write(path: &Path, text: &str) {
+pub(super) fn write(path: &Path, text: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, text).unwrap();
 }
 
 impl Fixture {
-    fn load(&self, trusted: bool) -> Loaded {
+    pub(super) fn load(&self, trusted: bool) -> Loaded {
         let env = Env {
             paths: &self.paths,
             agent_dir: self.agent.clone(),
@@ -46,12 +47,12 @@ impl Fixture {
         load(&env)
     }
 
-    fn user_rules(&self, name: &str, text: &str) {
+    pub(super) fn user_rules(&self, name: &str, text: &str) {
         write(&self.paths.codex_home.join("rules").join(name), text);
     }
 
     /// Every source kind: Codex user, project, and managed; Claude user; pi global.
-    fn all_sources(&self) {
+    pub(super) fn all_sources(&self) {
         self.user_rules(
             "default.rules",
             "prefix_rule(pattern=[\"rm\"], decision=\"forbidden\")\n\
@@ -76,7 +77,7 @@ impl Fixture {
     }
 }
 
-fn sources(loaded: &Loaded) -> Vec<Source> {
+pub(super) fn sources(loaded: &Loaded) -> Vec<Source> {
     loaded.rules.iter().map(|rule| rule.source).collect()
 }
 
@@ -164,7 +165,8 @@ fn one_bad_user_or_project_file_drops_all_codex_user_and_project_rules_and_mappi
             loaded
                 .notes
                 .iter()
-                .any(|note| note.starts_with("Codex user and project rules are not applied"))
+                .any(|note| note
+                    .starts_with("Codex system, user, and project rules are not applied"))
         );
     }
 }
@@ -209,6 +211,6 @@ fn a_bad_file_in_an_untrusted_project_is_not_read_and_user_rules_stay() {
         !loaded
             .notes
             .iter()
-            .any(|note| note.starts_with("Codex user and project rules are not applied"))
+            .any(|note| note.starts_with("Codex system, user, and project rules are not applied"))
     );
 }

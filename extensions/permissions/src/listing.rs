@@ -75,6 +75,9 @@ pub fn listing(loaded: &Loaded, rows: &[Rule], selected: Option<usize>) -> Vec<S
 
 /// Why a call would be allowed, asked, or denied.
 pub fn explain(loaded: &Loaded, call: &Call) -> Vec<String> {
+    if let Some(reason) = loaded.blocked() {
+        return vec![format!("{}: blocked ({reason})", call.tool)];
+    }
     let verdict = evaluate(&loaded.rules, call);
     let mut lines = vec![format!("{}: {}", call.tool, outcome(&verdict))];
     for (target, rule) in &verdict.targets {

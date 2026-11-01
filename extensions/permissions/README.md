@@ -23,6 +23,7 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
 | `claude-project` | `<root>/.claude/settings.json` | project |
 | `claude-local` | `<root>/.claude/settings.local.json` | project |
 | `codex-managed` | `/etc/codex/requirements.toml`, else `/etc/codex/managed_config.toml` (Unix); `%ProgramData%\OpenAI\Codex\requirements.toml` (Windows) | global |
+| `codex-system` | `/etc/codex/rules/*.rules` (Unix); `%ProgramData%\OpenAI\Codex\rules\*.rules` (Windows) | global |
 | `codex-user` | `$CODEX_HOME/rules/*.rules`, else `~/.codex/rules/*.rules` | global |
 | `codex-project` | `.codex/rules/*.rules` in the cwd and each parent up to the git root | project |
 | `pi` | `<agentDir>/ext/permissions.json` and `<cwd>/.pi/ext/permissions.json` | both |
@@ -30,6 +31,9 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
 - `<root>` is the cwd when it holds `.claude`, else the nearest parent with `.git`, else the cwd.
 - Every source is on until a pi file turns it off. Project sources load only when the ctx snapshot has `isProjectTrusted: true`.
 - Claude and Codex files are read-only. The extension writes only the pi files.
+- Codex rules load as in Codex: system, then user, then project files, each folder sorted by name; only regular `*.rules` files count, so a symlink or a folder is skipped. A missing rules folder has no rules.
+- If an enabled Codex rules folder or file cannot be read, pi blocks all tool calls, including calls allowed by pi rules. Fix the path or turn that source off to resume. A missing folder is empty. Codex refuses to start a session for these read errors; pi reports them at session start and in `/permissions`.
+- `codex exec --ignore-rules` (`ignore_user_and_project_exec_policy_rules`) is a Codex command-line option, not a `config.toml` setting. Turn off `codex-user` and `codex-project` in the relevant pi settings scope to ignore those sources. The pi setting lasts until changed; the Codex flag applies to one `codex exec` run.
 
 ## pi files
 
@@ -110,9 +114,9 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
   - An error in a `network_rule` is a file error.
   - A subdomain does not match.
   - Arguments are positional or named, as in Codex's `network_rule(host, protocol, decision, justification)`.
-  - Per host, the last `allow` or `forbidden` rule in load order wins (Codex user files, then project files from the git root down to the cwd, each directory sorted by name). `prompt` network rules are listed, but they decide nothing, as in Codex.
+  - Per host, the last `allow` or `forbidden` rule in load order wins (Codex system files, then user files, then project files from the git root down to the cwd, each directory sorted by name). `prompt` network rules are listed, but they decide nothing, as in Codex.
   - That Codex result then counts like any other rule, so a Claude or pi deny or ask still wins over a Codex network `allow`.
-- A Codex user or project rules file with an error, as in Codex: no Codex user or project rule or `host_executable` applies, from any file. `requirements.toml` rules and Claude and pi rules still apply, and the session start warning names each file and its error.
+- If a Codex system, user, or project rules file fails to parse, no Codex system, user, or project rule or `host_executable` applies, from any file. `requirements.toml` rules and Claude and pi rules still apply, and the session start warning names each file and its error.
 
 ## Not covered
 
@@ -122,9 +126,6 @@ These need a host feature that pi does not have, or have no pi tool to apply to:
 - `Skill(...)`: pi loads skills as prompt text, so there is no tool call to decide. `PowerShell(...)` applies by name to a tool named `powershell`; pi has none.
 - The `auto` mode classifier; `auto` asks like `default`.
 - Codex `approval_policy` and `trust_level` and Claude `blockReadsOutsideWorkingDirectories`, protected paths (`.git`, `.claude`), and the read-only set's extra prompts (globs with write-capable flags, `docker -H`, `ps e`, special variables, commands over 10,000 characters) are shown in the panel or not applied.
-- Codex system rules in `/etc/codex/rules/*.rules`, which Codex loads before the user rules. This extension reads only `requirements.toml` from `/etc/codex`.
-- The Codex `ignore_user_and_project_exec_policy_rules` setting.
-- A Codex rules file that cannot be read: Codex stops with an error, and this extension treats the file as empty.
 - Parser error messages: the `network_rule` protocol, host, decision, and justification errors use the Codex text. Other messages, such as those for argument mistakes or `prefix_rule`, are worded differently.
 
 ## Documentation read
@@ -134,6 +135,7 @@ Read 2026-10-30, and again 2026-10-31 for read-only commands, redirections, syml
 - Claude Code, "Configure permissions": https://code.claude.com/docs/en/permissions (rule syntax, wildcards, compound commands, wrappers, path patterns, WebFetch domains, MCP names, settings precedence, workspace trust).
 - Codex execpolicy README: https://github.com/openai/codex/blob/main/codex-rs/execpolicy/README.md (`prefix_rule`, decisions, `match`/`not_match`, strictest decision wins).
 - Codex `network_rule` semantics, read 2026-10-31 at openai/codex `67f0994b532b8740f14b5b738af7b7b2a915b1d6`: `codex-rs/execpolicy/src/rule.rs` (`NetworkRuleProtocol::parse`, `normalize_network_rule_host`), `parser.rs` (`network_rule`), `policy.rs` (`compiled_network_domains`), `decision.rs`, and `error.rs`; `codex-rs/core/src/exec_policy.rs` (`policy_files`, `load_exec_policy_with_warning`); `codex-rs/config/src/requirements_exec_policy.rs` (`requirements.toml` has only `prefix_rules`, so it adds no network rules).
+- Codex rules files, read 2026-11-01 at openai/codex `67f0994b532b8740f14b5b738af7b7b2a915b1d6`: `codex-rs/core/src/exec_policy.rs` (`policy_files`, `collect_policy_files`, `load_exec_policy`), `codex-rs/config/src/loader/mod.rs` (the system config folder and `ignore_user_and_project_exec_policy_rules`), `codex-rs/config/src/state.rs` (`config_folder`), and `codex-rs/exec/src/cli.rs` (`--ignore-rules`).
 - Codex execpolicy parser: https://github.com/openai/codex/blob/main/codex-rs/execpolicy/src/parser.rs (argument names, first-token expansion, `network_rule`, `host_executable`) and `src/amend.rs` (the `prefix_rule(pattern=[...], decision="allow")` line that "allow always" appends).
 - Codex rules docs: https://learn.chatgpt.com/docs/agent-configuration/rules (redirected from https://developers.openai.com/codex/rules; rules locations, project rules only in trusted projects, splitting of `bash -lc` scripts, `~/.codex/rules/default.rules`).
 - Codex config reference: https://learn.chatgpt.com/docs/config-file/config-reference (`approval_policy`, `sandbox_mode`, `projects.<path>.trust_level`).

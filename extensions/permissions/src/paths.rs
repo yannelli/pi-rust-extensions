@@ -7,6 +7,8 @@ pub struct Paths {
     pub claude_dir: PathBuf,
     pub claude_managed: PathBuf,
     pub codex_home: PathBuf,
+    /// The Codex system config folder; its `rules` folder holds the system rules.
+    pub codex_system: PathBuf,
     /// Codex `requirements.toml` files, highest priority first.
     pub codex_requirements: Vec<PathBuf>,
     /// Overrides the agent dir from `initialize`.
@@ -27,6 +29,7 @@ impl Paths {
             claude_dir: var("CLAUDE_CONFIG_DIR").unwrap_or_else(|| home.join(".claude")),
             codex_home: var("CODEX_HOME").unwrap_or_else(|| home.join(".codex")),
             claude_managed: managed_settings(),
+            codex_system: codex_system(),
             codex_requirements: codex_requirements(),
             agent_dir: None,
             home,
@@ -34,15 +37,24 @@ impl Paths {
     }
 }
 
-/// The system `requirements.toml` and, on Unix, the legacy `managed_config.toml`.
-fn codex_requirements() -> Vec<PathBuf> {
+/// The Codex system config folder: `/etc/codex`, or `%ProgramData%\OpenAI\Codex` on Windows.
+fn codex_system() -> PathBuf {
     if cfg!(windows) {
         let data = std::env::var_os("ProgramData").unwrap_or_else(|| r"C:\ProgramData".into());
-        return vec![PathBuf::from(data).join(r"OpenAI\Codex\requirements.toml")];
+        return PathBuf::from(data).join(r"OpenAI\Codex");
+    }
+    PathBuf::from("/etc/codex")
+}
+
+/// The system `requirements.toml` and, on Unix, the legacy `managed_config.toml`.
+fn codex_requirements() -> Vec<PathBuf> {
+    let system = codex_system();
+    if cfg!(windows) {
+        return vec![system.join("requirements.toml")];
     }
     vec![
-        PathBuf::from("/etc/codex/requirements.toml"),
-        PathBuf::from("/etc/codex/managed_config.toml"),
+        system.join("requirements.toml"),
+        system.join("managed_config.toml"),
     ]
 }
 
