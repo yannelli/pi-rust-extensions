@@ -1,4 +1,4 @@
-use pi_ext_e2e::{Run, Turn, cargo_bin, json, pi_bin_or_skip};
+use pi_ext_e2e::{Output, Run, Turn, cargo_bin, json, pi_bin_or_skip};
 
 #[test]
 fn deny_rule_blocks_bash_and_the_model_sees_the_reason() {
@@ -92,4 +92,203 @@ fn read_deny_blocks_bash_cat_of_the_file_and_the_model_never_sees_it() {
         "the file content reached the model"
     );
     assert!(!output.stdout.contains(sentinel) && !output.stderr.contains(sentinel));
+}
+
+/// A run of the permissions extension with `rules` as `$CODEX_HOME/rules/default.rules`.
+fn codex_run(rules: &str) -> (tempfile::TempDir, Run) {
+    let codex = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(codex.path().join("rules")).unwrap();
+    std::fs::write(codex.path().join("rules/default.rules"), rules).unwrap();
+    let run = Run::new(cargo_bin("pi-rust-ext", "pi-rust-ext"))
+        .args(["permissions"])
+        .env("CODEX_HOME", codex.path().display().to_string());
+    (codex, run)
+}
+
+fn result_texts(output: &Output, tool: &str) -> Vec<String> {
+    output
+        .tool_results(tool)
+        .iter()
+        .map(|e| e["result"]["content"].to_string())
+        .collect()
+}
+
+const BLOCKED: &str = "Blocked by permission rule";
+
+#[test]
+fn codex_forbidden_rule_blocks_rm_and_the_fixture_survives() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let (_codex, run) = codex_run(
+        r#"prefix_rule(pattern=["rm", "-rf"], decision="forbidden", justification="e2e keeps its fixture")"#,
+    );
+    let output = run
+        .file("work/keep/data.txt", "fixture-data\n")
+        .turns([
+            Turn::tool_call("bash", json!({ "command": "rm -rf keep" })),
+            Turn::tool_call("bash", json!({ "command": "cat keep/data.txt" })),
+            Turn::text("done"),
+        ])
+        .prompt("Remove keep")
+        .run()
+        .unwrap();
+    let results = result_texts(&output, "bash");
+    assert_eq!(results.len(), 2, "stderr: {}", output.stderr);
+    assert!(
+        results[0].contains(BLOCKED)
+            && results[0].contains("from codex-user")
+            && results[0].contains("e2e keeps its fixture"),
+        "{results:?}"
+    );
+    assert!(
+        results[1].contains("fixture-data"),
+        "keep/data.txt is gone: {results:?}"
+    );
+}
+
+#[test]
+fn codex_host_executable_limits_absolute_paths_to_the_listed_ones() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let (_codex, run) = codex_run(
+        r#"host_executable(name="git", paths=["/usr/bin/git"])
+prefix_rule(pattern=["git", "push"], decision="forbidden", justification="no push in e2e")"#,
+    );
+    let output = run
+        .turns([
+            Turn::tool_call(
+                "bash",
+                json!({ "command": "/usr/bin/git push origin main" }),
+            ),
+            Turn::tool_call(
+                "bash",
+                json!({ "command": "/opt/pi-e2e-missing/git push origin main" }),
+            ),
+            Turn::text("done"),
+        ])
+        .prompt("Push")
+        .run()
+        .unwrap();
+    let results = result_texts(&output, "bash");
+    assert_eq!(results.len(), 2, "stderr: {}", output.stderr);
+    assert!(
+        results[0].contains(BLOCKED) && results[0].contains("no push in e2e"),
+        "{results:?}"
+    );
+    assert!(
+        !results[1].contains(BLOCKED),
+        "an unlisted path matched: {results:?}"
+    );
+}
+
+/// A local `fetch` tool that only writes a marker file named after the URL; it opens no connection.
+const FETCH_JS: &str = r#"import { writeFileSync } from "node:fs";
+export default function (pi) {
+  pi.registerTool({
+    name: "fetch",
+    label: "fetch",
+    description: "Fixture fetch that records the URL.",
+    parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+    execute: async (_id, args) => {
+      writeFileSync(`fetched-${args.url.replace(/[^A-Za-z0-9]/g, "_")}.txt`, args.url);
+      return { content: [{ type: "text", text: `fetched ${args.url}` }] };
+    },
+  });
+}
+"#;
+
+#[test]
+fn codex_network_rule_blocks_the_exact_host_before_the_tool_runs() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let (_codex, run) = codex_run(
+        r#"network_rule(host="evil.example", protocol="https", decision="deny", justification="no evil hosts")
+network_rule(host="ok.example", protocol="https", decision="deny")
+network_rule(host="ok.example", protocol="https", decision="allow")
+network_rule(host="prompt.example", protocol="https", decision="prompt")"#,
+    );
+    let fetch = |url: &str| Turn::tool_call("fetch", json!({ "url": url }));
+    let output = run
+        .file("work/fetch.js", FETCH_JS)
+        .pi_args(["-e", "./fetch.js"])
+        .turns([
+            fetch("https://evil.example/x"),
+            fetch("http://EVIL.example:8080/y"),
+            fetch("https://api.evil.example/z"),
+            fetch("https://ok.example/"),
+            fetch("https://prompt.example/"),
+            Turn::tool_call("bash", json!({ "command": "ls" })),
+            Turn::text("done"),
+        ])
+        .prompt("Fetch the pages")
+        .run()
+        .unwrap();
+    let results = result_texts(&output, "fetch");
+    assert_eq!(results.len(), 5, "stderr: {}", output.stderr);
+    for blocked in &results[..2] {
+        assert!(
+            blocked.contains(BLOCKED) && blocked.contains("no evil hosts"),
+            "{results:?}"
+        );
+    }
+    assert!(
+        results[2].contains("fetched https://api.evil.example/z"),
+        "{results:?}"
+    );
+    assert!(
+        results[3].contains("fetched https://ok.example/"),
+        "the later allow did not win over the deny: {results:?}"
+    );
+    assert!(
+        results[4].contains("fetched https://prompt.example/"),
+        "a Codex prompt network rule decided the call: {results:?}"
+    );
+    let listing = result_texts(&output, "bash").concat();
+    assert!(
+        listing.contains("fetched-https___api_evil_example_z.txt")
+            && listing.contains("fetched-https___ok_example_.txt")
+            && listing.contains("fetched-https___prompt_example_.txt"),
+        "{listing}"
+    );
+    assert!(
+        !listing.contains("fetched-https___evil_example_x.txt")
+            && !listing.contains("fetched-http___EVIL_example_8080_y.txt"),
+        "a blocked fetch ran its tool body: {listing}"
+    );
+}
+
+#[test]
+fn an_unknown_codex_protocol_rejects_the_file_with_codexs_message() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let (_codex, run) = codex_run(
+        r#"prefix_rule(pattern=["echo"], decision="forbidden", justification="never echo")
+network_rule(host="evil.example", protocol="ftp", decision="deny")"#,
+    );
+    let output = run
+        .turns([
+            Turn::tool_call("bash", json!({ "command": "echo still-runs" })),
+            Turn::text("done"),
+        ])
+        .prompt("Echo")
+        .run()
+        .unwrap();
+    let results = result_texts(&output, "bash");
+    assert_eq!(results.len(), 1, "stderr: {}", output.stderr);
+    assert!(
+        !results[0].contains(BLOCKED) && results[0].contains("still-runs"),
+        "the rejected file still applied a rule: {results:?}"
+    );
+    assert!(
+        output.stderr.contains("permissions: ")
+            && output.stderr.contains(
+                "network_rule protocol must be one of http, https, socks5_tcp, socks5_udp (got ftp)"
+            ),
+        "{}",
+        output.stderr
+    );
 }

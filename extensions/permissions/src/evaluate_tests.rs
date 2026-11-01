@@ -478,3 +478,92 @@ fn codex_network_rules_decide_fetch_hosts() {
         "bash network needs a sandbox"
     );
 }
+
+fn network_rules(text: &str) -> Vec<Rule> {
+    network_rules_of(Source::CodexUser, text)
+}
+
+fn network_rules_of(source: Source, text: &str) -> Vec<Rule> {
+    parse_rules(text)
+        .unwrap()
+        .network
+        .into_iter()
+        .map(|(rule, decision, justification, text)| Rule {
+            source,
+            decision,
+            text,
+            file: PathBuf::from("/c.rules"),
+            justification,
+            kind: Kind::Network(rule),
+        })
+        .collect()
+}
+
+/// Codex compares the normalized host exactly and ignores the protocol (`policy.rs`
+/// `compiled_network_domains`, openai/codex 67f0994b).
+#[test]
+fn codex_network_rules_match_only_the_exact_host_and_ignore_the_protocol() {
+    let rules = network_rules(
+        r#"network_rule(host="Evil.example.", protocol="https", decision="deny")
+network_rule(host="[::1]:443", protocol="http", decision="deny")"#,
+    );
+    let fetch = |url: &str| decide(&rules, "fetch", json!({ "url": url }));
+    assert_eq!(fetch("https://evil.example/x"), Some(Decision::Deny));
+    assert_eq!(fetch("http://EVIL.example:8080/x"), Some(Decision::Deny));
+    assert_eq!(fetch("https://evil.example./x"), Some(Decision::Deny));
+    assert_eq!(fetch("http://[::1]:8080/"), Some(Decision::Deny));
+    assert_eq!(fetch("https://api.evil.example/x"), None);
+    assert_eq!(fetch("https://evil.example.com/x"), None);
+    assert_eq!(fetch("https://notevil.example/x"), None);
+    let web = decide(
+        &rules,
+        "web_fetch",
+        json!({ "url": "https://evil.example" }),
+    );
+    assert_eq!(web, Some(Decision::Deny));
+}
+
+/// Codex compiles network rules per host in policy order: the last allow or forbidden rule wins, and
+/// prompt rules are ignored (`policy.rs` `compiled_network_domains`, openai/codex 67f0994b).
+#[test]
+fn codex_network_rules_compile_the_last_allow_or_forbidden_and_ignore_prompt() {
+    let rule = |decision: &str| {
+        format!(r#"network_rule(host="evil.example", protocol="https", decision="{decision}")"#)
+    };
+    let fetch = |rules: &[Rule]| decide(rules, "fetch", json!({ "url": "https://evil.example/x" }));
+    let lines = |decisions: &[&str]| {
+        let text: Vec<String> = decisions.iter().map(|decision| rule(decision)).collect();
+        network_rules(&text.join("\n"))
+    };
+    assert_eq!(fetch(&lines(&["deny", "allow"])), Some(Decision::Allow));
+    assert_eq!(fetch(&lines(&["allow", "forbidden"])), Some(Decision::Deny));
+    assert_eq!(fetch(&lines(&["prompt"])), None);
+    assert_eq!(fetch(&lines(&["deny", "prompt"])), Some(Decision::Deny));
+    assert_eq!(fetch(&lines(&["prompt", "allow"])), Some(Decision::Allow));
+    let mut ordered = network_rules_of(Source::CodexUser, &rule("deny"));
+    ordered.extend(network_rules_of(Source::CodexProject, &rule("allow")));
+    assert_eq!(
+        fetch(&ordered),
+        Some(Decision::Allow),
+        "a later file overrides an earlier one"
+    );
+}
+
+/// Codex network rules compile on their own; Claude and pi rules keep deny, then ask, then allow.
+#[test]
+fn a_codex_network_allow_never_reopens_a_claude_or_pi_deny_or_ask() {
+    let allow =
+        network_rules(r#"network_rule(host="evil.example", protocol="https", decision="allow")"#);
+    let deny =
+        network_rules(r#"network_rule(host="evil.example", protocol="https", decision="deny")"#);
+    let fetch = |rules: &[Rule]| decide(rules, "fetch", json!({ "url": "https://evil.example/x" }));
+    let mut rules = allow.clone();
+    rules.push(user(Decision::Deny, "WebFetch(domain:evil.example)"));
+    assert_eq!(fetch(&rules), Some(Decision::Deny));
+    let mut rules = vec![claude(Source::PiGlobal, Decision::Ask, "WebFetch")];
+    rules.extend(allow);
+    assert_eq!(fetch(&rules), Some(Decision::Ask));
+    let mut rules = vec![user(Decision::Allow, "WebFetch(domain:evil.example)")];
+    rules.extend(deny);
+    assert_eq!(fetch(&rules), Some(Decision::Deny));
+}

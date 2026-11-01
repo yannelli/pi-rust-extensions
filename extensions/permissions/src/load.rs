@@ -38,6 +38,8 @@ pub struct Loaded {
     /// The mode for calls that no rule decides, with its label.
     pub mode: Option<(Mode, String)>,
     hosts: HashMap<String, Vec<String>>,
+    /// Codex user and project rules files that failed to parse.
+    codex_failed: Vec<PathBuf>,
 }
 
 pub fn load(env: &Env) -> Loaded {
@@ -90,6 +92,7 @@ pub fn load(env: &Env) -> Loaded {
         out.notes
             .push("project is not trusted; project sources are skipped".to_owned());
     }
+    drop_codex_rules_after_a_failure(&mut out);
     let hosts = std::mem::take(&mut out.hosts);
     attach_hosts(&mut out.rules, &hosts);
     out.mode = mode::effective(out.options.mode.as_deref(), out.claude_mode.as_ref());
@@ -323,6 +326,33 @@ fn codex_file(out: &mut Loaded, source: Source, file: &Path) {
                 kind: Kind::Codex(r.rule),
             }));
         }
-        Err(err) => out.notes.push(format!("{}: {err}", file.display())),
+        Err(err) => {
+            out.notes.push(format!("{}: {err}", file.display()));
+            out.codex_failed.push(file.to_path_buf());
+        }
     }
 }
+
+/// Like Codex `load_exec_policy_with_warning` (openai/codex 67f0994b `core/src/exec_policy.rs`): one bad
+/// user or project rules file drops every user and project rule and `host_executable`, and keeps managed rules.
+fn drop_codex_rules_after_a_failure(out: &mut Loaded) {
+    if out.codex_failed.is_empty() {
+        return;
+    }
+    out.rules
+        .retain(|rule| !matches!(rule.source, Source::CodexUser | Source::CodexProject));
+    out.hosts.clear();
+    let files: Vec<String> = out
+        .codex_failed
+        .iter()
+        .map(|f| f.display().to_string())
+        .collect();
+    out.notes.push(format!(
+        "Codex user and project rules are not applied because these files have errors: {}",
+        files.join(", ")
+    ));
+}
+
+#[cfg(test)]
+#[path = "load_tests.rs"]
+mod tests;

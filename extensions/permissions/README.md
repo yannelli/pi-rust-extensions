@@ -52,8 +52,9 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
 ## Decisions
 
 - Claude rules: deny, then ask, then allow, across all sources (Claude docs: "Rules are evaluated in order: deny, then ask, then allow").
-- Codex rules: `forbidden` is deny, `prompt` is ask, `allow` is allow. The strictest match wins.
-- Every source uses the same order: deny, then ask, then allow. An ask rule asks each time, whatever allow rules match, as in Claude Code ("deny rules from any scope are evaluated before allow rules").
+- Codex prefix rules: `forbidden` is deny, `prompt` is ask, `allow` is allow. The strictest match wins.
+- Codex network rules first compile to one result per host: the last `allow` or `forbidden` rule in load order wins, and `prompt` decides nothing (see Matching).
+- The results of all sources then combine in one order: deny, then ask, then allow. For Codex network rules, only the compiled result per host takes part. An ask rule asks each time, whatever allow rules match, as in Claude Code ("deny rules from any scope are evaluated before allow rules").
 - `allowManagedPermissionRulesOnly: true` in Claude managed settings drops the rules of `claude-user`, `claude-project`, and `claude-local`.
 - Codex `requirements.toml` `[rules] prefix_rules` (`{ token = "x" }` or `{ any_of = [...] }` per position) apply with `prompt`, `prompt-user` (both ask), or `forbidden`; `allow` there is an error, as in Codex.
 - A call with several parts (bash subcommands, `url_context` URLs) is denied or asked when any part matches a deny or ask rule. It is allowed only when every part matches an allow rule. Otherwise pi decides.
@@ -101,7 +102,16 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
 - Wrappers `timeout`, `time`, `nice`, `nohup`, `stdbuf`, `builtin`, `noglob`, `command`, and bare `xargs` are removed before Claude rules match. Leading `NAME=value` words are removed for deny and ask rules only.
 - Paths use gitignore patterns: `//path` from the filesystem root, `~/path` from home, `/path` from the settings anchor (`~/.claude` for user settings, the managed settings directory, the cwd for project, local, and pi files), and `path` or `./path` from the cwd. A single name matches at any depth. A relative `dir/**` matches at any depth in deny and ask rules and only under the cwd in allow rules. A pattern that matches a directory also matches the files in it.
 - Domains: `*` is every host, `*.example.com` any subdomain depth, another `*` one label. Matching ignores case and a trailing `.`.
-- Codex: tokens match in order, a list is a set of alternatives, a list as the first token expands into one rule per entry. `match` and `not_match` examples are checked at load; a file with a failing example or a syntax error loads no rules and shows an error. Codex rules match each subcommand by its unquoted words. Codex `allow` rules apply only when the script is a chain of plain words (no redirections, expansions, globs, assignments, or control flow), the condition under which Codex splits a script. A script Codex cannot split is also checked as the single call `["bash", "-lc", script]`; `forbidden` and `prompt` rules also match every subcommand. An absolute program path such as `/usr/bin/git` falls back to `git` rules unless a `host_executable(name="git", paths=[...])` lists other paths. A `network_rule(host, protocol, decision)` decides `fetch`, `web_fetch`, and `url_context` calls to that host.
+- Codex: tokens match in order, a list is a set of alternatives, a list as the first token expands into one rule per entry. `match` and `not_match` examples are checked at load; a failing example or a syntax error is a file error (see the last Codex item). Codex rules match each subcommand by its unquoted words. Codex `allow` rules apply only when the script is a chain of plain words (no redirections, expansions, globs, assignments, or control flow), the condition under which Codex splits a script. A script Codex cannot split is also checked as the single call `["bash", "-lc", script]`; `forbidden` and `prompt` rules also match every subcommand. An absolute program path such as `/usr/bin/git` falls back to `git` rules unless a `host_executable(name="git", paths=[...])` lists other paths. A `network_rule(host, protocol, decision)` decides `fetch`, `web_fetch`, and `url_context` calls to exactly that host:
+  - `protocol` must be `http`, `https` (also `https_connect` and `http-connect`), `socks5_tcp`, or `socks5_udp`. As in Codex, it does not change which calls match.
+  - `host` is normalized as Codex does: spaces trimmed, brackets and a port removed, a trailing `.` dropped, and lowercased.
+  - A host with a scheme, path, query, fragment, `*`, or whitespace is an error.
+  - An error in a `network_rule` is a file error.
+  - A subdomain does not match.
+  - Arguments are positional or named, as in Codex's `network_rule(host, protocol, decision, justification)`.
+  - Per host, the last `allow` or `forbidden` rule in load order wins (Codex user files, then project files from the git root down to the cwd, each directory sorted by name). `prompt` network rules are listed, but they decide nothing, as in Codex.
+  - That Codex result then counts like any other rule, so a Claude or pi deny or ask still wins over a Codex network `allow`.
+- A Codex user or project rules file with an error, as in Codex: no Codex user or project rule or `host_executable` applies, from any file. `requirements.toml` rules and Claude and pi rules still apply, and the session start warning names each file and its error.
 
 ## Not covered
 
@@ -111,7 +121,10 @@ These need a host feature that pi does not have, or have no pi tool to apply to:
 - `Skill(...)`: pi loads skills as prompt text, so there is no tool call to decide. `PowerShell(...)` applies by name to a tool named `powershell`; pi has none.
 - The `auto` mode classifier; `auto` asks like `default`.
 - Codex `approval_policy` and `trust_level` and Claude `blockReadsOutsideWorkingDirectories`, protected paths (`.git`, `.claude`), and the read-only set's extra prompts (globs with write-capable flags, `docker -H`, `ps e`, special variables, commands over 10,000 characters) are shown in the panel or not applied.
-- `network_rule` `protocol`: pi's fetch targets carry only the host.
+- Codex system rules in `/etc/codex/rules/*.rules`, which Codex loads before the user rules. This extension reads only `requirements.toml` from `/etc/codex`.
+- The Codex `ignore_user_and_project_exec_policy_rules` setting.
+- A Codex rules file that cannot be read: Codex stops with an error, and this extension treats the file as empty.
+- Parser error messages: the `network_rule` protocol, host, decision, and justification errors use the Codex text. Other messages, such as those for argument mistakes or `prefix_rule`, are worded differently.
 
 ## Documentation read
 
@@ -119,6 +132,7 @@ Read 2026-10-30, and again 2026-10-31 for read-only commands, redirections, syml
 
 - Claude Code, "Configure permissions": https://code.claude.com/docs/en/permissions (rule syntax, wildcards, compound commands, wrappers, path patterns, WebFetch domains, MCP names, settings precedence, workspace trust).
 - Codex execpolicy README: https://github.com/openai/codex/blob/main/codex-rs/execpolicy/README.md (`prefix_rule`, decisions, `match`/`not_match`, strictest decision wins).
+- Codex `network_rule` semantics, read 2026-10-31 at openai/codex `67f0994b532b8740f14b5b738af7b7b2a915b1d6`: `codex-rs/execpolicy/src/rule.rs` (`NetworkRuleProtocol::parse`, `normalize_network_rule_host`), `parser.rs` (`network_rule`), `policy.rs` (`compiled_network_domains`), `decision.rs`, and `error.rs`; `codex-rs/core/src/exec_policy.rs` (`policy_files`, `load_exec_policy_with_warning`); `codex-rs/config/src/requirements_exec_policy.rs` (`requirements.toml` has only `prefix_rules`, so it adds no network rules).
 - Codex execpolicy parser: https://github.com/openai/codex/blob/main/codex-rs/execpolicy/src/parser.rs (argument names, first-token expansion, `network_rule`, `host_executable`) and `src/amend.rs` (the `prefix_rule(pattern=[...], decision="allow")` line that "allow always" appends).
 - Codex rules docs: https://learn.chatgpt.com/docs/agent-configuration/rules (redirected from https://developers.openai.com/codex/rules; rules locations, project rules only in trusted projects, splitting of `bash -lc` scripts, `~/.codex/rules/default.rules`).
 - Codex config reference: https://learn.chatgpt.com/docs/config-file/config-reference (`approval_policy`, `sandbox_mode`, `projects.<path>.trust_level`).
