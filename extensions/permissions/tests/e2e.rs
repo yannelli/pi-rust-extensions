@@ -338,3 +338,34 @@ fn a_write_to_a_claude_protected_path_is_blocked_without_a_ui_even_with_an_allow
         "the ordinary write landed: {read:?}"
     );
 }
+
+#[test]
+fn a_claude_read_block_refuses_a_read_outside_the_cwd_and_keeps_reads_inside() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let claude = tempfile::tempdir().unwrap();
+    let settings = json!({ "permissions": { "blockReadsOutsideWorkingDirectories": true } });
+    std::fs::write(claude.path().join("settings.json"), settings.to_string()).unwrap();
+    let output = Run::new(cargo_bin("pi-rust-ext", "pi-rust-ext"))
+        .args(["permissions"])
+        .env("CLAUDE_CONFIG_DIR", claude.path().display().to_string())
+        .file("agent/outside.txt", "E2E_OUTSIDE_SENTINEL\n")
+        .file("work/inside.txt", "E2E_INSIDE_OK\n")
+        .turns([
+            Turn::tool_call("read", json!({ "path": "../agent/outside.txt" })),
+            Turn::tool_call("read", json!({ "path": "inside.txt" })),
+            Turn::text("done"),
+        ])
+        .prompt("Read both files")
+        .run()
+        .unwrap();
+    let results = result_texts(&output, "read");
+    assert_eq!(results.len(), 2, "stderr: {}", output.stderr);
+    assert!(
+        results[0].contains("blockReadsOutsideWorkingDirectories")
+            && !results[0].contains("E2E_OUTSIDE_SENTINEL"),
+        "{results:?}"
+    );
+    assert!(results[1].contains("E2E_INSIDE_OK"), "{results:?}");
+}

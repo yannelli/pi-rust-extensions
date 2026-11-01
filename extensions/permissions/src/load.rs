@@ -44,6 +44,15 @@ pub struct Loaded {
     pub codex_unreadable: Vec<String>,
     /// The files that loaded Claude user, project, and local settings files link to; writes to them are protected.
     pub protected_files: Vec<PathBuf>,
+    pub agent_dir: PathBuf,
+    /// The first loaded Claude source whose `permissions.blockReadsOutsideWorkingDirectories` is `true`.
+    pub block_reads: Option<Source>,
+    /// The working directories of that block: the cwd and managed and user `additionalDirectories`.
+    pub fence_dirs: Vec<PathBuf>,
+    /// Local settings `additionalDirectories`, which count for the block only while git reports the file untracked.
+    pub local_dirs: Vec<PathBuf>,
+    /// The folder of `.claude/settings.local.json`.
+    pub local_root: PathBuf,
 }
 
 impl Loaded {
@@ -68,6 +77,9 @@ pub fn load(env: &Env) -> Loaded {
         trusted: env.trusted,
         cwd: env.cwd.clone(),
         dirs: vec![env.cwd.clone()],
+        agent_dir: env.agent_dir.clone(),
+        fence_dirs: vec![env.cwd.clone()],
+        local_root: project_root(&env.cwd, ".claude"),
         ..Loaded::default()
     };
     let global = pi_file(&out.global_file, &mut out.notes);
@@ -255,10 +267,31 @@ fn claude_source(out: &mut Loaded, source: Source, env: &Env, managed_only: bool
                 None => env.cwd.join(dir),
             };
             let path = crate::pattern::normalize(&path);
+            let fence = match source {
+                Source::ClaudeManaged | Source::ClaudeUser => Some(&mut out.fence_dirs),
+                Source::ClaudeLocal => Some(&mut out.local_dirs),
+                _ => None,
+            };
+            if let Some(fence) = fence.filter(|fence| !fence.contains(&path)) {
+                fence.push(path.clone());
+            }
             if !out.dirs.contains(&path) {
                 out.dirs.push(path);
             }
         }
+    }
+    match &permissions["blockReadsOutsideWorkingDirectories"] {
+        Value::Bool(true) => {
+            info.push("blockReadsOutsideWorkingDirectories=true".to_owned());
+            if out.block_reads.is_none() {
+                out.block_reads = Some(source);
+            }
+        }
+        Value::Bool(false) | Value::Null => {}
+        _ => out.notes.push(format!(
+            "{}: permissions.blockReadsOutsideWorkingDirectories must be true or false",
+            file.display()
+        )),
     }
     if !info.is_empty() {
         out.info
@@ -426,6 +459,18 @@ mod mode_settings_tests;
 #[cfg(test)]
 #[path = "guards_tests.rs"]
 mod guards_tests;
+
+#[cfg(test)]
+#[path = "fence_tests.rs"]
+mod fence_tests;
+
+#[cfg(test)]
+#[path = "fence_skill_tests.rs"]
+mod fence_skill_tests;
+
+#[cfg(test)]
+#[path = "fence_shell_tests.rs"]
+mod fence_shell_tests;
 
 #[cfg(test)]
 #[path = "load_codex_tests.rs"]

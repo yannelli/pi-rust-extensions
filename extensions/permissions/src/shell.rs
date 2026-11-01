@@ -27,6 +27,10 @@ pub struct Script {
     pub plain: bool,
     /// False when `&&`, `||`, or `|` has no command after it.
     pub complete: bool,
+    /// True when the script runs a subshell: `( ... )`, `$(...)`, or backticks.
+    pub subshell: bool,
+    /// True when a quote is not closed.
+    pub unterminated: bool,
 }
 
 const OPERATORS: &[char] = &[';', '&', '|', '(', ')', '<', '>', '\n'];
@@ -40,6 +44,8 @@ pub fn parse(script: &str) -> Script {
             redirects: Vec::new(),
             plain: true,
             complete: true,
+            subshell: false,
+            unterminated: false,
         },
         current: Vec::new(),
         pending: false,
@@ -90,6 +96,7 @@ impl Parser {
                 '|' => self.end(1, true),
                 '(' | ')' => {
                     self.out.plain = false;
+                    self.out.subshell = true;
                     self.end(1, false);
                 }
                 '<' | '>' => self.redirect(),
@@ -241,13 +248,16 @@ impl Parser {
                     }
                 }
                 '\'' => {
+                    let mut closed = false;
                     while let Some(q) = self.peek(0) {
                         self.pos += 1;
                         if q == '\'' {
+                            closed = true;
                             break;
                         }
                         value.push(q);
                     }
+                    self.out.unterminated |= !closed;
                 }
                 '"' => self.double_quoted(&mut value),
                 '$' => self.dollar(&mut value),
@@ -279,6 +289,7 @@ impl Parser {
                 _ => value.push(c),
             }
         }
+        self.out.unterminated = true;
     }
 
     /// After `$`: command substitution is parsed as nested commands; any expansion is not plain.
@@ -343,6 +354,7 @@ impl Parser {
 
     fn nested(&mut self, inner: &str) {
         let script = parse(inner);
+        self.out.subshell = true;
         self.out.commands.extend(script.commands);
         self.out.redirects.extend(script.redirects);
     }

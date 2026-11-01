@@ -130,6 +130,18 @@ While a Claude mode applies, a write to a Claude [protected path](https://code.c
 - Names match exactly, case included. Claude's other `.claude` exceptions (session plan files, background job folders, memory Markdown), `--plugin-dir` folders, `dev-mods`, and files passed with `--settings`, `--mcp-config`, or `--agents` have no pi equivalent and are not handled.
 - With `"defaultMode": "pi"` (no Claude mode) the check does not apply.
 
+## Read block
+
+Claude [`permissions.blockReadsOutsideWorkingDirectories`](https://code.claude.com/docs/en/settings-reference#permissions-blockreadsoutsideworkingdirectories) applies in every mode, `bypassPermissions` and `"defaultMode": "pi"` included, after deny rules and before the protected-path check, ask rules, allow rules, and the mode.
+
+- `true` in any Claude settings file that loads turns it on: managed and user, and project and local in trusted projects (an untrusted project's file is not read). `false` is the same as unset. Another value is a load note and changes nothing. A source that is off sets nothing.
+- The working directories for the block are the cwd and the `additionalDirectories` of managed and user settings. Those of `.claude/settings.local.json` count only while git reports that file as untracked and `.claude` is no symlink; in a folder outside git, for a tracked file, or when git does not answer within two seconds, they do not. git runs only for a read outside the other directories and inside a local one. Project `.claude/settings.json` directories never count. A path counts as inside only when the requested path and the file it resolves to are both inside.
+- `read`, `grep`, `find`, and `ls` outside are denied, even when an allow rule matches (the docs say the file tools refuse such reads in every mode; they do not mention allow rules, so this extension does not let one lift it).
+- Bash commands that read a file outside, read a path with `~`, a glob, or a variable, change directory more than once, run a subshell (`( ... )`, `$(...)`, backticks), leave a quote open, or end in `&&`, `||`, or `|` ask, even with an allow rule; `dontAsk` denies. Without a UI the call is blocked.
+- The same applies to a directory change the extension cannot follow (`pushd`, `popd`, `cd -`, `cd ~user`, or a `cd` with an option, a variable, a glob, braces, or more than one argument) and to a command handed to a shell (`sh`, `bash`, `zsh` and the others, by name or path), `eval`, `source`, `.`, `xargs`, `env`, `exec`, `command` with an option, `sudo`, `doas`, `watch`, `setsid`, `ionice`, `flock`, or `find -exec`. Wrappers such as `builtin`, `timeout`, and `nohup` are looked through. `cd` alone and `cd ~` go to the home folder.
+- Bash checks match the text of a call. A program that opens files itself (`python -c`, `awk`, a script run by path) is not seen, and `CDPATH` is not applied to `cd`.
+- Claude keeps its own files under `~/.claude` readable. The pi counterpart is the skill files pi tells the model to read: files in `<agentDir>/skills`, `~/.agents/skills`, and `.agents/skills` in the cwd and each parent up to the git root stay readable to `read`, `grep`, `find`, and `ls`, not to Bash. The rest of the agent directory (such as `auth.json`) stays outside. A skill folder that resolves to the agent dir, the home dir, or a parent of them opens nothing, a project `.agents/skills` must resolve inside its own folder, and a file that resolves out of its skill folder is outside. Skills from packages or other configured paths are not known here; add their folders to `additionalDirectories` in user settings.
+
 ## Not covered
 
 These need a host feature that pi does not have, or have no pi tool to apply to:
@@ -137,7 +149,7 @@ These need a host feature that pi does not have, or have no pi tool to apply to:
 - OS sandboxing. Rules match the text of a call: `/bin/rm` or `sh -c 'rm ...'` passes a `Bash(rm *)` deny, a script that opens files itself passes `Read` deny rules, and Bash network access passes Codex `network_rule`. Codex `sandbox_mode` and Claude sandbox settings need a sandbox in pi.
 - `Skill(...)`: pi loads skills as prompt text, so there is no tool call to decide. `PowerShell(...)` applies by name to a tool named `powershell`; pi has none.
 - The `auto` mode classifier; `auto` asks like `default`.
-- Codex `approval_policy` and `trust_level`, Claude `blockReadsOutsideWorkingDirectories`, and the read-only set's extra prompts (globs with write-capable flags, `docker -H`, `ps e`, special variables, commands over 10,000 characters) are shown in the panel or not applied.
+- Codex `approval_policy` and `trust_level`, and the read-only set's extra prompts (globs with write-capable flags, `docker -H`, `ps e`, special variables, commands over 10,000 characters) are shown in the panel or not applied.
 - Parser error messages: the `network_rule` protocol, host, decision, and justification errors use the Codex text. Other messages, such as those for argument mistakes or `prefix_rule`, are worded differently.
 
 ## Documentation read
