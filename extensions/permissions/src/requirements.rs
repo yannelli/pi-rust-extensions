@@ -5,11 +5,18 @@ use toml_edit::{DocumentMut, Item, Value};
 use crate::codex::{CodexRule, expand};
 use crate::rules::Decision;
 
-/// The rules of one `requirements.toml`; `allow` is refused, as in Codex.
+/// The rules of one `requirements.toml`; `allow` is refused, as in Codex. A `rules` key needs a
+/// `prefix_rules` array, as Codex `RequirementsExecPolicyToml` does.
 pub fn parse_requirements(text: &str) -> Result<Vec<CodexRule>, String> {
     let doc: DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
-    let Some(rules) = doc.get("rules").and_then(|r| r.get("prefix_rules")) else {
+    let Some(table) = doc.get("rules") else {
         return Ok(Vec::new());
+    };
+    if !table.is_table_like() {
+        return Err("rules must be a table".into());
+    }
+    let Some(rules) = table.get("prefix_rules") else {
+        return Err("rules needs prefix_rules".into());
     };
     let entries: Vec<toml_edit::InlineTable> = match rules {
         Item::ArrayOfTables(tables) => tables
@@ -49,7 +56,14 @@ pub fn parse_requirements(text: &str) -> Result<Vec<CodexRule>, String> {
             Some(other) => return Err(format!("prefix_rule {index}: unknown decision `{other}`")),
             None => return Err(format!("prefix_rule {index} is missing a decision")),
         };
-        let justification = entry.get("justification").and_then(Value::as_str);
+        let justification = entry
+            .get("justification")
+            .map(|j| {
+                j.as_str().ok_or(format!(
+                    "prefix_rule {index}: justification must be a string"
+                ))
+            })
+            .transpose()?;
         if justification.is_some_and(|j| j.trim().is_empty()) {
             return Err(format!("prefix_rule {index} has an empty justification"));
         }
@@ -64,18 +78,21 @@ pub fn parse_requirements(text: &str) -> Result<Vec<CodexRule>, String> {
     Ok(out)
 }
 
-/// `{ token = "x" }` or `{ any_of = ["a", "b"] }`.
+/// `{ token = "x" }` or `{ any_of = ["a", "b"] }`, never both, with no blank token, as Codex
+/// `parse_pattern_token` requires.
 fn token_alternatives(token: &Value) -> Option<Vec<String>> {
     let table = token.as_inline_table()?;
-    if let Some(single) = table.get("token").and_then(Value::as_str) {
-        return Some(vec![single.to_owned()]);
-    }
-    let any = table.get("any_of")?.as_array()?;
-    let alts: Vec<String> = any
-        .iter()
-        .map(|v| v.as_str().map(str::to_owned))
-        .collect::<Option<_>>()?;
-    (!alts.is_empty()).then_some(alts)
+    let alts: Vec<String> = match (table.get("token"), table.get("any_of")) {
+        (Some(single), None) => vec![single.as_str()?.to_owned()],
+        (None, Some(any)) => any
+            .as_array()?
+            .iter()
+            .map(|v| v.as_str().map(str::to_owned))
+            .collect::<Option<_>>()?,
+        _ => return None,
+    };
+    let blank = alts.iter().any(|alt| alt.trim().is_empty());
+    (!alts.is_empty() && !blank).then_some(alts)
 }
 
 #[cfg(test)]
@@ -107,5 +124,24 @@ prefix_rules = [{ pattern = [{ token = "ls" }], decision = "allow" }]"#;
         let tables =
             "[[rules.prefix_rules]]\npattern = [{ token = \"curl\" }]\ndecision = \"forbidden\"\n";
         assert_eq!(parse_requirements(tables).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_token_must_be_one_of_token_or_any_of_and_not_blank() {
+        for token in [
+            r#"{ token = "" }"#,
+            r#"{ token = "  " }"#,
+            r#"{ any_of = [] }"#,
+            r#"{ any_of = ["a", " "] }"#,
+            r#"{ token = "a", any_of = ["b"] }"#,
+            r#"{ other = "a" }"#,
+            r#"{ token = 1 }"#,
+        ] {
+            let text = format!(
+                "[rules]\nprefix_rules = [{{ pattern = [{token}], decision = \"forbidden\" }}]"
+            );
+            let err = parse_requirements(&text).unwrap_err();
+            assert!(err.contains("bad token"), "{token}: {err}");
+        }
     }
 }

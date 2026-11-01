@@ -22,7 +22,7 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
 | `claude-user` | `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` | global |
 | `claude-project` | `<root>/.claude/settings.json` | project |
 | `claude-local` | `<root>/.claude/settings.local.json` | project |
-| `codex-managed` | `/etc/codex/requirements.toml`, else `/etc/codex/managed_config.toml` (Unix); `%ProgramData%\OpenAI\Codex\requirements.toml` (Windows) | global |
+| `codex-managed` | `/etc/codex/requirements.toml` (Unix), `%ProgramData%\OpenAI\Codex\requirements.toml` (Windows); `/etc/codex/managed_config.toml` (Unix) is checked but gives no rules | global |
 | `codex-system` | `/etc/codex/rules/*.rules` (Unix); `%ProgramData%\OpenAI\Codex\rules\*.rules` (Windows) | global |
 | `codex-user` | `$CODEX_HOME/rules/*.rules`, else `~/.codex/rules/*.rules` | global |
 | `codex-project` | `.codex/rules/*.rules` in the cwd and each parent up to the git root | project |
@@ -60,7 +60,11 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
 - Codex network rules first compile to one result per host: the last `allow` or `forbidden` rule in load order wins, and `prompt` decides nothing (see Matching).
 - The results of all sources then combine in one order: deny, then ask, then allow. For Codex network rules, only the compiled result per host takes part. An ask rule asks each time, whatever allow rules match, as in Claude Code ("deny rules from any scope are evaluated before allow rules").
 - `allowManagedPermissionRulesOnly: true` in Claude managed settings drops the rules of `claude-user`, `claude-project`, and `claude-local`.
-- Codex `requirements.toml` `[rules] prefix_rules` (`{ token = "x" }` or `{ any_of = [...] }` per position) apply with `prompt`, `prompt-user` (both ask), or `forbidden`; `allow` there is an error, as in Codex.
+- Codex `requirements.toml` `[rules] prefix_rules` (`{ token = "x" }` or `{ any_of = [...] }` per position) apply with `prompt`, `prompt-user` (both ask), or `forbidden`; `allow` there is an error, as in Codex. A position with both `token` and `any_of`, or with a blank token, is an error too, and so are a `rules` key that is not a table, `[rules]` without `prefix_rules`, and a `justification` that is not a string. A file with no `rules` key gives no rules.
+- Codex requirements files block like an unreadable rules file: every tool call is blocked with the file and its error until it is fixed or `codex-managed` is off in `/permissions`, as Codex does not start then.
+  - A missing file is skipped. A folder in its place, a read error, invalid UTF-8, a TOML error, and a `[rules]` error in `requirements.toml` all block.
+  - The legacy `/etc/codex/managed_config.toml` is read too, even when `requirements.toml` is valid, and a read or TOML error in it blocks. Its `[rules]` are not used, as in Codex, which takes only `approval_policy`, `approvals_reviewer`, and `sandbox_mode` from it. When it has a `rules` key, the session start warning names the file and says to move them.
+  - Earlier versions of this extension used `managed_config.toml` `[rules]` when `requirements.toml` was missing or could not be read. Move those rules to `requirements.toml`.
 - A call with several parts (bash subcommands, `url_context` URLs) is denied or asked when any part matches a deny or ask rule. It is allowed only when every part matches an allow rule. Otherwise pi decides.
 
 ## Mode for calls no rule decides
@@ -149,6 +153,7 @@ These need a host feature that pi does not have, or have no pi tool to apply to:
 - OS sandboxing. Rules match the text of a call: `/bin/rm` or `sh -c 'rm ...'` passes a `Bash(rm *)` deny, a script that opens files itself passes `Read` deny rules, and Bash network access passes Codex `network_rule`. Codex `sandbox_mode` and Claude sandbox settings need a sandbox in pi.
 - `Skill(...)`: pi loads skills as prompt text, so there is no tool call to decide. `PowerShell(...)` applies by name to a tool named `powershell`; pi has none.
 - The `auto` mode classifier; `auto` asks like `default`.
+- Codex requirements other than `[rules]`: other `requirements.toml` keys and the legacy `managed_config.toml` values are not read or checked for type, and macOS managed preferences and cloud requirements are not loaded. A requirements file that Codex refuses for one of those reasons does not block here.
 - Codex `approval_policy` and `trust_level`, and the read-only set's extra prompts (globs with write-capable flags, `docker -H`, `ps e`, special variables, commands over 10,000 characters) are shown in the panel or not applied.
 - Parser error messages: the `network_rule` protocol, host, decision, and justification errors use the Codex text. Other messages, such as those for argument mistakes or `prefix_rule`, are worded differently.
 
@@ -160,6 +165,7 @@ Read 2026-10-30, and again 2026-10-31 for read-only commands, redirections, syml
 - Codex execpolicy README: https://github.com/openai/codex/blob/main/codex-rs/execpolicy/README.md (`prefix_rule`, decisions, `match`/`not_match`, strictest decision wins).
 - Codex `network_rule` semantics, read 2026-10-31 at openai/codex `67f0994b532b8740f14b5b738af7b7b2a915b1d6`: `codex-rs/execpolicy/src/rule.rs` (`NetworkRuleProtocol::parse`, `normalize_network_rule_host`), `parser.rs` (`network_rule`), `policy.rs` (`compiled_network_domains`), `decision.rs`, and `error.rs`; `codex-rs/core/src/exec_policy.rs` (`policy_files`, `load_exec_policy_with_warning`); `codex-rs/config/src/requirements_exec_policy.rs` (`requirements.toml` has only `prefix_rules`, so it adds no network rules).
 - Codex rules files, read 2026-11-01 at openai/codex `67f0994b532b8740f14b5b738af7b7b2a915b1d6`: `codex-rs/core/src/exec_policy.rs` (`policy_files`, `collect_policy_files`, `load_exec_policy`), `codex-rs/config/src/loader/mod.rs` (the system config folder and `ignore_user_and_project_exec_policy_rules`), `codex-rs/config/src/state.rs` (`config_folder`), and `codex-rs/exec/src/cli.rs` (`--ignore-rules`).
+- Codex requirements loading, read 2026-11-01 at openai/codex `67f0994b532b8740f14b5b738af7b7b2a915b1d6`: `codex-rs/config/src/loader/mod.rs` (`load_requirements_toml`, `requirements_layers_from_legacy_scheme`, `LegacyManagedConfigToml`), `loader/managed_requirements.rs` (`load_requirements_from_sources`), `loader/layer_io.rs` (`read_config_from_path`), `requirements_layers/layer.rs` and `stack.rs` (TOML errors), `config_requirements.rs` (`ExecPolicyParse`), `requirements_exec_policy.rs` (`parse_pattern_token`), `codex-rs/file-system/src/lib.rs` (`read_file_text`), and `codex-rs/exec-server/src/regular_file.rs`.
 - Codex execpolicy parser: https://github.com/openai/codex/blob/main/codex-rs/execpolicy/src/parser.rs (argument names, first-token expansion, `network_rule`, `host_executable`) and `src/amend.rs` (the `prefix_rule(pattern=[...], decision="allow")` line that "allow always" appends).
 - Codex rules docs: https://learn.chatgpt.com/docs/agent-configuration/rules (redirected from https://developers.openai.com/codex/rules; rules locations, project rules only in trusted projects, splitting of `bash -lc` scripts, `~/.codex/rules/default.rules`).
 - Codex config reference: https://learn.chatgpt.com/docs/config-file/config-reference (`approval_policy`, `sandbox_mode`, `projects.<path>.trust_level`).
