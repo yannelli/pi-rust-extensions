@@ -80,7 +80,7 @@ pub fn explain(loaded: &Loaded, call: &Call) -> Vec<String> {
     }
     let verdict = evaluate(&loaded.rules, call);
     let guard = (verdict.decision != Some(Decision::Deny))
-        .then(|| crate::guards::guard(loaded, call, &verdict))
+        .then(|| crate::fence::check(loaded, call, &verdict))
         .flatten();
     let first = guard.map_or_else(|| outcome(&verdict), |guard| guard.describe());
     let mut lines = vec![format!("{}: {first}", call.tool)];

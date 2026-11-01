@@ -2,6 +2,7 @@ mod ask;
 mod codex;
 mod codex_config;
 mod evaluate;
+mod fence;
 mod file_rules;
 mod files;
 mod guards;
@@ -60,7 +61,7 @@ async fn tool_call(paths: Arc<Paths>, ev: EventCtx) -> Result<EventReply> {
     if let (Some(Decision::Deny), Some(rule)) = (verdict.decision, &verdict.rule) {
         return Ok(EventReply::block(ask::deny_reason(rule)));
     }
-    match guards::guard(&loaded, &call, &verdict) {
+    match fence::check(&loaded, &call, &verdict) {
         Some(guards::Guard::Deny(reason)) => return Ok(EventReply::block(reason)),
         Some(guards::Guard::Ask(reason)) => return ask::ask_protected(host, &call, &reason).await,
         None => {}
