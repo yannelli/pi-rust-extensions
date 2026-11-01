@@ -205,18 +205,20 @@ fn claude_source(out: &mut Loaded, source: Source, env: &Env, managed_only: bool
     let mut info = Vec::new();
     if let Some(mode) = permissions["defaultMode"].as_str() {
         info.push(format!("defaultMode={mode}"));
-        if matches!(source, Source::ClaudeProject | Source::ClaudeLocal)
+        let mode = if matches!(source, Source::ClaudeProject | Source::ClaudeLocal)
             && matches!(mode, "auto" | "bypassPermissions")
         {
             out.notes.push(format!(
-                "{}: defaultMode {mode} is ignored; set it in user or managed settings",
+                "{}: defaultMode {mode} is not applied; using default (Manual) mode",
                 file.display()
             ));
+            "default"
         } else {
-            let current = out.claude_mode.as_ref().map(|(_, s)| claude_precedence(*s));
-            if current.is_none_or(|rank| claude_precedence(source) > rank) {
-                out.claude_mode = Some((mode.to_owned(), source));
-            }
+            mode
+        };
+        let current = out.claude_mode.as_ref().map(|(_, s)| claude_precedence(*s));
+        if current.is_none_or(|rank| claude_precedence(source) > rank) {
+            out.claude_mode = Some((mode.to_owned(), source));
         }
     }
     if let Some(dirs) = permissions["additionalDirectories"].as_array() {
