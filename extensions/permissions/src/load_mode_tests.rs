@@ -19,6 +19,7 @@ impl Fixture {
             claude_dir: root.join("home/.claude"),
             claude_managed: root.join("managed/settings.json"),
             codex_home: root.join("home/.codex"),
+            codex_system: root.join("etc/codex"),
             codex_requirements: vec![root.join("managed/requirements.toml")],
             agent_dir: Some(root.join("agent")),
         };

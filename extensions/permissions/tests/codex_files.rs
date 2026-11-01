@@ -1,5 +1,5 @@
-//! A Codex rules file with an error, as Codex `load_exec_policy_with_warning` handles it: no Codex user or
-//! project rule and no `host_executable` applies, while managed, Claude, and pi rules still decide.
+//! A Codex rules file with an error, as Codex `load_exec_policy_with_warning` handles it: no Codex system, user,
+//! or project rule and no `host_executable` applies, while managed, Claude, and pi rules still decide.
 
 #[allow(dead_code)]
 mod common;
@@ -66,5 +66,34 @@ async fn a_bad_codex_rules_file_leaves_only_managed_claude_and_pi_rules_deciding
         .await
         .expect("pi rule");
     assert!(touch.contains("from pi-global"), "{touch}");
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_unreadable_codex_rules_file_blocks_a_call_that_a_pi_rule_allows_until_it_is_fixed() {
+    let fx = fx();
+    write(
+        &fx.agent.join("ext/permissions.json"),
+        r#"{"allow": ["Bash(ls *)"]}"#,
+    );
+    let bad = fx.paths.codex_home.join("rules/bad.rules");
+    write(&bad, "");
+    std::fs::write(&bad, [0xff, 0xfe]).unwrap();
+    let mut host = start(&fx).await;
+    let mut ui = Ui::default();
+    let reason = decide(&mut host, &fx, &mut ui, 1, "ls")
+        .await
+        .expect("Codex rules that cannot be read block the call");
+    assert!(
+        reason.starts_with("Codex rules cannot be read")
+            && reason.contains(&bad.display().to_string()),
+        "{reason}"
+    );
+    write(&bad, r#"prefix_rule(pattern=["rm"], decision="forbidden")"#);
+    assert_eq!(
+        decide(&mut host, &fx, &mut ui, 2, "ls").await,
+        None,
+        "each call loads the fixed file"
+    );
     host.finish().await.unwrap();
 }

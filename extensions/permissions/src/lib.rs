@@ -45,6 +45,9 @@ async fn tool_call(paths: Arc<Paths>, ev: EventCtx) -> Result<EventReply> {
     let (host, snap) = (ev.host(), ev.snapshot());
     let env = env_for(&paths, host, snap);
     let loaded = load(&env);
+    if let Some(reason) = loaded.blocked() {
+        return Ok(EventReply::block(reason));
+    }
     let call = Call {
         tool: &event.tool_name,
         input: &event.input,
