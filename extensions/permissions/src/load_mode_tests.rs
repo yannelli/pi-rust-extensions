@@ -62,7 +62,7 @@ impl Fixture {
 }
 
 #[test]
-fn project_and_local_cannot_select_auto_or_bypass() {
+fn project_and_local_restricted_modes_do_not_fall_back_to_the_user_mode() {
     for source in [Source::ClaudeProject, Source::ClaudeLocal] {
         for name in ["auto", "bypassPermissions"] {
             let fx = Fixture::new();
@@ -71,15 +71,15 @@ fn project_and_local_cannot_select_auto_or_bypass() {
             let loaded = fx.load(true);
             assert_eq!(
                 loaded.claude_mode,
-                Some(("acceptEdits".into(), Source::ClaudeUser)),
+                Some(("default".into(), source)),
                 "{source:?}: {name}"
             );
             assert_eq!(
                 loaded.mode.as_ref().map(|(mode, _)| *mode),
-                Some(Mode::AcceptEdits)
+                Some(Mode::Default)
             );
             let prefix = format!(
-                "{}: defaultMode {name} is ignored;",
+                "{}: defaultMode {name} is not applied; using default (Manual) mode",
                 fx.file(source).display()
             );
             assert!(
@@ -92,14 +92,17 @@ fn project_and_local_cannot_select_auto_or_bypass() {
 }
 
 #[test]
-fn ignored_project_modes_do_not_create_a_default_mode() {
+fn restricted_project_modes_select_manual_without_a_user_mode() {
     for source in [Source::ClaudeProject, Source::ClaudeLocal] {
         for name in ["auto", "bypassPermissions"] {
             let fx = Fixture::new();
             fx.mode(source, name);
             let loaded = fx.load(true);
-            assert_eq!(loaded.claude_mode, None);
-            assert_eq!(loaded.mode, None);
+            assert_eq!(loaded.claude_mode, Some(("default".into(), source)));
+            assert_eq!(
+                loaded.mode.as_ref().map(|(mode, _)| *mode),
+                Some(Mode::Default)
+            );
         }
     }
 }
@@ -116,7 +119,12 @@ fn user_and_managed_can_select_auto_or_bypass() {
                 loaded.mode.as_ref().map(|(mode, _)| *mode),
                 Mode::parse(name)
             );
-            assert!(!loaded.notes.iter().any(|note| note.contains("is ignored;")));
+            assert!(
+                !loaded
+                    .notes
+                    .iter()
+                    .any(|note| note.contains("is not applied;"))
+            );
         }
     }
 }
@@ -150,7 +158,10 @@ fn ignored_mode_keeps_the_same_files_rules_and_additional_directories() {
         }),
     );
     let loaded = fx.load(true);
-    assert_eq!(loaded.claude_mode, None);
+    assert_eq!(
+        loaded.claude_mode,
+        Some(("default".into(), Source::ClaudeProject))
+    );
     assert!(
         loaded.rules.iter().any(|rule| {
             rule.source == Source::ClaudeProject && rule.decision == Decision::Deny
@@ -185,4 +196,47 @@ fn managed_precedence_and_project_trust_still_apply() {
         loaded.claude_mode,
         Some(("default".into(), Source::ClaudeUser))
     );
+}
+
+#[test]
+fn a_restricted_local_mode_suppresses_lower_project_and_user_modes() {
+    for name in ["auto", "bypassPermissions"] {
+        let fx = Fixture::new();
+        fx.mode(Source::ClaudeUser, "bypassPermissions");
+        fx.mode(Source::ClaudeProject, "acceptEdits");
+        fx.mode(Source::ClaudeLocal, name);
+        let loaded = fx.load(true);
+        assert_eq!(
+            loaded.claude_mode,
+            Some(("default".into(), Source::ClaudeLocal))
+        );
+        assert_eq!(
+            loaded.mode.as_ref().map(|(mode, _)| *mode),
+            Some(Mode::Default)
+        );
+    }
+}
+
+#[test]
+fn managed_mode_wins_over_project_fallback_and_pi_can_still_opt_out() {
+    let fx = Fixture::new();
+    fx.mode(Source::ClaudeManaged, "auto");
+    fx.mode(Source::ClaudeProject, "bypassPermissions");
+    let loaded = fx.load(true);
+    assert_eq!(
+        loaded.claude_mode,
+        Some(("auto".into(), Source::ClaudeManaged))
+    );
+
+    let fx = Fixture::new();
+    fx.mode(Source::ClaudeProject, "auto");
+    let global = global_file(&fx.agent);
+    std::fs::create_dir_all(global.parent().unwrap()).unwrap();
+    std::fs::write(global, json!({"defaultMode": "pi"}).to_string()).unwrap();
+    let loaded = fx.load(true);
+    assert_eq!(
+        loaded.claude_mode,
+        Some(("default".into(), Source::ClaudeProject))
+    );
+    assert_eq!(loaded.mode, None);
 }
