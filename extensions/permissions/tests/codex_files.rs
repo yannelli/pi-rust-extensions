@@ -97,3 +97,47 @@ async fn an_unreadable_codex_rules_file_blocks_a_call_that_a_pi_rule_allows_unti
     );
     host.finish().await.unwrap();
 }
+
+#[tokio::test]
+async fn an_invalid_requirements_file_blocks_every_tool_until_it_is_fixed() {
+    let fx = fx();
+    write(
+        &fx.agent.join("ext/permissions.json"),
+        r#"{"allow": ["Bash(ls *)"]}"#,
+    );
+    let requirements = &fx.paths.codex_requirements[0];
+    write(
+        requirements,
+        "[rules]\nprefix_rules = [{ pattern = [{ token = \" \" }], decision = \"forbidden\" }]\n",
+    );
+    let mut host = start(&fx).await;
+    let mut ui = Ui::default();
+    let reason = decide(&mut host, &fx, &mut ui, 1, "ls")
+        .await
+        .expect("a requirements rule error blocks the call that a pi rule allows");
+    assert!(
+        reason.starts_with("Codex rules cannot be read")
+            && reason.contains(&requirements.display().to_string()),
+        "{reason}"
+    );
+    let event = serde_json::json!({ "type": "tool_call", "toolCallId": "t2", "toolName": "read",
+        "input": { "path": "README.md" } });
+    let params =
+        serde_json::json!({ "name": "tool_call", "event": event, "ctx": ctx(&fx, false, true) });
+    let read = drive(&mut host, 2, "event", params, &mut ui).await;
+    assert_eq!(
+        blocked(&read["result"]["result"]).as_deref(),
+        Some(reason.as_str()),
+        "every tool gets the same reason"
+    );
+    write(
+        requirements,
+        "[rules]\nprefix_rules = [{ pattern = [{ token = \"rm\" }], decision = \"forbidden\" }]\n",
+    );
+    assert_eq!(
+        decide(&mut host, &fx, &mut ui, 3, "ls").await,
+        None,
+        "each call loads the fixed file"
+    );
+    host.finish().await.unwrap();
+}

@@ -40,7 +40,8 @@ pub struct Loaded {
     hosts: HashMap<String, Vec<String>>,
     /// Codex system, user, and project rules files that failed to parse.
     codex_failed: Vec<PathBuf>,
-    /// Codex rules folders and files that could not be read; Codex does not start then.
+    /// Codex rules folders and files that could not be read, and requirements files that could not be read or
+    /// parsed; Codex does not start then.
     pub codex_unreadable: Vec<String>,
     /// The files that loaded Claude user, project, and local settings files link to; writes to them are protected.
     pub protected_files: Vec<PathBuf>,
@@ -364,24 +365,66 @@ fn attach_hosts(rules: &mut [Rule], hosts: &HashMap<String, Vec<String>>) {
     }
 }
 
+/// Codex requirements as `load_requirements_from_sources` reads them: `requirements.toml` gives the rules,
+/// and the legacy `managed_config.toml` after it must read and parse but gives none.
 fn codex_requirements(out: &mut Loaded, env: &Env) {
-    for file in &env.paths.codex_requirements {
-        let Ok(text) = std::fs::read_to_string(file) else {
-            continue;
-        };
-        match crate::requirements::parse_requirements(&text) {
-            Ok(rules) => out.rules.extend(rules.into_iter().map(|r| Rule {
-                source: Source::CodexManaged,
-                decision: r.decision,
-                text: r.text,
-                file: file.clone(),
-                justification: r.justification,
-                kind: Kind::Codex(r.rule),
-            })),
-            Err(err) => out.notes.push(format!("{}: {err}", file.display())),
-        }
-        return;
+    let mut files = env.paths.codex_requirements.iter();
+    if let Some(file) = files.next() {
+        requirements_file(out, file);
     }
+    for legacy in files {
+        let doc = match read_text(legacy) {
+            Ok(Some(text)) => text
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|e| e.to_string()),
+            Ok(None) => continue,
+            Err(err) => Err(err.to_string()),
+        };
+        match doc {
+            Ok(doc) if doc.contains_key("rules") => out.notes.push(format!(
+                "{}: its [rules] are not used, as in Codex; move them to requirements.toml",
+                legacy.display()
+            )),
+            Ok(_) => {}
+            Err(error) => out.unreadable(format!("{}: {error}", legacy.display())),
+        }
+    }
+}
+
+fn requirements_file(out: &mut Loaded, file: &Path) {
+    let text = match read_text(file) {
+        Ok(Some(text)) => text,
+        Ok(None) => return,
+        Err(err) => return out.unreadable(format!("{}: {err}", file.display())),
+    };
+    match crate::requirements::parse_requirements(&text) {
+        Ok(rules) => out.rules.extend(rules.into_iter().map(|r| Rule {
+            source: Source::CodexManaged,
+            decision: r.decision,
+            text: r.text,
+            file: file.to_path_buf(),
+            justification: r.justification,
+            kind: Kind::Codex(r.rule),
+        })),
+        Err(err) => out.unreadable(format!("{}: {err}", file.display())),
+    }
+}
+
+/// The text of a regular file; `None` only when nothing is at `file`. A folder or other non-file, a read error,
+/// and invalid UTF-8 are errors, as in Codex `read_file_text`.
+fn read_text(file: &Path) -> std::io::Result<Option<String>> {
+    match std::fs::metadata(file) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+        Ok(meta) if !meta.is_file() => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "is not a file",
+            ));
+        }
+        Ok(_) => {}
+    }
+    std::fs::read_to_string(file).map(Some)
 }
 
 fn codex_file(out: &mut Loaded, source: Source, file: &Path) {
@@ -475,3 +518,7 @@ mod fence_shell_tests;
 #[cfg(test)]
 #[path = "load_codex_tests.rs"]
 mod codex_loading_tests;
+
+#[cfg(test)]
+#[path = "load_requirements_tests.rs"]
+mod requirements_loading_tests;
