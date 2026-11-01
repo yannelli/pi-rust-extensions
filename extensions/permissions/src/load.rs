@@ -42,6 +42,8 @@ pub struct Loaded {
     codex_failed: Vec<PathBuf>,
     /// Codex rules folders and files that could not be read; Codex does not start then.
     pub codex_unreadable: Vec<String>,
+    /// The files that loaded Claude user, project, and local settings files link to; writes to them are protected.
+    pub protected_files: Vec<PathBuf>,
 }
 
 impl Loaded {
@@ -200,6 +202,10 @@ fn claude_source(out: &mut Loaded, source: Source, env: &Env, managed_only: bool
         Source::ClaudeProject => (root.join(".claude/settings.json"), env.cwd.clone()),
         _ => (root.join(".claude/settings.local.json"), env.cwd.clone()),
     };
+    let link = std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink());
+    if link && source != Source::ClaudeManaged {
+        out.protected_files.push(crate::file_rules::resolve(&file));
+    }
     let Ok(text) = std::fs::read_to_string(&file) else {
         return;
     };
@@ -416,6 +422,10 @@ mod tests;
 #[cfg(test)]
 #[path = "load_mode_tests.rs"]
 mod mode_settings_tests;
+
+#[cfg(test)]
+#[path = "guards_tests.rs"]
+mod guards_tests;
 
 #[cfg(test)]
 #[path = "load_codex_tests.rs"]

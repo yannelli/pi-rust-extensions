@@ -118,6 +118,18 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
   - That Codex result then counts like any other rule, so a Claude or pi deny or ask still wins over a Codex network `allow`.
 - If a Codex system, user, or project rules file fails to parse, no Codex system, user, or project rule or `host_executable` applies, from any file. `requirements.toml` rules and Claude and pi rules still apply, and the session start warning names each file and its error.
 
+## Protected paths
+
+While a Claude mode applies, a write to a Claude [protected path](https://code.claude.com/docs/en/permission-modes#protected-paths) is checked after deny rules and before ask rules, allow rules, and the mode. An allow rule such as `Edit(.claude/**)` does not pre-approve it, and a deny rule still blocks it with its own reason.
+
+- Writes are `edit` and `write` calls and the Bash write targets under Matching (redirects, `tee`, `sed -i`, and the other write commands). The requested path and the file it resolves to are both checked.
+- Protected: a path component `.git`, `.vscode`, `.idea`, `.husky`, `.cargo`, `.devcontainer`, `.yarn`, `.mvn`, `.claude`, or `.config/git`; a file named `.gitconfig`, `.gitmodules`, a shell rc file (`.bashrc`, `.bash_profile`, `.bash_login`, `.bash_aliases`, `.bash_logout`, `.zshrc`, `.zprofile`, `.zshenv`, `.zlogin`, `.zlogout`, `.profile`, `.envrc`), `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnp.cjs`, `.pnp.loader.mjs`, `.pnpmfile.cjs`, `bunfig.toml`, `.bunfig.toml`, `.bazelrc`, `.bazelversion`, `.bazeliskrc`, `.pre-commit-config.yaml`, `lefthook.yml`, `lefthook.yaml`, `.lefthook.yml`, `.lefthook.yaml`, `gradle-wrapper.properties`, `maven-wrapper.properties`, `.devcontainer.json`, `.ripgreprc`, `pyrightconfig.json`, `.mcp.json`, or `.claude.json`; and the file that a loaded Claude user, project, or local settings file links to.
+- `.claude/worktrees/<name>/...` is not protected by its `.claude`, but a protected path inside it is (`.claude/worktrees/w/.git/config`).
+- `default` and `acceptEdits` (and `auto`) ask, without "Allow always"; without a UI the call is blocked with the reason. `dontAsk` denies. `bypassPermissions` leaves the write to pi.
+- `plan` denies the write, as pi's `plan` denies every write. Claude's plan mode can prompt, route to its classifier, or allow such a write; pi does not.
+- Names match exactly, case included. Claude's other `.claude` exceptions (session plan files, background job folders, memory Markdown), `--plugin-dir` folders, `dev-mods`, and files passed with `--settings`, `--mcp-config`, or `--agents` have no pi equivalent and are not handled.
+- With `"defaultMode": "pi"` (no Claude mode) the check does not apply.
+
 ## Not covered
 
 These need a host feature that pi does not have, or have no pi tool to apply to:
@@ -125,7 +137,7 @@ These need a host feature that pi does not have, or have no pi tool to apply to:
 - OS sandboxing. Rules match the text of a call: `/bin/rm` or `sh -c 'rm ...'` passes a `Bash(rm *)` deny, a script that opens files itself passes `Read` deny rules, and Bash network access passes Codex `network_rule`. Codex `sandbox_mode` and Claude sandbox settings need a sandbox in pi.
 - `Skill(...)`: pi loads skills as prompt text, so there is no tool call to decide. `PowerShell(...)` applies by name to a tool named `powershell`; pi has none.
 - The `auto` mode classifier; `auto` asks like `default`.
-- Codex `approval_policy` and `trust_level` and Claude `blockReadsOutsideWorkingDirectories`, protected paths (`.git`, `.claude`), and the read-only set's extra prompts (globs with write-capable flags, `docker -H`, `ps e`, special variables, commands over 10,000 characters) are shown in the panel or not applied.
+- Codex `approval_policy` and `trust_level`, Claude `blockReadsOutsideWorkingDirectories`, and the read-only set's extra prompts (globs with write-capable flags, `docker -H`, `ps e`, special variables, commands over 10,000 characters) are shown in the panel or not applied.
 - Parser error messages: the `network_rule` protocol, host, decision, and justification errors use the Codex text. Other messages, such as those for argument mistakes or `prefix_rule`, are worded differently.
 
 ## Documentation read
