@@ -76,3 +76,156 @@ fn strings_and_triple_quotes() {
     );
     assert_eq!(parsed.rules[0].justification.as_deref(), Some("x\"y"));
 }
+
+fn network(host: &str, protocol: &str) -> Result<(String, String), String> {
+    let text = format!(r#"network_rule(host="{host}", protocol="{protocol}", decision="deny")"#);
+    let parsed = parse_rules(&text)?;
+    let (rule, ..) = parsed.network.into_iter().next().unwrap();
+    Ok((rule.host, rule.protocol))
+}
+
+/// Cases from Codex execpolicy `rule.rs` and `parser.rs` at openai/codex 67f0994b.
+#[test]
+fn network_rules_follow_codex_protocols_and_host_normalization() {
+    for (written, stored) in [
+        ("http", "http"),
+        ("https", "https"),
+        ("https_connect", "https"),
+        ("http-connect", "https"),
+        ("socks5_tcp", "socks5_tcp"),
+        ("socks5_udp", "socks5_udp"),
+    ] {
+        assert_eq!(
+            network("a.example", written).unwrap().1,
+            stored,
+            "{written}"
+        );
+    }
+    assert_eq!(
+        network("a.example", "ftp").unwrap_err(),
+        "network_rule protocol must be one of http, https, socks5_tcp, socks5_udp (got ftp)"
+    );
+    for (written, host) in [
+        ("Example.COM.", "example.com"),
+        ("  a.example  ", "a.example"),
+        ("a.example:8080", "a.example"),
+        ("[::1]", "::1"),
+        ("[::1]:443", "::1"),
+        ("::1", "::1"),
+        ("10.0.0.1:80", "10.0.0.1"),
+    ] {
+        assert_eq!(network(written, "https").unwrap().0, host, "{written}");
+    }
+    for (written, error) in [
+        ("", "network_rule host cannot be empty"),
+        (".", "network_rule host cannot be empty"),
+        (
+            "https://a.example",
+            "network_rule host must be a hostname or IP literal (without scheme or path)",
+        ),
+        (
+            "a.example/p",
+            "network_rule host must be a hostname or IP literal (without scheme or path)",
+        ),
+        (
+            "a.example?q",
+            "network_rule host must be a hostname or IP literal (without scheme or path)",
+        ),
+        (
+            "[::1",
+            "network_rule host has an invalid bracketed IPv6 literal",
+        ),
+        (
+            "[::1]x",
+            "network_rule host contains an unsupported suffix: [::1]x",
+        ),
+        (
+            "[::1]:",
+            "network_rule host contains an unsupported suffix: [::1]:",
+        ),
+        (
+            "*.a.example",
+            "network_rule host must be a specific host; wildcards are not allowed",
+        ),
+        (
+            "a.*",
+            "network_rule host must be a specific host; wildcards are not allowed",
+        ),
+        ("a b", "network_rule host cannot contain whitespace"),
+    ] {
+        assert_eq!(network(written, "https").unwrap_err(), error, "{written:?}");
+    }
+}
+
+#[test]
+fn a_bad_network_rule_rejects_the_whole_file_in_codex_order() {
+    let protocol_first = r#"network_rule(host="*", protocol="ftp", decision="maybe")"#;
+    assert!(
+        parse_rules(protocol_first)
+            .unwrap_err()
+            .contains("protocol must be one of")
+    );
+    let decision_next = r#"network_rule(host="*", protocol="https", decision="maybe")"#;
+    assert_eq!(
+        parse_rules(decision_next).unwrap_err(),
+        "invalid decision: maybe"
+    );
+    let justification =
+        r#"network_rule(host="*", protocol="https", decision="deny", justification=" ")"#;
+    assert_eq!(
+        parse_rules(justification).unwrap_err(),
+        "justification cannot be empty"
+    );
+    let file = "prefix_rule(pattern=[\"rm\"], decision=\"forbidden\")\n\
+                network_rule(host=\"*.a.example\", protocol=\"https\", decision=\"deny\")\n";
+    assert!(
+        parse_rules(file).is_err(),
+        "a valid rule before a bad one does not load"
+    );
+    let deny = parse_rules(r#"network_rule(host="a.example", protocol="https", decision="deny")"#);
+    assert_eq!(deny.unwrap().network[0].1, Decision::Deny);
+}
+
+/// The Codex `network_rule(host, protocol, decision, justification)` Starlark signature takes
+/// positional or named arguments.
+#[test]
+fn network_rules_take_positional_or_named_arguments() {
+    let positional = parse_rules(r#"network_rule("Evil.example", "https", "deny")"#).unwrap();
+    let (rule, decision, justification, _) = &positional.network[0];
+    assert_eq!(
+        (rule.host.as_str(), *decision, justification),
+        ("evil.example", Decision::Deny, &None)
+    );
+    let mixed =
+        parse_rules(r#"network_rule("a.example", "http", decision="allow", justification="ok")"#);
+    let (rule, decision, justification, _) = &mixed.unwrap().network[0];
+    assert_eq!(
+        (rule.protocol.as_str(), *decision),
+        ("http", Decision::Allow)
+    );
+    assert_eq!(justification.as_deref(), Some("ok"));
+    for (text, error) in [
+        (
+            r#"network_rule("a", "https", "deny", host="b")"#,
+            "network_rule got `host` twice",
+        ),
+        (
+            r#"network_rule(host="a", protocol="https", decision="deny", reason="x")"#,
+            "network_rule has no parameter `reason`",
+        ),
+        (
+            r#"network_rule("a", "https", "deny", "j", "extra")"#,
+            "network_rule takes at most 4 arguments",
+        ),
+        (
+            r#"network_rule(host="a", decision="deny")"#,
+            "network_rule needs `protocol`",
+        ),
+        (
+            r#"network_rule(protocol="https", "evil.example", decision="forbidden")"#,
+            "network_rule has a positional argument after a named one",
+        ),
+    ] {
+        assert_eq!(parse_rules(text).unwrap_err(), error, "{text}");
+    }
+}

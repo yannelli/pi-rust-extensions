@@ -146,9 +146,14 @@ pub fn evaluate(rules: &[Rule], call: &Call) -> Verdict {
     let decided: Vec<(Target, Option<Rule>)> = targets
         .into_iter()
         .map(|target| {
+            let network = network_winner(rules, call, &target);
             let best = rules
                 .iter()
                 .filter(|rule| complete || rule.decision != Decision::Allow)
+                .filter(|rule| {
+                    !matches!(rule.kind, Kind::Network(_))
+                        || network.is_some_and(|winner| std::ptr::eq(winner, *rule))
+                })
                 .filter(|rule| applies(rule, call, &target, plain))
                 .filter(|rule| !carved(rules, rule, call, &target))
                 .max_by_key(|rule| rule.rank())
@@ -176,6 +181,16 @@ pub fn evaluate(rules: &[Rule], call: &Call) -> Verdict {
     }
 }
 
+/// The Codex network rule that decides `target`: the last allow or forbidden rule for its host, in load
+/// order, while prompt rules do not count (`policy.rs` `compiled_network_domains`, openai/codex 67f0994b).
+fn network_winner<'a>(rules: &'a [Rule], call: &Call, target: &Target) -> Option<&'a Rule> {
+    rules.iter().rev().find(|rule| {
+        matches!(rule.kind, Kind::Network(_))
+            && rule.decision != Decision::Ask
+            && applies(rule, call, target, true)
+    })
+}
+
 fn applies(rule: &Rule, call: &Call, target: &Target, plain: bool) -> bool {
     match &rule.kind {
         Kind::Codex(prefix) => match target {
@@ -187,7 +202,7 @@ fn applies(rule: &Rule, call: &Call, target: &Target, plain: bool) -> bool {
         },
         Kind::Network(network) => match target {
             Target::Url(host) => {
-                FETCH_TOOLS.contains(&call.tool) && domain_matches(&network.host, host)
+                FETCH_TOOLS.contains(&call.tool) && network.host == host.trim_end_matches('.')
             }
             _ => false,
         },

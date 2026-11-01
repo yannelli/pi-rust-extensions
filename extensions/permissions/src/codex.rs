@@ -140,29 +140,129 @@ fn host_executable(args: &[(Option<String>, Val)]) -> Result<(String, Vec<String
 
 type ParsedNetwork = (NetworkRule, Decision, Option<String>, String);
 
+const NETWORK_PARAMS: [&str; 4] = ["host", "protocol", "decision", "justification"];
+
+/// The `network_rule` arguments by parameter, positional or named as the Starlark signature allows.
+fn network_args(args: &[(Option<String>, Val)]) -> Result<[Option<&Val>; 4], String> {
+    let mut slots: [Option<&Val>; 4] = [None; 4];
+    let mut position = 0;
+    let mut named_seen = false;
+    for (key, val) in args {
+        let index = match key {
+            Some(key) => {
+                named_seen = true;
+                NETWORK_PARAMS
+                    .iter()
+                    .position(|param| param == key)
+                    .ok_or(format!("network_rule has no parameter `{key}`"))?
+            }
+            None if named_seen => {
+                return Err("network_rule has a positional argument after a named one".into());
+            }
+            None => {
+                position += 1;
+                position - 1
+            }
+        };
+        let slot = slots
+            .get_mut(index)
+            .ok_or("network_rule takes at most 4 arguments")?;
+        if slot.replace(val).is_some() {
+            return Err(format!(
+                "network_rule got `{}` twice",
+                NETWORK_PARAMS[index]
+            ));
+        }
+    }
+    Ok(slots)
+}
+
 fn network_rule(args: &[(Option<String>, Val)]) -> Result<ParsedNetwork, String> {
-    let text = |key: &str| match arg(args, key) {
+    let slots = network_args(args)?;
+    let text = |index: usize| match slots[index] {
         Some(Val::Str(s)) => Ok(s.clone()),
-        _ => Err(format!("network_rule needs `{key}`")),
+        _ => Err(format!("network_rule needs `{}`", NETWORK_PARAMS[index])),
     };
-    let (host, protocol, decision) = (text("host")?, text("protocol")?, text("decision")?);
+    let (host, protocol, decision) = (text(0)?, text(1)?, text(2)?);
+    let canonical = network_protocol(&protocol)?;
     let parsed = match decision.as_str() {
         "deny" | "forbidden" => Decision::Deny,
         "prompt" => Decision::Ask,
         "allow" => Decision::Allow,
-        other => return Err(format!("unknown network_rule decision `{other}`")),
+        other => return Err(format!("invalid decision: {other}")),
     };
-    let justification = match arg(args, "justification") {
+    let justification = match slots[3] {
         Some(Val::Str(j)) if j.trim().is_empty() => {
             return Err("justification cannot be empty".into());
         }
         Some(Val::Str(j)) => Some(j.clone()),
-        _ => None,
+        Some(_) => return Err("network_rule `justification` must be a string".into()),
+        None => None,
     };
-    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let host = network_host(&host)?;
     let shown =
         format!("network_rule(host=\"{host}\", protocol=\"{protocol}\", decision=\"{decision}\")");
+    let protocol = canonical.to_owned();
     Ok((NetworkRule { host, protocol }, parsed, justification, shown))
+}
+
+/// Codex `NetworkRuleProtocol::parse` (execpolicy `rule.rs`, openai/codex 67f0994b): the name it
+/// stores for each accepted spelling.
+fn network_protocol(raw: &str) -> Result<&'static str, String> {
+    match raw {
+        "http" => Ok("http"),
+        "https" | "https_connect" | "http-connect" => Ok("https"),
+        "socks5_tcp" => Ok("socks5_tcp"),
+        "socks5_udp" => Ok("socks5_udp"),
+        other => Err(format!(
+            "network_rule protocol must be one of http, https, socks5_tcp, socks5_udp (got {other})"
+        )),
+    }
+}
+
+/// Codex `normalize_network_rule_host` (execpolicy `rule.rs`, openai/codex 67f0994b).
+fn network_host(raw: &str) -> Result<String, String> {
+    let mut host = raw.trim();
+    if host.is_empty() {
+        return Err("network_rule host cannot be empty".into());
+    }
+    if host.contains("://") || host.contains(['/', '?', '#']) {
+        return Err(
+            "network_rule host must be a hostname or IP literal (without scheme or path)".into(),
+        );
+    }
+    if let Some(stripped) = host.strip_prefix('[') {
+        let Some((inside, rest)) = stripped.split_once(']') else {
+            return Err("network_rule host has an invalid bracketed IPv6 literal".into());
+        };
+        let port_ok = rest
+            .strip_prefix(':')
+            .is_some_and(|port| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()));
+        if !rest.is_empty() && !port_ok {
+            return Err(format!(
+                "network_rule host contains an unsupported suffix: {raw}"
+            ));
+        }
+        host = inside;
+    } else if host.matches(':').count() == 1 {
+        if let Some((candidate, port)) = host.rsplit_once(':') {
+            if !candidate.is_empty() && !port.is_empty() && port.chars().all(|c| c.is_ascii_digit())
+            {
+                host = candidate;
+            }
+        }
+    }
+    let normalized = host.trim_end_matches('.').trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Err("network_rule host cannot be empty".into());
+    }
+    if normalized.contains('*') {
+        return Err("network_rule host must be a specific host; wildcards are not allowed".into());
+    }
+    if normalized.chars().any(char::is_whitespace) {
+        return Err("network_rule host cannot contain whitespace".into());
+    }
+    Ok(normalized)
 }
 
 /// One rule per alternative of the first token, as the Codex parser builds them.
