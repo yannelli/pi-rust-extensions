@@ -61,6 +61,7 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
 
 ## Mode for calls no rule decides
 
+- Claude `auto` and `bypassPermissions` apply only from user or managed settings. Project and local values are ignored with a load note; other settings in the same file still apply. See the [Claude settings reference](https://code.claude.com/docs/en/settings-reference#permissionsdefaultmode).
 - Claude `defaultMode` applies to the calls no rule decides: managed settings first, then local, project, and user settings. A pi file with a mode name in `"defaultMode"` sets the mode for pi instead; `"defaultMode": "pi"` turns the Claude mode off and leaves those calls to pi. Managed settings apply in both cases. The panel shows the mode and its source.
 - `default` (also `manual`, and `auto`, because pi has no classifier) asks before `edit` and `write`, Bash commands outside Claude's read-only set (`ls`, `cat`, `echo`, `pwd`, `head`, `tail`, `grep`, `find` without actions, `wc`, `which`, `diff`, `stat`, `du`, `cd`, read-only `git`), Bash writes and reads outside the working directories, fetches, `web_search`, MCP tools, and reads outside the working directories. The working directories are the cwd and Claude `additionalDirectories`.
 - A path is inside the working directories only when the requested path and the file it resolves to are both inside, so a symlink that points out of the cwd counts as outside.
