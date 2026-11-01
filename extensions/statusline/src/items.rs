@@ -5,11 +5,14 @@ use serde_json::Value;
 use crate::segments::Segment;
 
 /// One entry of `segments`: a segment, or literal `text`, with an optional color and icon.
+/// `foreground` and `background` color this badge only: a pi theme token, `#rrggbb`, or `#rgb`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Item {
     pub kind: ItemKind,
     pub color: Option<String>,
     pub icon: Option<String>,
+    pub foreground: Option<String>,
+    pub background: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -24,10 +27,13 @@ impl Item {
             kind: ItemKind::Segment(segment),
             color: None,
             icon: None,
+            foreground: None,
+            background: None,
         }
     }
 
-    /// `"model"`, `{"segment": "model", "color": "#hex", "icon": "◆"}`, or `{"text": "λ"}`.
+    /// `"model"`, `{"segment": "model", "color": "#hex", "icon": "◆", "foreground": "text", "background": "#hex"}`,
+    /// or `{"text": "λ"}`.
     pub fn parse(value: &Value) -> Option<Self> {
         if let Some(name) = value.as_str() {
             return Segment::from_name(name).map(Self::segment);
@@ -43,6 +49,8 @@ impl Item {
             kind,
             color: field("color"),
             icon: field("icon"),
+            foreground: field("foreground"),
+            background: field("background"),
         })
     }
 

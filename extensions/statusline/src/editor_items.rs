@@ -154,5 +154,14 @@ pub fn build_items(value: &Value) -> Vec<SettingItem> {
             custom: true,
             ..Default::default()
         },
+        SettingItem {
+            id: "badges".into(),
+            label: "Badge colors".into(),
+            current: "edit".into(),
+            description: "Text and background color of each badge. Background shows only in filled shapes. Apply to save."
+                .into(),
+            custom: true,
+            ..Default::default()
+        },
     ]
 }

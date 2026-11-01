@@ -53,6 +53,11 @@ async fn open_editor(footer: Arc<Footer>, host: Host) -> Result<()> {
         }
         _ => return Ok(()),
     };
+    let badge_defaults = if scope == "Project" {
+        Footer::global_value(&host).unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
     let save_path = path.clone();
     let save_host = host.clone();
     let save = Box::new(move |value: Value| {
@@ -61,8 +66,9 @@ async fn open_editor(footer: Arc<Footer>, host: Host) -> Result<()> {
         }
         sources::write_config(&save_path, &value)
     });
-    let mut editor =
-        StatusLineEditor::new(value, footer.home().to_path_buf(), save).with_config_path(path);
+    let mut editor = StatusLineEditor::new(value, footer.home().to_path_buf(), save)
+        .with_badge_defaults(badge_defaults)
+        .with_config_path(path);
     let mut shown = editor.preview_value();
     footer.show_preview(&host, &shown).await;
     let result = run_editor(&footer, &host, &mut editor, &mut shown).await;

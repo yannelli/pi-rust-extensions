@@ -23,7 +23,7 @@ pub enum Role {
 const ROLES: usize = 14;
 
 /// `(name, colors by role in [`Role`] order)`.
-const THEMES: [(&str, [&str; ROLES]); 17] = [
+const THEMES: [(&str, [&str; ROLES]); 23] = [
     (
         "pi-rust",
         [
@@ -143,6 +143,48 @@ const THEMES: [(&str, [&str; ROLES]); 17] = [
             "#BDBDBD", "#E0E0E0", "#FFFFFF", "#737373", "#525252", "#F5F5F5",
         ],
     ),
+    (
+        "ocean",
+        [
+            "#2F6EA5", "#7FD1E8", "#1F6F8B", "#4FB0C6", "#99C1DE", "#A9D6E5", "#62B6CB", "#56C596",
+            "#7ED3B2", "#F2C14E", "#E4572E", "#89A7C2", "#355C7D", "#2A9D8F",
+        ],
+    ),
+    (
+        "forest",
+        [
+            "#6B8F47", "#C9A227", "#2F6B3B", "#8A5A44", "#A3B18A", "#B7C9A0", "#7FB069", "#3F7A33",
+            "#9BC53D", "#E0A030", "#C1442E", "#6E5E45", "#4A5D3A", "#3A7D44",
+        ],
+    ),
+    (
+        "sunset",
+        [
+            "#F4A261", "#FFB4A2", "#E76F51", "#8A3FD1", "#F6BD60", "#F7D6E0", "#E5989B", "#FFCB77",
+            "#B5E48C", "#FFB627", "#D62828", "#CDB4DB", "#6D597A", "#F28482",
+        ],
+    ),
+    (
+        "pastel",
+        [
+            "#A7C7E7", "#FDFD96", "#C3B1E1", "#F8C8DC", "#B5EAD7", "#C7CEEA", "#E2F0CB", "#FFDAC1",
+            "#B5EAD7", "#FFE29A", "#FF9AA2", "#D5D6EA", "#CFCFCF", "#E0BBE4",
+        ],
+    ),
+    (
+        "high-contrast",
+        [
+            "#FFFFFF", "#FFFF00", "#00FFFF", "#FF00FF", "#00FF00", "#FFFFFF", "#00FFFF", "#00FF00",
+            "#00FF00", "#FFD700", "#B00020", "#FFFFFF", "#000000", "#FFFF00",
+        ],
+    ),
+    (
+        "paper",
+        [
+            "#E8E2D0", "#F2E6B8", "#D8E2F0", "#EAD7E8", "#E3EAD6", "#ECE6DA", "#DCEBEA", "#E0EFD8",
+            "#D4E9C8", "#F5D9A8", "#F3B8B0", "#E6E1D8", "#D9D4C9", "#DCE3F2",
+        ],
+    ),
 ];
 
 /// The theme names, for docs and error messages.
@@ -176,6 +218,16 @@ pub fn parse_hex(value: &str) -> Option<[u8; 3]> {
     let hex = value.strip_prefix('#').filter(|hex| hex.len() == 6)?;
     let channel = |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok();
     Some([channel(0)?, channel(2)?, channel(4)?])
+}
+
+/// A badge color: `#rrggbb` or `#rgb`. Theme and segment `color` values keep accepting `#rrggbb` only.
+pub fn parse_badge_hex(value: &str) -> Option<[u8; 3]> {
+    let hex = value.strip_prefix('#')?;
+    if hex.len() != 3 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return parse_hex(value);
+    }
+    let channel = |at: usize| u8::from_str_radix(&hex[at..=at].repeat(2), 16).ok();
+    Some([channel(0)?, channel(1)?, channel(2)?])
 }
 
 /// Dark ink on light backgrounds and light ink on dark ones (WCAG relative luminance).
@@ -220,6 +272,29 @@ mod tests {
         let lum = |[r, g, b]: [u8; 3]| 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
         let (x, y) = (lum(a), lum(b));
         (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn context_states_stay_distinct_in_every_palette() {
+        for name in theme_names() {
+            let palette = Palette::named(name).expect("built-in palette");
+            let states = [Role::ContextOk, Role::ContextWarn, Role::ContextHigh]
+                .map(|role| palette.rgb(role));
+            assert!(
+                states[0] != states[1] && states[1] != states[2] && states[0] != states[2],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn badge_hex_accepts_short_and_long_forms_only() {
+        assert_eq!(parse_badge_hex("#f80"), Some([0xFF, 0x88, 0x00]));
+        assert_eq!(parse_badge_hex("#FF8800"), Some([0xFF, 0x88, 0x00]));
+        for invalid in ["#ff", "#ffff", "f80", "#gg0", "#ff88001", "#\u{1b}[31m"] {
+            assert_eq!(parse_badge_hex(invalid), None, "{invalid}");
+        }
+        assert_eq!(parse_hex("#f80"), None);
     }
 
     #[test]

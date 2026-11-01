@@ -13,7 +13,7 @@ use crate::icons::Icons;
 use crate::model::StatusSnapshot;
 use crate::presets::{PRESETS, Preset};
 use crate::segments::{Item, ItemKind, Segment, segment_text};
-use crate::themes::{Palette, Role, parse_hex};
+use crate::themes::{Palette, Role, parse_badge_hex, parse_hex};
 
 const MIN_RIGHT: usize = 8;
 
@@ -200,7 +200,10 @@ impl BuiltinStatusLine {
             (None, Some(palette)) => Fg::Rgb(palette.rgb(role)),
             (None, None) => Fg::Token(token_for(role, segment)),
         };
-        Some(Piece { text, fg, bg })
+        // Badge colors that do not parse are ignored, so the legacy colors above apply.
+        let bg = item.background.as_deref().and_then(badge_rgb).unwrap_or(bg);
+        let ink = item.foreground.as_deref().and_then(badge_fg);
+        Some(Piece { text, fg, bg, ink })
     }
 }
 
@@ -241,6 +244,19 @@ fn spec_fg(spec: &str) -> Option<Fg> {
     match ThemeColor::from_name(spec) {
         Some(token) => Some(Fg::Token(token)),
         None => parse_hex(spec).map(Fg::Rgb),
+    }
+}
+
+/// A badge `background`: a pi theme token, `#rrggbb`, or `#rgb`, as sRGB.
+fn badge_rgb(spec: &str) -> Option<[u8; 3]> {
+    badge_fg(spec).map(Fg::rgb)
+}
+
+/// A badge `foreground`: a pi theme token, `#rrggbb`, or `#rgb`.
+fn badge_fg(spec: &str) -> Option<Fg> {
+    match ThemeColor::from_name(spec) {
+        Some(token) => Some(Fg::Token(token)),
+        None => parse_badge_hex(spec).map(Fg::Rgb),
     }
 }
 

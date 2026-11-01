@@ -24,6 +24,12 @@ pub fn layout_values(builtin: &BuiltinStatusLine) -> Vec<Vec<Value>> {
                     if let Some(icon) = &item.icon {
                         value["icon"] = json!(icon);
                     }
+                    if let Some(foreground) = &item.foreground {
+                        value["foreground"] = json!(foreground);
+                    }
+                    if let Some(background) = &item.background {
+                        value["background"] = json!(background);
+                    }
                     value
                 })
                 .collect()
@@ -120,7 +126,7 @@ mod tests {
 
     #[test]
     fn layout_actions_preserve_objects_and_can_remove_all_modules() {
-        let pill = json!({"segment": "model", "color": "#ffffff", "icon": "M"});
+        let pill = json!({"segment": "model", "color": "#ffffff", "icon": "M", "foreground": "#000", "background": "accent"});
         let mut lines = vec![vec![json!("dir"), pill.clone()]];
         change_layout(&mut lines, "0:1", "earlier");
         assert_eq!(lines[0][0], pill);

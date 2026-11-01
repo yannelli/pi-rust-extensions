@@ -1,6 +1,6 @@
 # statusline
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-10-31.
 
 A footer status line for pi-rust. It replaces the built-in `statusLine` setting and renders with `ui.setFooter` from the ctx snapshot, the footer data (`sessionStats`, `runState`, `gitBranch`), and events. It renders again when the footer width changes.
 
@@ -12,7 +12,7 @@ A footer status line for pi-rust. It replaces the built-in `statusLine` setting 
 
 ## Commands
 
-- `/statusline`: choose global or project scope, then edit the source, appearance, or layout. Project scope requires a trusted project. Changes save at once to the selected config. While the editor is open, pi's footer shows the edited status line and the value under the cursor of an open list. Esc on a list shows the saved value again, and closing the editor shows the saved status line.
+- `/statusline`: choose global or project scope, then edit the source, appearance, or layout. Project scope requires a trusted project. Appearance choices save at once; **Modules / order** and **Badge colors** save when you apply them. While the editor is open, pi's footer shows the edited status line and the value under the cursor of an open list. Esc on a list shows the saved value again, and closing the editor shows the saved status line.
 - `/statusline <preset | command | from-claude | from-cursor | from-codex | off>`: switches directly.
 
 ## Config
@@ -22,6 +22,30 @@ A footer status line for pi-rust. It replaces the built-in `statusLine` setting 
 Without either file, the old `statusLine` setting applies (through `settings.get`, with `command` from `~/.pi/agent/settings.json` only). Without that too, the `minimal` preset applies.
 
 In a project that is not trusted, `command` and the `command`, `claude`, and `cursor` types come from the global layer only; the extension says so once.
+
+## Badge colors
+
+Open `/statusline`, choose a scope, then choose **Badge colors**. Select a badge by its row and position to change its background or text color. Two copies of the same module can have different colors. Literal text badges can also have their own colors.
+
+Choose a color token, a swatch, or a custom `#rrggbb` color. The footer previews the highlighted color. Apply saves the badge colors; Esc discards unsaved changes. Reset removes that badge's background and text overrides and restores its inherited colors. Backgrounds appear on block, rounded, powerline, and slanted shapes. Plain, brackets, and dot shapes use text colors.
+
+The **Palette** list includes `ocean`, `forest`, `sunset`, `pastel`, `high-contrast`, and `paper`, alongside the existing palettes. A palette sets the default badge colors. Filled badges pick dark or light text for contrast unless you set a text color yourself.
+
+For example, this draws two model badges with different colors:
+
+```json
+{
+  "type": "builtin",
+  "chip": "block",
+  "theme": "ocean",
+  "segments": [
+    {"segment": "model", "background": "#245a81", "foreground": "#ffffff"},
+    {"segment": "model", "background": "#f6c177", "foreground": "#202020"}
+  ]
+}
+```
+
+`foreground` and `background` accept `#rrggbb` or a pi color token: `accent`, `text`, `muted`, `dim`, `success`, `warning`, `error`, or `border`. An invalid value falls back to the inherited color. Existing per-badge `color` and the `colors` map still work: they set text color on text-only shapes and background color on filled shapes. Explicit `foreground` and `background` take precedence for their own channel. Changing a palette keeps badge overrides. Selecting a preset resets the layout and its per-badge overrides; the `colors` map stays.
 
 ## Usage segments
 
