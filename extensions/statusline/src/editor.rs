@@ -197,10 +197,14 @@ impl StatusLineEditor {
     /// The value the footer previews: the highlighted choice of an open value list or the
     /// unapplied layout, else the saved value. Other sources than builtin are not previewed.
     pub fn preview_value(&self) -> Value {
+        self.over_defaults(&self.scoped_preview_value())
+    }
+
+    fn scoped_preview_value(&self) -> Value {
         if let Some(badges) = &self.badges {
             let lines = json!(badges.preview_lines()).to_string();
             return match edit_value(&self.value, "segments", &lines, &self.home) {
-                Ok(value) => self.over_defaults(&value),
+                Ok(value) => value,
                 Err(_) => self.value.clone(),
             };
         }
