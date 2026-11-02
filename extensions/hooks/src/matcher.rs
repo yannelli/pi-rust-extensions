@@ -21,7 +21,7 @@ pub fn matches_event(source: Source, event: &str, matcher: Option<&str>, target:
     let narrow = !source.is_codex() && matches!(event, "StopFailure" | "FileChanged");
     match matcher.map(str::trim) {
         Some(m) if narrow && !m.is_empty() && m != "*" && !is_exact(m, "") => {
-            regex_matches(m, &candidates(source, target))
+            regex_matches(source, m, &candidates(source, target))
         }
         _ => matches(source, matcher, target),
     }
@@ -39,7 +39,17 @@ fn candidates(source: Source, target: &Target) -> Vec<&str> {
     }
 }
 
-fn regex_matches(matcher: &str, candidates: &[&str]) -> bool {
+/// Claude matchers are JavaScript `RegExp` (`regress`); Codex matchers use the Rust `regex` crate.
+fn regex_matches(source: Source, matcher: &str, candidates: &[&str]) -> bool {
+    if !source.is_codex() {
+        return match regress::Regex::new(matcher) {
+            Ok(regex) => candidates.iter().any(|c| regex.find(c).is_some()),
+            Err(err) => {
+                pi_ext_sdk::warn!("hooks: invalid matcher {matcher:?}: {err}");
+                false
+            }
+        };
+    }
     match Regex::new(matcher) {
         Ok(regex) => candidates.iter().any(|c| regex.is_match(c)),
         Err(err) => {
@@ -72,7 +82,7 @@ pub fn matches(source: Source, matcher: Option<&str>, target: &Target) -> bool {
             .map(str::trim)
             .any(|name| candidates.contains(&name));
     }
-    regex_matches(matcher, &candidates)
+    regex_matches(source, matcher, &candidates)
 }
 
 /// Claude `if`: one permission rule such as `Bash(git *)` or `Edit(*.ts)`.

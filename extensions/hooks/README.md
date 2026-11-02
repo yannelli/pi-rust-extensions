@@ -118,7 +118,7 @@ The extension subscribes to `subagents:start` and `subagent:async-started` (Suba
 
 ## Matchers
 
-- Claude and pi: `*`, `""`, or omitted match all. A matcher of only `[A-Za-z0-9_\- ,|]` is an exact name or a `|`/`,` list. Other matchers are unanchored regexes (`Edit.*` also matches `NotebookEdit`).
+- Claude and pi: `*`, `""`, or omitted match all. A matcher of only `[A-Za-z0-9_\- ,|]` is an exact name or a `|`/`,` list. Other matchers are unanchored JavaScript regular expressions (`regress`, ECMAScript syntax with lookaround and backreferences): `Edit.*` also matches `NotebookEdit`, `^(?!mcp__)` matches every tool that is not an MCP tool.
 - Claude StopFailure: the exact-name set is only `[A-Za-z0-9_|]`, so a hyphen, space, or comma makes the matcher a regex.
 - Codex: `*` or `""` match all. A matcher of only `[A-Za-z0-9_|]` is an exact name or a `|` list; other matchers are unanchored regexes. Tool matchers test the Codex name and its aliases: `apply_patch` (pi edit and write) also as `Edit` and `Write`.
 - An invalid regex matches nothing and is logged.
@@ -177,7 +177,7 @@ Events marked pi-rust come from host events that only pi-rust sends; with an old
 
 - PermissionRequest runs on each tool call that PreToolUse did not allow or deny, because pi has no permission dialog.
 - Handler types `agent` and `mcp_tool` (Claude and Codex) are skipped with a log line, because the extension has no call path into pi's MCP client or a subagent runner. Codex `prompt` and `agent` are skipped, as in Codex.
-- Matcher regexes use the Rust `regex` syntax, not JavaScript `RegExp`: lookaround and backreferences are invalid and match nothing.
+- Codex matcher regexes use the Rust `regex` syntax, as Codex does: lookaround and backreferences are invalid there and match nothing.
 - The per-event handler type limits of Claude (for example, SessionStart allows only `command` and `mcp_tool`) are not checked, and prompt hooks have no limit of 12 at a time.
 - SessionEnd hooks each get their own timeout, not one shared budget. `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` is not read.
 - On Windows, shell-form hooks run with `cmd`, not Git Bash or PowerShell.
