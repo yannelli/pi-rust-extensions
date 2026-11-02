@@ -34,6 +34,14 @@ pub struct State {
     pub spill: u64,
     /// Consecutive Stop blocks since the last tool call or user input.
     pub stop_blocks: u32,
+    /// Dynamic FileChanged list from `watchPaths`.
+    pub watch_paths: Vec<PathBuf>,
+    /// Directories added with `/add-dir`.
+    pub added_dirs: Vec<PathBuf>,
+    /// Tool calls this extension blocked.
+    pub own_blocks: HashSet<String>,
+    /// When the agent last settled with no follow-up; cleared by user input.
+    pub settled_at: Option<std::time::Instant>,
     pub flag_trust_all: bool,
 }
 

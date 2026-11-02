@@ -11,6 +11,10 @@ Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both 
 | `/hooks` | Opens the hooks manager panel. Without a UI it shows the listing as a notification. |
 | `/hooks list` | Shows the listing as a notification. |
 | `--hooks-trust-all` | Runs every hook without a trust prompt for this run (like Codex `--dangerously-bypass-hook-trust`). |
+| `--init`, `--init-only`, `--maintenance` | Run Setup hooks, as the Claude flags do. `--init` and `--maintenance` work in print mode (no UI). `--init-only` runs Setup and SessionStart hooks, then shuts pi down. |
+| `--worktree <name>` | Starts in a new worktree: WorktreeCreate hooks, else `git worktree add -b <name> <git root>/.pi/worktrees/<name>`. Needs a pi host that lets `session_start` handlers switch sessions. |
+| `/worktree [name]` | Creates a worktree the same way and switches to a new session in it. `/worktree exit [--force]` switches back and removes it (WorktreeRemove hooks, else `git worktree remove`). On quit, a clean worktree from `/worktree` is removed. |
+| `/add-dir <path>` | Adds a working directory: tells the model, then runs DirectoryAdded hooks (`source: "slash_command"`) in the background. Their `systemMessage` goes to the model on the next turn. |
 
 ### Hooks manager
 
@@ -94,9 +98,19 @@ Each hook has a hash: sha256 hex of the canonical JSON (sorted keys) `{ file, ev
 | `session_compact` | PostCompact, then SessionStart with source `compact` | Context is held. |
 | `model_select` | PreModelSwitch, then PostModelSwitch (Claude and pi) | pi sends `model_select` after the switch, so a block switches back to the previous model and shows the reason. Exit 2, `decision: "block"`, `permissionDecision: "deny"`, `continue: false`, and a timeout block. `ask` asks with `ui.confirm`; without a UI it blocks. PreModelSwitch does not run for a `restore` switch. PostModelSwitch context is held. |
 | `before_provider_request`, `after_provider_response` | Codex PreModelRequest, PostModelRequest | Diagnostic only; the request does not wait. PostModelRequest `status` is `completed` for a 2xx HTTP status, else `failed` with `error: "HTTP <status>"`; `token_usage` is `null`. |
-| `pi.events` subagent channels | SubagentStart, SubagentStop | See below. |
+| `pi.events` subagent channels | SubagentStart, SubagentStop; `subagent:async-complete` also gives Notification `agent_completed` and TeammateIdle (`team_name: "subagents"`) | See below. A TeammateIdle block is emitted on `hooks:teammate-idle-blocked` `{ agentId, reason }`. |
+| `tool_call` of the `todo` tool | TaskCreated for each task of `action: "create"`, TaskCompleted for `action: "update"` with `status: "completed"` (after PreToolUse and PermissionRequest) | A block (exit 2 or `decision: "block"`) blocks the `todo` call with the reason. `task_id` continues from the last `todo` result `nextId`; the subject of a completed task comes from the last `todo` result. `owner` is sent as `teammate_name`. |
+| A 1-second watcher | FileChanged, ConfigChange, Notification `idle_prompt` | FileChanged watches the literal file names of FileChanged matchers in the cwd plus `watchPaths` from SessionStart, CwdChanged, and FileChanged (`event`: `add`, `change`, `unlink`). ConfigChange watches the Claude user, project, local, and managed settings files and skill files (`source`: `user_settings`, `project_settings`, `local_settings`, `policy_settings`, `skills`); without a block it reloads the hooks config, so edits apply at once. `idle_prompt` fires 60 seconds after the agent settled without new input (UI only). |
+| `ui.confirm` of a hook `ask` | Notification `permission_prompt` | Fires when the dialog stays open for 6 seconds. |
+| `instructions_loaded` (pi-rust host event) | InstructionsLoaded (`load_reason: "session_start"`, `memory_type`: `User` or `Project`) | Advisory, runs in the background. |
+| `prompt_expansion` (pi-rust) | UserPromptExpansion (matcher: `command_name`) | A block stops the prompt and shows the reason; context and plain stdout are added to the expanded prompt. |
+| `notification` (pi-rust) | Notification `plugin_notification` (extension `ui.notify`, `title` is the extension) or `pi_notification` (pi's own notices) | Notices from this extension are skipped. |
+| `tool_call_blocked` (pi-rust) | PermissionDenied (blocks by other extensions or pi's permission check, not by this extension) | `retry: true` sends a `hooks-retry` steer message that tells the model it may retry. |
+| `cwd_changed` (pi-rust) | CwdChanged (`old_cwd`, `new_cwd`) | Clears `CLAUDE_ENV_FILE`; `watchPaths` replaces the FileChanged list. |
+| `message_display` (pi-rust) | MessageDisplay (`turn_id`, `message_id`, `index`, `final`, `delta`) | `displayContent` replaces the shown text; the session keeps the original. |
+| `mcp_elicitation`, `mcp_elicitation_result` (pi-rust) | Elicitation, ElicitationResult (matcher: server name) | `action` (`accept` with `content`, `decline`, `cancel`) answers or changes the reply; a decline, exit 2, or `decision: "block"` wins. ElicitationResult also gives Notification `elicitation_response`. |
 
-Matcher targets: tool name for tool events, `source` for SessionStart, `reason` for SessionEnd, `trigger` for Pre/PostCompact, agent type for Subagent events, error type for StopFailure (`rate_limit`, `overloaded`, `authentication_failed`, `billing_error`, `max_output_tokens`, `model_not_found`, `server_error`, `invalid_request`, `unknown`, from the error text), model id for Pre/PostModelSwitch. UserPromptSubmit, PostToolBatch, Stop, Interrupt, PreModelRequest, and PostModelRequest ignore the matcher.
+Matcher targets: tool name for tool events, `source` for SessionStart, `reason` for SessionEnd, `trigger` for Pre/PostCompact, agent type for Subagent events, error type for StopFailure (`rate_limit`, `overloaded`, `authentication_failed`, `billing_error`, `max_output_tokens`, `model_not_found`, `server_error`, `invalid_request`, `unknown`, from the error text), model id for Pre/PostModelSwitch, `trigger` for Setup, `load_reason` for InstructionsLoaded, `command_name` for UserPromptExpansion, `notification_type` for Notification, `source` for ConfigChange and DirectoryAdded, the file name for FileChanged, server name for Elicitation and ElicitationResult. UserPromptSubmit, PostToolBatch, Stop, Interrupt, TaskCreated, TaskCompleted, TeammateIdle, CwdChanged, MessageDisplay, PreModelRequest, and PostModelRequest ignore the matcher.
 
 ### Subagent channel contract
 
@@ -159,23 +173,7 @@ SessionStart hooks get `CLAUDE_ENV_FILE=<agentDir>/ext/hooks/env/<session_id>.sh
 
 ## Differences from upstream and unsupported items
 
-Claude Code and Codex events that do not fire, because pi has no matching event:
-
-| Event | Source | Reason |
-| --- | --- | --- |
-| Setup | Claude | pi has no setup or install phase. |
-| InstructionsLoaded | Claude | pi sends no event when it loads AGENTS.md or rules files. |
-| UserPromptExpansion | Claude | pi sends no event for prompt template expansion. |
-| MessageDisplay | Claude | Extensions get no hook point before pi renders a message. |
-| PermissionDenied | Claude | pi has no permission dialog, so it denies nothing. |
-| Notification | Claude | pi sends no event for its own notifications. |
-| TaskCreated, TaskCompleted | Claude | pi has no task model. |
-| TeammateIdle | Claude | pi has no agent teams. |
-| ConfigChange | Claude | pi sends no event when settings files change. |
-| CwdChanged, DirectoryAdded | Claude | The pi session cwd is fixed, and pi has no added directories. |
-| FileChanged | Claude | pi does not watch files. |
-| WorktreeCreate, WorktreeRemove | Claude | pi has no worktree commands. |
-| Elicitation, ElicitationResult | Claude | pi sends no MCP elicitation events to extensions. |
+Events marked pi-rust come from host events that only pi-rust sends; with an older pi they do not fire. Setup, the worktree flag and command, `/add-dir`, the task events, the watcher, and the subagent-based events work with any pi.
 
 - PermissionRequest runs on each tool call that PreToolUse did not allow or deny, because pi has no permission dialog.
 - Handler types `agent` and `mcp_tool` (Claude and Codex) are skipped with a log line, because the extension has no call path into pi's MCP client or a subagent runner. Codex `prompt` and `agent` are skipped, as in Codex.
@@ -186,7 +184,7 @@ Claude Code and Codex events that do not fire, because pi has no matching event:
 - Codex: `trusted_hash` in `[hooks.state]`, `project_root_markers`, plugin hooks (`.codex-plugin/plugin.json` and plugin `hooks/hooks.json`), and `continue: false` on SessionStart `compact` and PostCompact are not supported.
 - Input fields that are not sent: Claude `mcp_server`, `duration_ms`, `is_interrupt`, `session_title`, `agent_transcript_path`, Stop `background_tasks` and `session_crons`, and the cost fields of SessionStart and PreModelSwitch; Codex `agent_transcript_path`.
 - Output fields that have no effect: UserPromptSubmit `sessionTitle` and `suppressOriginalPrompt`, PostToolUse `classifierContext`, Claude PermissionRequest `decision.interrupt`. Context text is not escaped for `<system-reminder>` tags.
-- Unsupported handler and settings fields: `shell: "powershell"` on non-Windows, `commandWindows`/`command_windows`, Claude `updatedPermissions`, `updatedMCPToolOutput` beyond replacing the content, SessionStart `watchPaths` and `reloadSkills`, managed settings (`allowManagedHooksOnly`, `allowedHttpHookUrls`, `httpHookAllowedEnvVars`, Codex `requirements.toml`), plugin `hooks/hooks.json` files outside the pi-native file, and skill or subagent frontmatter hooks.
+- Unsupported handler and settings fields: `shell: "powershell"` on non-Windows, `commandWindows`/`command_windows`, Claude `updatedPermissions`, `updatedMCPToolOutput` beyond replacing the content, SessionStart `reloadSkills`, managed settings (`allowManagedHooksOnly`, `allowedHttpHookUrls`, `httpHookAllowedEnvVars`, Codex `requirements.toml`), plugin `hooks/hooks.json` files outside the pi-native file, and skill or subagent frontmatter hooks.
 - `permission_mode` is `default`. `prompt_id`, `scratchpad_dir`, `effort`, and `agent_id`/`agent_type` in the main session are not sent.
 - SubagentStart context and SubagentStop blocks go to `pi.events` channels, because the extension cannot reach the subagent session.
 - A denied hook stays denied with `trustAll`.

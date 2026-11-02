@@ -19,6 +19,7 @@ pub async fn input(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         let mut state = rt.lock();
         state.stop_hook_active = false;
         state.stop_blocks = 0;
+        state.settled_at = None;
         state.turn += 1;
     }
     let d = Dispatch::new(
@@ -151,6 +152,7 @@ pub async fn agent_settled(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply>
         .filter_map(|o| o.context.clone())
         .filter(|c| !c.trim().is_empty())
         .collect();
+    rt.lock().settled_at = Some(std::time::Instant::now());
     let reason =
         first_block(&outcomes).or_else(|| (!feedback.is_empty()).then(|| feedback.join("\n\n")));
     if let Some(reason) = reason {
@@ -161,6 +163,7 @@ pub async fn agent_settled(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply>
             if !capped {
                 state.stop_blocks += 1;
                 state.stop_hook_active = true;
+                state.settled_at = None;
             }
             capped
         };
@@ -233,6 +236,9 @@ pub async fn watch_subagents(rt: Arc<Runtime>, host: Host) -> Result<()> {
         tokio::spawn(async move {
             while let Some(data) = subscription.recv().await {
                 subagent_event(&rt, &host, *start, &data).await;
+                if *channel == "subagent:async-complete" {
+                    background_done(&rt, &host, &data).await;
+                }
             }
         });
     }
@@ -278,5 +284,32 @@ pub async fn subagent_event(rt: &Arc<Runtime>, host: &Host, start: bool, data: &
                 json!({ "agentId": agent_id, "reason": reason }),
             )
             .await;
+    }
+}
+
+/// A background subagent finished: Notification `agent_completed`, then TeammateIdle.
+pub async fn background_done(rt: &Arc<Runtime>, host: &Host, data: &Value) {
+    let field = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|k| data.get(*k).and_then(Value::as_str))
+    };
+    let agent_id = field(&["agentId", "id", "runId"])
+        .unwrap_or_default()
+        .to_owned();
+    let name = field(&["agentType", "agent", "type"])
+        .unwrap_or(&agent_id)
+        .to_owned();
+    let snap = host.snapshot().map(|s| (*s).clone()).unwrap_or_default();
+    let message = format!("Background agent {name} finished");
+    crate::events::watch::notify(rt, host, &snap, "agent_completed", &message, None).await;
+    let payload = json!({ "teammate_name": name, "team_name": "subagents", "agent_id": agent_id });
+    let d = Dispatch::new("TeammateIdle", Target::Any, payload).claude_only();
+    let outcomes = dispatch(rt, host, &snap, d).await;
+    let blocked = first_stop(&outcomes)
+        .map(|r| stop_text(&r))
+        .or_else(|| first_block(&outcomes));
+    if let Some(reason) = blocked {
+        let data = json!({ "agentId": agent_id, "reason": reason });
+        let _ = host.emit("hooks:teammate-idle-blocked", data).await;
     }
 }

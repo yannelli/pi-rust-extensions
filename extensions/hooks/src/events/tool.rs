@@ -7,6 +7,7 @@ use pi_ext_sdk::prelude::*;
 
 use crate::decide::{contexts, first_block, first_stop, fold_tool, stop_text};
 use crate::dispatch::{Dispatch, dispatch};
+use crate::events::tasks::{TODO_TOOL, todo_call};
 use crate::matcher::Target;
 use crate::model::Source;
 use crate::output::{Outcome, Permission};
@@ -66,7 +67,7 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     if let Some(reason) = pre.stop {
         let reason = stop_text(&reason);
         stop_run(host, reason.clone());
-        return Ok(EventReply::block(reason));
+        return Ok(own_block(&rt, &call.tool_call_id, reason));
     }
     if !pre.context.is_empty() {
         rt.lock()
@@ -82,7 +83,7 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     }
     let mut permission = pre.permission;
     if let Some((Permission::Deny, reason)) = permission {
-        return Ok(EventReply::block(reason));
+        return Ok(own_block(&rt, &call.tool_call_id, reason));
     }
     if !matches!(permission, Some((Permission::Allow, _))) {
         let payload = json!({ "tool_name": tool, "tool_input": input, "tool_use_id": call.tool_call_id, "permission_suggestions": [] });
@@ -94,19 +95,36 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
             updated = true;
         }
         match request.permission {
-            Some((Permission::Deny, reason)) => return Ok(EventReply::block(reason)),
+            Some((Permission::Deny, reason)) => {
+                return Ok(own_block(&rt, &call.tool_call_id, reason));
+            }
             Some((Permission::Allow, reason)) => permission = Some((Permission::Allow, reason)),
             _ => {}
         }
     }
     if let Some((Permission::Ask, reason)) = &permission {
         let allowed = host.has_ui()
-            && host
-                .confirm(&format!("Hook: allow {tool}?"), reason)
-                .await
-                .unwrap_or(false);
+            && confirm_with_notice(&rt, host, snap, &format!("Hook: allow {tool}?"), reason).await;
         if !allowed {
-            return Ok(EventReply::block(reason.clone()));
+            return Ok(own_block(&rt, &call.tool_call_id, reason.clone()));
+        }
+    }
+    if call.tool_name == TODO_TOOL {
+        let todo_input = if updated {
+            from_hook_input(&call.tool_name, &input)
+        } else {
+            call.input.clone()
+        };
+        let (block, context) = todo_call(&rt, host, snap, &todo_input).await;
+        if let Some(reason) = block {
+            return Ok(own_block(&rt, &call.tool_call_id, reason));
+        }
+        if !context.is_empty() {
+            rt.lock()
+                .tool_context
+                .entry(call.tool_call_id.clone())
+                .or_default()
+                .extend(context);
         }
     }
     let mut final_input = if updated {
@@ -280,4 +298,31 @@ fn call_arguments(event: &Value, id: Option<&Value>) -> Value {
         })
         .and_then(|block| block.get("arguments").cloned())
         .unwrap_or_else(|| json!({}))
+}
+
+/// `ui.confirm` that fires Notification `permission_prompt` when it stays open for 6 seconds.
+pub async fn confirm_with_notice(
+    rt: &Arc<Runtime>,
+    host: &Host,
+    snap: &Snapshot,
+    title: &str,
+    message: &str,
+) -> bool {
+    let notice = {
+        let (rt, host, snap) = (rt.clone(), host.clone(), snap.clone());
+        let text = format!("{title} {message}");
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+            crate::events::watch::notify(&rt, &host, &snap, "permission_prompt", &text, None).await;
+        })
+    };
+    let allowed = host.confirm(title, message).await.unwrap_or(false);
+    notice.abort();
+    allowed
+}
+
+/// Blocks a tool call and remembers it, so `tool_call_blocked` skips this extension's own blocks.
+fn own_block(rt: &Runtime, id: &str, reason: impl Into<String>) -> EventReply {
+    rt.lock().own_blocks.insert(id.to_owned());
+    EventReply::block(reason)
 }

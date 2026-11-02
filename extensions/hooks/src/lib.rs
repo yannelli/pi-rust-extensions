@@ -34,6 +34,32 @@ where
     ext.on(event, move |ev: EventCtx| handler(rt.clone(), ev))
 }
 
+type HostFuture = std::pin::Pin<Box<dyn Future<Output = Result<EventReply>> + Send>>;
+
+macro_rules! boxed {
+    ($f:path) => {
+        |rt, ev| -> HostFuture { Box::pin($f(rt, ev)) }
+    };
+}
+
+/// pi-rust-only events (see `events::host`).
+const HOST_EVENTS: [(&str, Handler<HostFuture>); 8] = [
+    (
+        "instructions_loaded",
+        boxed!(events::host::instructions_loaded),
+    ),
+    ("prompt_expansion", boxed!(events::host::prompt_expansion)),
+    ("notification", boxed!(events::host::notification)),
+    ("tool_call_blocked", boxed!(events::host::tool_call_blocked)),
+    ("cwd_changed", boxed!(events::host::cwd_changed)),
+    ("message_display", boxed!(events::host::message_display)),
+    ("mcp_elicitation", boxed!(events::host::mcp_elicitation)),
+    (
+        "mcp_elicitation_result",
+        boxed!(events::host::mcp_elicitation_result),
+    ),
+];
+
 pub fn extension(paths: Paths) -> Extension {
     let rt = Runtime::new(paths);
     let mut ext = Extension::new("hooks").flag(
@@ -41,6 +67,17 @@ pub fn extension(paths: Paths) -> Extension {
             .default(false)
             .description("Run all hooks without asking for trust"),
     );
+    ext = ext.flag(
+        FlagSpec::string(events::worktree::WORKTREE_FLAG)
+            .description("Start in a new worktree (WorktreeCreate hooks or git worktree add)"),
+    );
+    for (name, description) in events::session::SETUP_FLAGS {
+        ext = ext.flag(
+            FlagSpec::boolean(name)
+                .default(false)
+                .description(description),
+        );
+    }
     ext = on(ext, &rt, "session_start", events::session::session_start);
     ext = on(
         ext,
@@ -73,6 +110,9 @@ pub fn extension(paths: Paths) -> Extension {
     ext = on(ext, &rt, "tool_call", events::tool::tool_call);
     ext = on(ext, &rt, "tool_result", events::tool::tool_result);
     ext = on(ext, &rt, "turn_end", events::tool::turn_end);
+    for (event, handler) in HOST_EVENTS {
+        ext = on(ext, &rt, event, handler);
+    }
     ext = on(
         ext,
         &rt,
@@ -84,6 +124,18 @@ pub fn extension(paths: Paths) -> Extension {
         &rt,
         "after_provider_response",
         events::agent::after_provider_response,
+    );
+    let worktree_rt = rt.clone();
+    ext = ext.command(
+        "worktree",
+        "Enter a new worktree (WorktreeCreate hooks), or `exit` to remove it (WorktreeRemove)",
+        move |args, ctx: CommandCtx| events::worktree::command(worktree_rt.clone(), args, ctx),
+    );
+    let add_dir_rt = rt.clone();
+    ext = ext.command(
+        "add-dir",
+        "Add a working directory and run DirectoryAdded hooks",
+        move |args, ctx: CommandCtx| events::watch::add_dir(add_dir_rt.clone(), args, ctx),
     );
     let command_rt = rt.clone();
     let start_rt = rt.clone();
@@ -101,7 +153,10 @@ pub fn extension(paths: Paths) -> Extension {
                 .collect(),
         ))
     })
-    .on_start(move |host: Host| events::agent::watch_subagents(start_rt.clone(), host))
+    .on_start(move |host: Host| {
+        events::watch::start(start_rt.clone(), host.clone());
+        events::agent::watch_subagents(start_rt.clone(), host)
+    })
 }
 
 pub fn main() -> ExitCode {

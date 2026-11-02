@@ -87,7 +87,10 @@ pub fn hook_env(cx: &Context, def: &HookDef) -> Vec<(String, String)> {
             env.push(("PLUGIN_DATA".into(), data.clone()));
         }
     }
-    if def.event == "SessionStart" {
+    if matches!(
+        &*def.event,
+        "SessionStart" | "Setup" | "CwdChanged" | "FileChanged"
+    ) {
         let file = env_file(&cx.agent_dir, &cx.session_id);
         let created = file
             .parent()
