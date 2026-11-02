@@ -8,9 +8,11 @@ use serde_json::Value;
 use crate::ctx::{CommandCtx, EventCtx, ToolCtx};
 use crate::error::{Error, Result};
 use crate::host::Host;
+use crate::render::{IntoRendered, Rendered};
 use crate::reply::{EventReply, ToolResult};
 use crate::spec::{AutocompleteRequest, CompletionItem, RouteRequest, Suggestions};
 use crate::surface::SurfaceEvent;
+use crate::theme::Theme;
 
 pub(crate) type BoxFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 pub(crate) type ToolFn = Arc<dyn Fn(Value, ToolCtx) -> BoxFuture<ToolResult> + Send + Sync>;
@@ -27,7 +29,21 @@ pub(crate) type SurfaceFn = Arc<dyn Fn(SurfaceEvent, Host) -> BoxFuture<()> + Se
 pub(crate) type FooterFn = Arc<dyn Fn(Value, Host) -> BoxFuture<()> + Send + Sync>;
 pub(crate) type PrepareFn = Arc<dyn Fn(Value, Host) -> BoxFuture<Value> + Send + Sync>;
 /// A renderer: the lines for one request, or `None` for no lines.
-pub(crate) type RenderFn<T> = Arc<dyn Fn(T, Host) -> BoxFuture<Option<Vec<String>>> + Send + Sync>;
+pub(crate) type RenderFn<T> = Arc<dyn Fn(T, Host) -> BoxFuture<Option<Rendered>> + Send + Sync>;
+pub(crate) type ThemeFn = Arc<dyn Fn(Theme, Host) -> BoxFuture<()> + Send + Sync>;
+
+pub(crate) fn render<A, R, F, Fut>(f: F) -> RenderFn<A>
+where
+    A: 'static,
+    R: IntoRendered,
+    F: Fn(A, Host) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<R>> + Send + 'static,
+{
+    Arc::new(move |arg, host| {
+        let fut = f(arg, host);
+        Box::pin(async move { fut.await.map(IntoRendered::into_rendered) })
+    })
+}
 
 pub(crate) fn tool<A, R, F, Fut>(f: F) -> ToolFn
 where

@@ -207,8 +207,17 @@ pub struct InitParams {
     #[serde(rename = "hasUI")]
     pub has_ui: bool,
     pub flags: Map<String, Value>,
+    /// Optional protocol parts the host speaks, such as `toolRenderers` or `ui.getTheme`.
+    pub features: Vec<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl InitParams {
+    /// Whether the host speaks the optional protocol part `feature`.
+    pub fn has_feature(&self, feature: &str) -> bool {
+        self.features.iter().any(|name| name == feature)
+    }
 }
 
 #[cfg(test)]

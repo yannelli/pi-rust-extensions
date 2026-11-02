@@ -276,7 +276,7 @@ fn render<T: DeserializeOwned + Send + 'static>(
     Ok(Box::pin(async move {
         Ok(lines
             .await?
-            .map_or(Value::Null, |lines| serde_json::json!({ "lines": lines })))
+            .map_or(Value::Null, |rendered| rendered.to_value()))
     }))
 }
 

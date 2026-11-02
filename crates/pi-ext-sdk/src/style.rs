@@ -90,7 +90,8 @@ fn escape_len(text: &str) -> usize {
             .iter()
             .position(|b| (0x40..=0x7e).contains(b))
             .map_or(bytes.len(), |i| i + 3),
-        Some(b']') => {
+        // OSC, and the APC, DCS, PM, and SOS strings, such as [`crate::SPINNER`].
+        Some(b']' | b'_' | b'P' | b'^' | b'X') => {
             let end = text.find('\x07').map(|i| i + 1);
             let st = text.find("\x1b\\").map(|i| i + 2);
             end.into_iter().chain(st).min().unwrap_or(bytes.len())

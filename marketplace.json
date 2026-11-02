@@ -57,6 +57,19 @@
       ]
     },
     {
+      "name": "compact-tui",
+      "displayName": "Compact TUI",
+      "description": "Compact animated tool rows for the built-in tools, a working indicator that names each step, a busy title, and a summary after each run.",
+      "version": "0.5.4",
+      "args": [
+        "compact-tui"
+      ],
+      "tags": [
+        "terminal",
+        "tui"
+      ]
+    },
+    {
       "name": "computer-use",
       "displayName": "Computer Use",
       "description": "Observe desktop windows and send keyboard and pointer input.",

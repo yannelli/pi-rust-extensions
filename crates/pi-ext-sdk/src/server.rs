@@ -15,6 +15,7 @@ use crate::host::Host;
 use crate::peer::{self, Peer};
 use crate::protocol::{self, Incoming};
 use crate::surface::SurfaceEvent;
+use crate::theme::Theme;
 use crate::{debug, dispatch, warn};
 
 const SHUTDOWN_LIMIT: Duration = Duration::from_millis(1500);
@@ -190,6 +191,13 @@ fn notification(state: &Arc<State>, method: &str, params: Value) -> Flow {
             let footer = params.get("footer").cloned().unwrap_or(Value::Null);
             footer_callbacks(host, footer);
         }
+        "theme.changed" => {
+            let theme = params.get("theme").cloned().unwrap_or(Value::Null);
+            match serde_json::from_value::<Theme>(theme) {
+                Ok(theme) => theme_callbacks(host, theme),
+                Err(err) => warn!("theme.changed: {err}"),
+            }
+        }
         other => debug!("ignored notification {other}"),
     }
     Flow::Continue
@@ -222,6 +230,20 @@ fn footer_callbacks(host: &Host, footer: Value) {
         tokio::spawn(async move {
             if let Err(err) = callback(footer, host).await {
                 warn!("footer handler failed: {err}");
+            }
+        });
+    }
+}
+
+fn theme_callbacks(host: &Host, theme: Theme) {
+    let registry = host.inner.registry.read().expect("registry lock");
+    let callbacks = registry.on_theme.clone();
+    drop(registry);
+    for callback in callbacks {
+        let (host, theme) = (host.clone(), theme.clone());
+        tokio::spawn(async move {
+            if let Err(err) = callback(theme, host).await {
+                warn!("theme handler failed: {err}");
             }
         });
     }

@@ -1,6 +1,6 @@
 # pi-ext-sdk
 
-Created 2026-10-29. Last updated 2026-10-31.
+Created 2026-10-29. Last updated 2026-11-02.
 
 Rust SDK for pi-rust native extensions. pi starts the extension as a child process and talks JSON-RPC 2.0 with it, one JSON object per line on stdin and stdout. The protocol is in `docs/extensions/native-protocol.md` in the pi-rust repo (protocol version 1). The SDK runs the protocol loop. You register tools, commands, and event handlers, and you call pi through a `Host` handle.
 
@@ -59,13 +59,15 @@ pub fn main() -> ExitCode {
 | `.on(event, \|ev: EventCtx\| async { Ok(EventReply) })` | Handles a pi event. `Ok(())` also works and means no change. |
 | `.provider(name, config)` | Declares a provider (`baseUrl`, `api`, `apiKey`, `headers`, `models`, `oauth`). `OAuthSpec::builtin("anthropic").name("Anthropic #2").to_value()` gives it a login flow of pi. |
 | `.prepare_arguments(tool, \|args: Value, host\| ...)` | Changes the raw arguments of a tool before pi validates them. Returns the new arguments. |
-| `.render_tool_call(tool, \|req: ToolCallRender, host\| ...)`, `.render_tool_result(tool, ...)` | Draws the call or result row of a tool. Return `Some(lines)` for `req.width` columns, or `None` for no lines. |
+| `.render_tool_call(tool, \|req: ToolCallRender, host\| ...)`, `.render_tool_result(tool, ...)` | Draws the call or result row of a tool. Return `Some(lines)` for `req.width` columns, `None` for no lines, or `Rendered::new(lines).refresh_after(ms)` to be asked again later. A tool that the extension does not add, such as the built-in `bash`, gets these rows while no other renderer draws it. `SPINNER` in a line shows pi's spinner frame. |
+| `.render_shell(tool, "self")` | The renderers of `tool` draw their own frame. |
 | `.message_renderer(custom_type, ...)`, `.entry_renderer(custom_type, ...)` | Draws custom messages or custom session entries of one type. |
 | `.virtual_model(definition, \|req: RouteRequest, host\| ...)` | Declares a virtual model and its route handler. |
 | `.autocomplete(&["@"], \|req: AutocompleteRequest, host\| ...)` | Editor suggestions. Return `None` to keep the suggestions of pi. |
 | `.on_start(\|host\| ...)` | Runs in its own task at the first `session_start`, when `host.snapshot()` holds the session ctx. |
 | `.on_shutdown(\|host\| ...)` | Runs one time on `shutdown`, `exit`, or EOF. The limit is 1.5 seconds. |
 | `.on_surface(\|event: SurfaceEvent, host\| ...)` | Runs when pi resizes or removes a widget or the footer. |
+| `.on_theme_change(\|theme: Theme, host\| ...)` | Runs when the TUI theme changes. `Theme::fg(token, text)` and `Theme::rgb(token)` use pi's colors. |
 | `.run()` | Builds a tokio runtime and serves stdin and stdout. Returns `ExitCode::FAILURE` on a protocol failure. |
 | `.serve(reader, writer)` | Serves any `AsyncRead` and `AsyncWrite`. Use it in tests with `tokio::io::duplex`. |
 
@@ -109,8 +111,8 @@ When you drop a `Host` request future, the SDK sends `$/cancelRequest` to pi. pi
 | Area | Methods |
 | --- | --- |
 | Raw | `call(method, params)`, `call_as::<T>(..)`, `notify(method, params)`, `pi_call(target, method, args)` |
-| State | `init()`, `snapshot()` (last ctx snapshot), `has_ui()`, `cwd()`, `agent_dir()`, `project_dir()` |
-| UI | `notify_info`, `notify_warning`, `notify_error`, `notify_as`, `select`, `confirm`, `input`, `editor`, `set_status`, `set_widget(key, lines, Placement)`, `clear_widget`, `set_footer(lines)`, `clear_footer`, `set_title`, `set_editor_text`, `editor_text`, `write_terminal`, `panel(lines)` |
+| State | `init()` (`init().has_feature("toolRenderers")` tells which optional protocol parts the host speaks), `snapshot()` (last ctx snapshot), `has_ui()`, `cwd()`, `agent_dir()`, `project_dir()` |
+| UI | `notify_info`, `notify_warning`, `notify_error`, `notify_as`, `select`, `confirm`, `input`, `editor`, `set_status`, `set_widget(key, lines, Placement)`, `clear_widget`, `set_footer(lines)`, `clear_footer`, `set_title`, `set_working_message`, `set_working_indicator(frames, interval_ms)`, `set_working_visible`, `set_hidden_thinking_label`, `set_chat_style(&ChatStyle)`, `theme()`, `set_editor_text`, `editor_text`, `write_terminal`, `panel(lines)` |
 | Surfaces | `surface_events()` (resize and close of `widget:<key>` and `footer`), `surface_width(surface)` |
 | Session | `send_message(CustomMessage)`, `send_user_message`, `append_entry(custom_type, &T)`, `entries()`, `branch(from_id)`, `entries_of::<T>(custom_type)`, `set_session_name`, `session_name` |
 | Model and tools | `model`, `set_model`, `thinking_level`, `set_thinking_level`, `active_tools`, `set_active_tools`, `all_tools`, `all_commands`, `flag::<T>(name)` |

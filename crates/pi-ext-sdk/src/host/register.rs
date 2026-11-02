@@ -8,7 +8,7 @@ use crate::ctx::{CommandCtx, EventCtx, ToolCtx};
 use crate::error::Result;
 use crate::handler;
 use crate::registry::{Command, VirtualModel, put};
-use crate::render::{EntryRender, MessageRender};
+use crate::render::{EntryRender, IntoRendered, MessageRender};
 use crate::reply::{EventReply, ToolResult};
 use crate::spec::{
     AutocompleteRequest, CommandSpec, FlagSpec, RouteRequest, ShortcutSpec, Suggestions, ToolSpec,
@@ -124,19 +124,20 @@ impl Host {
     }
 
     /// [`crate::Extension::message_renderer`] after `initialize`.
-    pub async fn register_message_renderer<F, Fut>(
+    pub async fn register_message_renderer<R, F, Fut>(
         &self,
         custom_type: &str,
         render: F,
     ) -> Result<()>
     where
+        R: IntoRendered,
         F: Fn(MessageRender, Host) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+        Fut: Future<Output = Result<R>> + Send + 'static,
     {
         put(
             &mut self.registry().message_renderers,
             custom_type,
-            handler::with_host(render),
+            handler::render(render),
         );
         let params = json!({ "customType": custom_type });
         self.call("register.messageRenderer", params)
@@ -145,15 +146,20 @@ impl Host {
     }
 
     /// [`crate::Extension::entry_renderer`] after `initialize`.
-    pub async fn register_entry_renderer<F, Fut>(&self, custom_type: &str, render: F) -> Result<()>
+    pub async fn register_entry_renderer<R, F, Fut>(
+        &self,
+        custom_type: &str,
+        render: F,
+    ) -> Result<()>
     where
+        R: IntoRendered,
         F: Fn(EntryRender, Host) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+        Fut: Future<Output = Result<R>> + Send + 'static,
     {
         put(
             &mut self.registry().entry_renderers,
             custom_type,
-            handler::with_host(render),
+            handler::render(render),
         );
         let params = json!({ "customType": custom_type });
         self.call("register.entryRenderer", params).await.map(drop)

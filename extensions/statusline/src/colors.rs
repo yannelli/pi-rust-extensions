@@ -1,7 +1,10 @@
-//! ANSI colors. pi theme tokens map to basic terminal colors, which follow the terminal
-//! palette; theme colors are truecolor, or the nearest of 256 colors without truecolor.
+//! ANSI colors. pi theme tokens use the colors of pi's TUI theme (`ui.getTheme`); a host
+//! without it maps them to basic terminal colors. Theme colors are truecolor, or the nearest of
+//! 256 colors without truecolor.
 
-use std::sync::OnceLock;
+use std::sync::{OnceLock, PoisonError, RwLock};
+
+use pi_ext_sdk::{Host, Theme};
 
 pub const RESET: &str = "\x1b[0m";
 
@@ -25,7 +28,53 @@ pub fn init_mode(colorterm: Option<&str>, term_program: Option<&str>) {
 }
 
 pub fn mode() -> ColorMode {
+    if let Some(mode) = host_colors(|colors| colors.mode) {
+        return mode;
+    }
     *MODE.get().unwrap_or(&ColorMode::Truecolor)
+}
+
+/// The open sequence and sRGB color of each token in pi's theme, and pi's color mode.
+struct HostColors {
+    open: [Option<String>; TOKENS.len()],
+    rgb: [Option<[u8; 3]>; TOKENS.len()],
+    mode: ColorMode,
+}
+
+static HOST: RwLock<Option<HostColors>> = RwLock::new(None);
+
+fn host_colors<T>(read: impl FnOnce(&HostColors) -> T) -> Option<T> {
+    HOST.read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        .map(read)
+}
+
+/// Paints tokens with the colors of `theme` from now on.
+pub fn set_theme(theme: &Theme) {
+    let colors = HostColors {
+        open: TOKENS.map(|token| theme.fg_open(token.name())),
+        rgb: TOKENS.map(|token| theme.rgb(token.name())),
+        mode: if theme.mode == "256color" {
+            ColorMode::Ansi256
+        } else {
+            ColorMode::Truecolor
+        },
+    };
+    *HOST.write().unwrap_or_else(PoisonError::into_inner) = Some(colors);
+}
+
+/// Reads pi's theme when the host has `ui.getTheme`; older hosts keep the basic colors.
+pub async fn load_theme(host: &Host) {
+    if !host
+        .init()
+        .is_some_and(|init| init.has_feature("ui.getTheme"))
+    {
+        return;
+    }
+    if let Ok(theme) = host.theme().await {
+        set_theme(&theme);
+    }
 }
 
 /// A pi theme token that a `colors` entry or the `terminal` theme names.
@@ -41,7 +90,36 @@ pub enum ThemeColor {
     Border,
 }
 
+const TOKENS: [ThemeColor; 8] = [
+    ThemeColor::Accent,
+    ThemeColor::Text,
+    ThemeColor::Muted,
+    ThemeColor::Dim,
+    ThemeColor::Success,
+    ThemeColor::Warning,
+    ThemeColor::Error,
+    ThemeColor::Border,
+];
+
 impl ThemeColor {
+    /// The token name in pi's theme.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Accent => "accent",
+            Self::Text => "text",
+            Self::Muted => "muted",
+            Self::Dim => "dim",
+            Self::Success => "success",
+            Self::Warning => "warning",
+            Self::Error => "error",
+            Self::Border => "border",
+        }
+    }
+
+    fn index(self) -> usize {
+        TOKENS.iter().position(|token| *token == self).unwrap_or(0)
+    }
+
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "accent" => Some(Self::Accent),
@@ -68,8 +146,11 @@ impl ThemeColor {
         }
     }
 
-    /// An sRGB stand-in for blocks colored by a token.
+    /// The sRGB color for blocks colored by a token: pi's theme color, else a stand-in.
     pub fn rgb(self) -> [u8; 3] {
+        if let Some(Some(rgb)) = host_colors(|colors| colors.rgb[self.index()]) {
+            return rgb;
+        }
         match self {
             Self::Accent => [0x56, 0xB6, 0xC2],
             Self::Text => [0xD4, 0xD4, 0xD4],
@@ -82,7 +163,11 @@ impl ThemeColor {
     }
 
     pub fn paint(self, text: &str) -> String {
-        format!("\x1b[{}m{text}\x1b[39m", self.sgr())
+        match host_colors(|colors| colors.open[self.index()].clone()).flatten() {
+            Some(open) if open.ends_with("\x1b[2m") => format!("{open}{text}\x1b[22m\x1b[39m"),
+            Some(open) => format!("{open}{text}\x1b[39m"),
+            None => format!("\x1b[{}m{text}\x1b[39m", self.sgr()),
+        }
     }
 }
 
