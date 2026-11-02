@@ -2,6 +2,12 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.4] - 2026-11-02
+
+### Added
+
+- **hooks:** send the missing Claude input fields and honor sessionTitle and interrupt ([d6e106c](https://github.com/yannelli/pi-rust-extensions/commit/d6e106c126286820a8e761a1068e069cbafdd4a6))
+
 ## [0.5.3] - 2026-11-02
 
 ### Added
