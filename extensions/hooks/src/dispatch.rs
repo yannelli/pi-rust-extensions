@@ -201,9 +201,16 @@ fn select(rt: &Runtime, d: &Dispatch, cwd: &Path) -> Vec<HookDef> {
             _ => true,
         })
         .filter(|def| !rt.is_disabled(&def.hash))
+        .filter(|def| !(def.kind() == "mcp_tool" && before_mcp(&def.event, &d.payload)))
         .filter(supported)
         .filter(|def| seen.insert((def.source.is_codex(), canonical(&def.handler).to_string())))
         .collect()
+}
+
+/// Setup and SessionStart at launch run before MCP servers are available, so `mcp_tool` skips them.
+fn before_mcp(event: &str, payload: &Value) -> bool {
+    let source = payload.get("source").and_then(Value::as_str);
+    event == "Setup" || (event == "SessionStart" && matches!(source, Some("startup" | "resume")))
 }
 
 fn supported(def: &HookDef) -> bool {
@@ -212,9 +219,12 @@ fn supported(def: &HookDef) -> bool {
             "powershell hooks need Windows"
         }
         "command" if def.str_field("command").is_none() => "command hook without command",
-        "command" | "http" => return true,
-        "prompt" if !def.source.is_codex() => return true,
-        "prompt" | "agent" | "mcp_tool" => "handler type is not supported",
+        "command" | "http" | "mcp_tool" => return true,
+        "agent" if def.event == "PermissionRequest" => {
+            "agent hooks do not run on PermissionRequest"
+        }
+        "prompt" | "agent" if !def.source.is_codex() => return true,
+        "prompt" | "agent" => "Codex skips prompt and agent handlers",
         _ => "unknown handler type",
     };
     pi_ext_sdk::info!("hooks: skipping {def}: {reason}");

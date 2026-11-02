@@ -154,3 +154,57 @@ async fn post_tool_use_gets_duration_and_mcp_server() {
     assert_eq!(sent["mcp_server"]["name"], "fs");
     host.finish().await.unwrap();
 }
+
+#[tokio::test]
+async fn mcp_tool_hook_blocks_through_mcp_call_tool() {
+    let env = env();
+    let handler = json!({ "type": "mcp_tool", "server": "scanner", "tool": "scan",
+        "input": { "cmd": "${tool_input.command}" } });
+    std::fs::create_dir_all(&env.paths.claude_dir).unwrap();
+    std::fs::write(
+        env.paths.claude_dir.join("settings.json"),
+        json!({ "hooks": { "PreToolUse": [{ "matcher": "Bash", "hooks": [handler] }] } })
+            .to_string(),
+    )
+    .unwrap();
+    let mut host = start(&env).await;
+    let ctx = hooks_ctx(&env.dir.path().join("repo"), false, true);
+    let call = json!({ "type": "tool_call", "toolCallId": "t1", "toolName": "bash", "input": { "command": "rm -rf x" } });
+    host.request(
+        1,
+        "event",
+        json!({ "name": "tool_call", "event": call, "ctx": ctx }),
+    )
+    .await;
+    let mut seen = None;
+    let result = loop {
+        let message = host.recv().await;
+        if message.get("id") == Some(&json!(1)) && message.get("method").is_none() {
+            break message["result"].clone();
+        }
+        let Some(method) = message.get("method").and_then(Value::as_str) else {
+            continue;
+        };
+        let answer = if method == "mcp.callTool" {
+            seen = Some(message["params"].clone());
+            let text = r#"{"decision":"block","reason":"scan failed"}"#;
+            json!({ "content": [{ "type": "text", "text": text }], "isError": false })
+        } else {
+            Value::Null
+        };
+        if let Some(id) = message.get("id") {
+            host.answer(&id.clone(), answer).await;
+        }
+    };
+    let params = seen.expect("mcp.callTool was called");
+    assert_eq!(
+        (&params["server"], &params["tool"]),
+        (&json!("scanner"), &json!("scan"))
+    );
+    assert_eq!(params["args"], json!({ "cmd": "rm -rf x" }));
+    assert_eq!(
+        result["result"],
+        json!({ "block": true, "reason": "scan failed" })
+    );
+    host.finish().await.unwrap();
+}

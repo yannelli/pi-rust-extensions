@@ -1,5 +1,7 @@
+pub mod agent;
 pub mod command;
 pub mod http;
+pub mod mcp;
 pub mod prompt;
 
 use std::path::PathBuf;
@@ -24,6 +26,8 @@ pub async fn run(cx: &Context, def: &HookDef, input: String) -> RawRun {
     match def.kind() {
         "http" => http::run_http(&def.handler, input, timeout).await,
         "prompt" => prompt::run_prompt(&cx.host, &def.event, &def.handler, input, timeout).await,
+        "mcp_tool" => mcp::run_mcp_tool(&cx.host, &def.handler, &input, timeout).await,
+        "agent" => agent::run_agent(&def.handler, &def.event, input, &cx.cwd, timeout).await,
         _ => {
             let env = hook_env(cx, def);
             let args: Option<Vec<String>> =
