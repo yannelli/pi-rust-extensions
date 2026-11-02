@@ -76,6 +76,7 @@ pub fn extension(home: PathBuf) -> Extension {
             async move {
                 footer.observe(&ev);
                 if ev.name() == "session_start" {
+                    colors::load_theme(ev.host()).await;
                     footer.reload(ev.host()).await;
                 } else {
                     footer.render(ev.host()).await;
@@ -84,12 +85,19 @@ pub fn extension(home: PathBuf) -> Extension {
             }
         });
     }
-    let (start, surface, command) = (footer.clone(), footer.clone(), footer.clone());
+    let (start, surface, command, themed, data) = (
+        footer.clone(),
+        footer.clone(),
+        footer.clone(),
+        footer.clone(),
+        footer.clone(),
+    );
     ext.on_start(move |host: Host| {
         let footer = start.clone();
         async move {
             footer.set_version(host.init().map(|init| init.pi_version).unwrap_or_default());
             footer.find_project(&host).await;
+            colors::load_theme(&host).await;
             footer.reload(&host).await;
             segments::usage::start(&host);
             tokio::spawn(ticker(footer, host));
@@ -106,6 +114,22 @@ pub fn extension(home: PathBuf) -> Extension {
                 SurfaceEvent::Closed { surface } if surface == "footer" => footer.forget_sent(),
                 _ => {}
             }
+            Ok(())
+        }
+    })
+    .on_footer_change(move |value: Value, host: Host| {
+        let footer = data.clone();
+        async move {
+            footer.observe_footer(value);
+            footer.render(&host).await;
+            Ok(())
+        }
+    })
+    .on_theme_change(move |theme: Theme, host: Host| {
+        let footer = themed.clone();
+        async move {
+            colors::set_theme(&theme);
+            footer.render(&host).await;
             Ok(())
         }
     })

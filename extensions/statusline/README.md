@@ -1,6 +1,6 @@
 # statusline
 
-Created 2026-10-30. Last updated 2026-10-31.
+Created 2026-10-30. Last updated 2026-11-02.
 
 A footer status line for pi-rust. It replaces the built-in `statusLine` setting and renders with `ui.setFooter` from the ctx snapshot, the footer data (`sessionStats`, `runState`, `gitBranch`), and events. It renders again when the footer width changes.
 
@@ -45,7 +45,7 @@ For example, this draws two model badges with different colors:
 }
 ```
 
-`foreground` and `background` accept `#rrggbb` or a pi color token: `accent`, `text`, `muted`, `dim`, `success`, `warning`, `error`, or `border`. An invalid value falls back to the inherited color. Existing per-badge `color` and the `colors` map still work: they set text color on text-only shapes and background color on filled shapes. Explicit `foreground` and `background` take precedence for their own channel. Changing a palette keeps badge overrides. Selecting a preset resets the layout and its per-badge overrides; the `colors` map stays.
+`foreground` and `background` accept `#rrggbb` or a pi color token: `accent`, `text`, `muted`, `dim`, `success`, `warning`, `error`, or `border`. Tokens and the `terminal` palette use the colors of pi's current theme and its color mode, and follow theme changes (pi-rust 0.13 and later, through `ui.getTheme`). Older pi versions map tokens to the basic terminal colors. An invalid value falls back to the inherited color. Existing per-badge `color` and the `colors` map still work: they set text color on text-only shapes and background color on filled shapes. Explicit `foreground` and `background` take precedence for their own channel. Changing a palette keeps badge overrides. Selecting a preset resets the layout and its per-badge overrides; the `colors` map stays.
 
 ## Usage segments
 

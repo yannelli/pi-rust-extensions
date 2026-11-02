@@ -149,6 +149,13 @@ impl Footer {
         }
     }
 
+    /// New footer data from `footer.changed`, for example the run state after a run settles.
+    pub fn observe_footer(&self, footer: Value) {
+        if let Some(ctx) = self.lock().ctx.as_mut() {
+            ctx.footer = Some(footer);
+        }
+    }
+
     pub fn snapshot(&self) -> Option<StatusSnapshot> {
         let state = self.lock();
         state

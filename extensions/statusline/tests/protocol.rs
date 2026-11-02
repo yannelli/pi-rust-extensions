@@ -53,7 +53,7 @@ fn ctx(cwd: &Path, trusted: bool) -> Value {
     })
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Seen {
     footers: Vec<Vec<String>>,
     warnings: Vec<String>,
@@ -214,5 +214,46 @@ async fn the_footer_follows_the_snapshot_mode_over_the_load_time_mode() {
     .await
     .expect("the footer renders in tui mode");
     assert_eq!(strip(&seen.footers[0][0]), "gpt-5");
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn footer_data_changes_render_the_new_run_state() {
+    let dirs = Dirs::new("settle");
+    let config = json!({"chip": "plain", "icons": "none", "segments": ["runState"]});
+    dirs.write(&dirs.agent().join("ext/statusline.json"), config);
+    let mut host = TestHost::start(extension(PathBuf::from("/nonexistent-home")));
+    let init = host
+        .initialize_in(dirs.cwd().to_str().unwrap(), dirs.agent().to_str().unwrap())
+        .await;
+    assert!(
+        init["events"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("footer_changed")),
+        "{init}"
+    );
+    let event = json!({ "name": "session_start", "event": { "type": "session_start" }, "ctx": ctx(&dirs.cwd(), false) });
+    host.request(1, "event", event).await;
+    let mut seen = Seen::default();
+    pump(&mut host, &mut seen, 1, |seen| {
+        seen.responded && !seen.footers.is_empty()
+    })
+    .await;
+    assert!(
+        strip(&seen.footers.last().unwrap()[0]).contains("working"),
+        "{seen:?}"
+    );
+
+    let footer = json!({ "gitBranch": "main", "runState": "done" });
+    host.notify("footer.changed", json!({ "footer": footer }))
+        .await;
+    let count = seen.footers.len();
+    pump(&mut host, &mut seen, 1, |seen| seen.footers.len() > count).await;
+    let line = strip(&seen.footers.last().unwrap()[0]);
+    assert!(
+        !line.contains("working") && line.contains("done"),
+        "{line:?}"
+    );
     host.finish().await.unwrap();
 }
