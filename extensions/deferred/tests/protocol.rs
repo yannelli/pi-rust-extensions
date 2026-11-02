@@ -153,7 +153,7 @@ async fn defers_then_loads_tools_skills_and_context() {
         .unwrap();
     assert!(index.contains("Deferred tools: mcp__gh__pr\n"), "{index}");
 
-    let params = json!({ "name": "deferred", "args": "", "ctx": ctx(&root) });
+    let params = json!({ "name": "deferred", "args": "status", "ctx": ctx(&root) });
     host.drive(9, "command.run", params, |m, p| fake.answer(m, p))
         .await;
     let status = fake.calls_of("ui.notify").pop().unwrap();

@@ -19,6 +19,8 @@ pub struct Fake {
     pub active: Arc<Mutex<Vec<String>>>,
     pub setting: Value,
     pub branch: Value,
+    /// What `ctx.getSystemPromptOptions` answers.
+    pub options: Value,
     pub calls: Arc<Mutex<Vec<(String, Value)>>>,
 }
 
@@ -29,6 +31,7 @@ impl Fake {
             active: Arc::new(Mutex::new(active)),
             setting,
             branch: json!([]),
+            options: json!({}),
             calls: Arc::default(),
         }
     }
@@ -54,6 +57,7 @@ impl Fake {
                     serde_json::from_value(params["names"].clone()).unwrap();
                 Value::Null
             }
+            "pi.call" if params["method"] == "getSystemPromptOptions" => self.options.clone(),
             "pi.call" => json!(false),
             _ => Value::Null,
         }

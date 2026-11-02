@@ -9,8 +9,10 @@ pub mod catalog;
 mod commands;
 pub mod config;
 pub mod fmt;
+pub mod measure;
 pub mod search;
 mod tool;
+pub mod ui;
 
 use catalog::{Inputs, Plan, SECTION};
 use config::{Config, NAMESPACE};
@@ -25,6 +27,8 @@ pub(crate) struct Session {
     pub(crate) loaded: BTreeSet<String>,
     pub(crate) removed: BTreeSet<String>,
     pub(crate) plan: Option<Plan>,
+    /// `systemPromptOptions` of the last prompt, for the panel when pi cannot answer.
+    pub(crate) options: Option<Value>,
 }
 
 pub(crate) type Shared = Arc<Mutex<Session>>;
@@ -41,7 +45,7 @@ struct LoadEntry {
     tools: Vec<String>,
 }
 
-async fn project_trusted(host: &Host, snapshot: &Snapshot) -> bool {
+pub(crate) async fn project_trusted(host: &Host, snapshot: &Snapshot) -> bool {
     if snapshot.is_project_trusted {
         return true;
     }
@@ -71,7 +75,7 @@ pub(crate) async fn load_config(host: &Host, snapshot: &Snapshot) -> (Config, Ve
     );
     let layers = [
         (global_name.as_str(), global.as_ref()),
-        ("setting `deferred`", setting.as_ref()),
+        (config::SETTING_SOURCE, setting.as_ref()),
         (project_name.as_str(), project.as_ref()),
     ];
     let sources: Vec<String> = layers
@@ -151,6 +155,7 @@ async fn before_agent_start(state: Shared, ev: EventCtx) -> Result<EventReply> {
     }
     session.loaded.extend(plan.adopted.iter().cloned());
     session.plan = Some(plan);
+    session.options = Some(options);
     Ok(reply)
 }
 

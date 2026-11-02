@@ -5,6 +5,9 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use crate::config::{Config, Kind, Mode};
+use crate::measure::{
+    context_tokens, is_addon, section_tokens, skill_tokens, str_of, summary_line, tool_tokens,
+};
 
 /// The search tool of this extension; rules never apply to it.
 pub const TOOL: &str = "deferred_search";
@@ -63,10 +66,6 @@ pub struct Plan {
     pub auto: bool,
 }
 
-pub fn tokens(chars: usize) -> usize {
-    chars.div_ceil(4)
-}
-
 pub fn plan(input: &Inputs) -> Plan {
     let mut plan = Plan {
         active: input.active.to_vec(),
@@ -86,24 +85,8 @@ pub fn plan(input: &Inputs) -> Plan {
     plan
 }
 
-fn str_of<'a>(value: &'a Value, key: &str) -> &'a str {
-    value.get(key).and_then(Value::as_str).unwrap_or_default()
-}
-
-/// Extension and MCP tools, which `auto` may defer.
-fn is_addon(tool: &Value) -> bool {
-    let source = tool.get("sourceInfo");
-    let path = source.map_or("", |s| str_of(s, "path"));
-    let origin = source.map_or("", |s| str_of(s, "source"));
-    path == "builtin:mcp" || (!origin.is_empty() && origin != "builtin")
-}
-
-fn tool_tokens(tool: &Value) -> usize {
-    let schema = tool.get("parameters").map_or(0, |p| p.to_string().len());
-    tokens(str_of(tool, "name").len() + str_of(tool, "description").len() + schema)
-}
-
-fn tool_modes<'a>(input: &Inputs<'a>, plan: &mut Plan) -> Vec<(&'a Value, Mode)> {
+/// The mode of each tool, and whether `auto` applied.
+pub fn tool_modes<'a>(input: &Inputs<'a>) -> (Vec<(&'a Value, Mode)>, bool) {
     let candidates = input.tools.iter().filter(|tool| {
         let name = str_of(tool, "name");
         !name.is_empty() && name != TOOL && str_of(tool, "exposure") != "hidden"
@@ -111,6 +94,7 @@ fn tool_modes<'a>(input: &Inputs<'a>, plan: &mut Plan) -> Vec<(&'a Value, Mode)>
     let mut modes: Vec<(&Value, Option<Mode>)> = candidates
         .map(|tool| (tool, input.config.mode(Kind::Tool, str_of(tool, "name"))))
         .collect();
+    let mut auto = false;
     let auto_eligible = |tool: &Value, mode: Option<Mode>| {
         let exposure = str_of(tool, "exposure");
         mode.is_none() && is_addon(tool) && (exposure.is_empty() || exposure == "direct")
@@ -122,7 +106,7 @@ fn tool_modes<'a>(input: &Inputs<'a>, plan: &mut Plan) -> Vec<(&'a Value, Mode)>
             .map(|(tool, _)| tool_tokens(tool))
             .sum();
         if cost as f64 * 100.0 > percent * window as f64 {
-            plan.auto = true;
+            auto = true;
             for (tool, mode) in &mut modes {
                 if auto_eligible(tool, *mode) {
                     *mode = Some(Mode::Names);
@@ -130,14 +114,16 @@ fn tool_modes<'a>(input: &Inputs<'a>, plan: &mut Plan) -> Vec<(&'a Value, Mode)>
             }
         }
     }
-    modes
+    let modes = modes
         .into_iter()
-        .map(|(tool, mode)| (tool, mode.unwrap_or_default()))
-        .collect()
+        .map(|(tool, mode)| (tool, mode.unwrap_or_default()));
+    (modes.collect(), auto)
 }
 
 fn plan_tools(input: &Inputs, plan: &mut Plan) {
-    for (tool, mode) in tool_modes(input, plan) {
+    let (modes, auto) = tool_modes(input);
+    plan.auto = auto;
+    for (tool, mode) in modes {
         let name = str_of(tool, "name");
         let is_active = plan.active.iter().any(|n| n == name);
         match mode {
@@ -197,7 +183,7 @@ fn plan_skills(input: &Inputs, plan: &mut Plan) {
             false => input.config.mode(Kind::Skill, name).unwrap_or_default(),
         };
         let file = str_of(skill, "filePath");
-        let cost = tokens(name.len() + description.len() + file.len() + 60);
+        let cost = skill_tokens(skill);
         match mode {
             Mode::On => keep.push(skill.clone()),
             Mode::Off => plan.off.push((Kind::Skill, name.to_owned(), cost)),
@@ -219,16 +205,6 @@ fn plan_skills(input: &Inputs, plan: &mut Plan) {
     }
 }
 
-/// The first non-empty line without heading marks, at most 120 characters.
-pub fn summary_line(text: &str) -> String {
-    let line = text.lines().map(str::trim).find(|l| !l.is_empty());
-    let line = line.unwrap_or_default().trim_start_matches('#').trim();
-    match line.char_indices().nth(120) {
-        Some((at, _)) => format!("{}…", &line[..at]),
-        None => line.to_owned(),
-    }
-}
-
 fn plan_context(input: &Inputs, plan: &mut Plan) {
     let Some(files) = input.options.get("contextFiles").and_then(Value::as_array) else {
         return;
@@ -237,7 +213,7 @@ fn plan_context(input: &Inputs, plan: &mut Plan) {
     for file in files {
         let (path, content) = (str_of(file, "path"), str_of(file, "content"));
         let mode = input.config.mode(Kind::Context, path).unwrap_or_default();
-        let cost = tokens(path.len() + content.len() + 50);
+        let cost = context_tokens(path, content);
         match mode {
             Mode::On => keep.push(file.clone()),
             Mode::Off => plan.off.push((Kind::Context, path.to_owned(), cost)),
@@ -261,7 +237,7 @@ fn plan_sections(input: &Inputs, plan: &mut Plan) {
             continue;
         };
         let mode = input.config.mode(Kind::Section, name).unwrap_or_default();
-        let cost = tokens(name.len() * 2 + text.len() + 6);
+        let cost = section_tokens(name, text);
         match mode {
             Mode::On => continue,
             Mode::Off => plan.off.push((Kind::Section, name.clone(), cost)),
