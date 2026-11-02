@@ -19,8 +19,51 @@ pub async fn session_start(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply>
         "fork" => "fork",
         _ => "startup",
     };
-    run_session_start(&rt, ev.host(), ev.snapshot(), source).await;
+    let (host, snap) = (ev.host(), ev.snapshot());
+    let init_only = snap.flag_bool("init-only");
+    if source == "startup" {
+        setup(&rt, host, snap, init_only).await;
+        crate::events::worktree::on_startup(&rt, host, snap).await;
+    }
+    run_session_start(&rt, host, snap, source).await;
+    if init_only && source == "startup" {
+        let host = host.clone();
+        tokio::spawn(async move {
+            if let Err(err) = host.pi_call("ctx", "shutdown", Vec::new()).await {
+                pi_ext_sdk::warn!("hooks: --init-only cannot shut pi down: {err}");
+            }
+        });
+    }
     Ok(EventReply::none())
+}
+
+/// Extension flags that start Claude Setup hooks, as `claude --init`, `--init-only`, `--maintenance`.
+pub const SETUP_FLAGS: [(&str, &str); 3] = [
+    ("init", "Run Setup hooks (trigger init) in print mode"),
+    ("init-only", "Run Setup and SessionStart hooks, then exit"),
+    (
+        "maintenance",
+        "Run Setup hooks (trigger maintenance) in print mode",
+    ),
+];
+
+/// Setup fires for `--init-only`, or for `--init` / `--maintenance` without a UI.
+async fn setup(rt: &Arc<Runtime>, host: &Host, snap: &Snapshot, init_only: bool) {
+    let print = !snap.has_ui;
+    let trigger = if init_only || (print && snap.flag_bool("init")) {
+        "init"
+    } else if print && snap.flag_bool("maintenance") {
+        "maintenance"
+    } else {
+        return;
+    };
+    let d = Dispatch::new(
+        "Setup",
+        Target::Value(trigger.into()),
+        json!({ "trigger": trigger }),
+    )
+    .claude_only();
+    dispatch(rt, host, snap, d).await;
 }
 
 /// SessionStart: context is held for the next `before_agent_start`.
@@ -35,6 +78,7 @@ pub async fn run_session_start(rt: &Arc<Runtime>, host: &Host, snap: &Snapshot, 
     )
     .await;
     rt.lock().held_context.extend(contexts(&outcomes));
+    crate::events::watch::apply_watch_paths(rt, &outcomes);
     for outcome in &outcomes {
         if let Some(title) = &outcome.session_title {
             let _ = host.set_session_name(title).await;
@@ -76,6 +120,9 @@ pub async fn session_shutdown(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventRep
         dispatch(&rt, host, snap, claude),
         dispatch(&rt, host, snap, codex)
     );
+    if event.reason == "quit" {
+        crate::events::worktree::on_quit(&rt, host, snap).await;
+    }
     Ok(EventReply::none())
 }
 
@@ -207,11 +254,9 @@ async fn pre_model_switch(
     match fold_tool(&outcomes).permission {
         Some((Permission::Deny, reason)) => Some(reason),
         Some((Permission::Ask, reason)) => {
+            let title = format!("Hook: switch to {id}?");
             let allowed = host.has_ui()
-                && host
-                    .confirm(&format!("Hook: switch to {id}?"), &reason)
-                    .await
-                    .unwrap_or(false);
+                && crate::events::tool::confirm_with_notice(rt, host, snap, &title, &reason).await;
             (!allowed).then_some(reason)
         }
         _ => None,

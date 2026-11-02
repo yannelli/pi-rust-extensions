@@ -14,6 +14,11 @@ use crate::runtime::Runtime;
 use crate::trust::LastRun;
 
 const NO_MATCHER: &[&str] = &[
+    "TaskCreated",
+    "TaskCompleted",
+    "TeammateIdle",
+    "CwdChanged",
+    "MessageDisplay",
     "UserPromptSubmit",
     "PostToolBatch",
     "Stop",
@@ -173,7 +178,7 @@ pub async fn dispatch(
             rt.lock().ran_once.insert(def.hash.clone());
         }
         cap_outcome(rt, &cx, &def, &mut outcome);
-        universal(host, &outcome).await;
+        universal(host, &def.event, &outcome).await;
         runs.push((def.hash.clone(), last_run(&raw, &outcome, elapsed)));
         outcomes.push(outcome);
     }
@@ -319,8 +324,27 @@ fn cap_outcome(rt: &Runtime, cx: &Context, def: &HookDef, outcome: &mut Outcome)
     }
 }
 
-async fn universal(host: &Host, outcome: &Outcome) {
-    if let Some(message) = &outcome.system_message {
+/// Claude discards `systemMessage` on these events (DirectoryAdded gives it to the model).
+const NO_SYSTEM_MESSAGE: &[&str] = &[
+    "Setup",
+    "InstructionsLoaded",
+    "Notification",
+    "DirectoryAdded",
+    "MessageDisplay",
+    "ConfigChange",
+    "WorktreeCreate",
+    "WorktreeRemove",
+    "Elicitation",
+    "ElicitationResult",
+    "StopFailure",
+];
+
+async fn universal(host: &Host, event: &str, outcome: &Outcome) {
+    if let Some(message) = outcome
+        .system_message
+        .as_ref()
+        .filter(|_| !NO_SYSTEM_MESSAGE.contains(&event))
+    {
         let _ = host.notify_warning(message.clone()).await;
     }
     if let Some(seq) = &outcome.terminal_sequence {

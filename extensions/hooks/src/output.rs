@@ -73,6 +73,16 @@ pub struct Outcome {
     pub feedback: Option<String>,
     pub session_title: Option<String>,
     pub initial_user_message: Option<String>,
+    /// `watchPaths` from SessionStart, CwdChanged, or FileChanged.
+    pub watch_paths: Option<Vec<String>>,
+    /// MessageDisplay `displayContent`.
+    pub display_content: Option<String>,
+    /// PermissionDenied `retry: true`.
+    pub retry: bool,
+    /// Elicitation and ElicitationResult `action` with optional `content`.
+    pub elicitation: Option<(String, Option<Value>)>,
+    /// WorktreeCreate path: `worktreePath`, or the last stdout line of a command hook.
+    pub worktree_path: Option<String>,
     pub error: Option<String>,
 }
 
@@ -131,13 +141,24 @@ pub fn exit2_blocks(source: Source, event: &str) -> bool {
             | "PostToolBatch"
             | "PreCompact"
             | "PreModelSwitch"
+            | "TaskCreated"
+            | "TaskCompleted"
+            | "TeammateIdle"
+            | "ConfigChange"
+            | "UserPromptExpansion"
+            | "Elicitation"
+            | "ElicitationResult"
     )
 }
 
 /// Claude `onFailure: "block"`: like exit 2, plus PermissionRequest; never on Stop/SubagentStop.
 fn failure_blocks(event: &str) -> bool {
     event == "PermissionRequest"
-        || (exit2_blocks(Source::Claude, event) && !matches!(event, "Stop" | "SubagentStop"))
+        || (exit2_blocks(Source::Claude, event)
+            && !matches!(
+                event,
+                "Stop" | "SubagentStop" | "TaskCompleted" | "TeammateIdle"
+            ))
 }
 
 fn plain_stdout_is_context(source: Source, event: &str) -> bool {
@@ -146,7 +167,7 @@ fn plain_stdout_is_context(source: Source, event: &str) -> bool {
     }
     matches!(
         event,
-        "UserPromptSubmit" | "SessionStart" | "PostModelSwitch"
+        "UserPromptSubmit" | "SessionStart" | "PostModelSwitch" | "UserPromptExpansion"
     )
 }
 
@@ -183,6 +204,9 @@ pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
         Some(0) => match &json {
             Some(json) => apply_json(cx, json, &mut out),
             None if invalid_json => out.error = Some("invalid JSON output".into()),
+            None if cx.event == "WorktreeCreate" => {
+                out.worktree_path = last_line(&raw.stdout);
+            }
             None if !raw.stdout.trim().is_empty() => {
                 if codex && matches!(cx.event, "Stop" | "SubagentStop") {
                     out.error = Some("plain stdout is invalid here; JSON required".into());
@@ -254,6 +278,17 @@ pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
         out.updated_input = None;
     }
     out
+}
+
+/// The last non-empty stdout line without ANSI escapes (WorktreeCreate command hooks).
+fn last_line(stdout: &str) -> Option<String> {
+    let ansi = regex::Regex::new(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07").ok()?;
+    let clean = ansi.replace_all(stdout, "");
+    clean
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .map(str::to_owned)
 }
 
 /// Stdout that a hook meant as JSON: starts with `{` and ends with `}`.

@@ -88,15 +88,45 @@ pub fn apply_json(cx: &Interpret, json: &Value, out: &mut Outcome) {
             }
         }
         "PreCompact" if codex => {}
-        "UserPromptSubmit" | "Stop" | "SubagentStop" | "PostToolBatch" | "PreCompact" => {
+        "UserPromptSubmit"
+        | "Stop"
+        | "SubagentStop"
+        | "PostToolBatch"
+        | "PreCompact"
+        | "TaskCreated"
+        | "TaskCompleted"
+        | "TeammateIdle"
+        | "ConfigChange"
+        | "UserPromptExpansion" => {
             out.block = block;
         }
         "SessionStart" if !codex => {
             out.session_title = text(get("sessionTitle"));
             out.initial_user_message = text(get("initialUserMessage"));
+            out.watch_paths = string_list(get("watchPaths"));
+        }
+        "CwdChanged" | "FileChanged" => out.watch_paths = string_list(get("watchPaths")),
+        "MessageDisplay" => out.display_content = text(get("displayContent")),
+        "PermissionDenied" => out.retry = get("retry") == Some(&Value::Bool(true)),
+        "WorktreeCreate" => out.worktree_path = text(get("worktreePath")),
+        "Elicitation" | "ElicitationResult" => {
+            out.block = block;
+            out.elicitation = text(specific.and_then(|s| s.get("action")))
+                .map(|action| (action, specific.and_then(|s| s.get("content")).cloned()));
         }
         _ => {}
     }
+}
+
+fn string_list(value: Option<&Value>) -> Option<Vec<String>> {
+    let items = value?.as_array()?;
+    Some(
+        items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+    )
 }
 
 /// Codex parses these outputs but marks the run failed and ignores its decision.
