@@ -1,41 +1,131 @@
 name: Release
 
-# A `v*` tag releases that exact workspace version: archives, a signed index.json, and provenance.
+# Releases run after CI passes on main: conventional commits since the last tag decide the
+# next version (`cargo xtask plan`), as in pi-rust. Pushing a `v*` tag releases that exact version.
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump (auto reads conventional commits)
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+      dry_run:
+        description: Build every target without tagging or publishing
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-main
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
-  TAG: ${{ github.ref_name }}
 
 jobs:
-  check-tag:
+  plan:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      publish: ${{ steps.mode.outputs.publish }}
+      ref: ${{ steps.commit.outputs.ref || steps.mode.outputs.ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
           persist-credentials: false
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      - name: Tag matches the workspace version
+      - name: Plan version
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BUMP: ${{ inputs.bump || 'auto' }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          version="$(cargo metadata --no-deps --locked --format-version 1 \
-            | jq -r '.packages[] | select(.name == "pi-rust-ext") | .version')"
-          if [ "v$version" != "$TAG" ]; then
-            echo "::error::Tag $TAG does not match workspace version $version"
-            exit 1
+          if [ "$EVENT" = push ]; then
+            cargo xtask check-tag "$REF_NAME"
+            version="${REF_NAME#v}"
+            prerelease=false
+            case "$version" in *-*) prerelease=true ;; esac
+            printf 'release=true\nversion=%s\ntag=%s\nprerelease=%s\n' "$version" "$REF_NAME" "$prerelease" >> "$GITHUB_OUTPUT"
+          else
+            cargo xtask plan --bump "$BUMP" --github-output
           fi
+      - name: Decide whether to publish
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REF: ${{ github.ref }}
+          RELEASE: ${{ steps.plan.outputs.release }}
+        run: |
+          publish=false
+          case "$EVENT" in
+            push) publish=true ;;
+            workflow_run) publish="$RELEASE" ;;
+            workflow_dispatch) [ "$DRY_RUN" = false ] && [ "$REF" = refs/heads/main ] && publish="$RELEASE" ;;
+          esac
+          if [ "$publish" = true ] && [ "$EVENT" != push ]; then
+            git fetch --quiet origin main
+            if [ "$(git rev-parse origin/main)" != "$(git rev-parse HEAD)" ]; then
+              echo "main moved past $(git rev-parse --short HEAD); the next CI run on main releases it."
+              publish=false
+            fi
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      # A push with GITHUB_TOKEN starts no other workflow, so this run builds and publishes the tag itself.
+      - name: Commit version and tag
+        id: commit
+        if: steps.mode.outputs.publish == 'true' && github.event_name != 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cargo xtask prepare "$VERSION"
+          git add Cargo.toml Cargo.lock marketplace.json CHANGELOG.md
+          git diff --cached --quiet || git commit -m "chore(release): v$VERSION"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            HEAD:refs/heads/main "refs/tags/v$VERSION"
+          echo "ref=v$VERSION" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
       - name: Fetch the published pi host
         env:
           GH_TOKEN: ${{ github.token }}
@@ -48,7 +138,8 @@ jobs:
         run: cargo test --workspace --locked
 
   build:
-    needs: check-tag
+    needs: [plan, test]
+    if: needs.plan.outputs.release == 'true'
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -64,6 +155,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.plan.outputs.ref }}
           persist-credentials: false
       - name: Install Rust
         shell: bash
@@ -117,12 +209,14 @@ jobs:
           if-no-files-found: error
 
   index:
-    needs: build
+    needs: [plan, build]
+    if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.plan.outputs.ref }}
           persist-credentials: false
       - name: Install Rust
         run: |
@@ -136,9 +230,18 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum -- pi-rust-ext-* > SHA256SUMS && cat SHA256SUMS
+      # A run that does not publish builds the checked-out workspace version.
       - name: Generate index.json
         timeout-minutes: 10
-        run: cargo run --release --locked -p marketplace-index -- marketplace.json "$TAG" dist dist/index.json
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          PUBLISH: ${{ needs.plan.outputs.publish }}
+        run: |
+          if [ "$PUBLISH" != true ]; then
+            TAG="v$(cargo metadata --no-deps --locked --format-version 1 \
+              | jq -r '.packages[] | select(.name == "pi-rust-ext") | .version')"
+          fi
+          cargo run --release --locked -p marketplace-index -- marketplace.json "$TAG" dist dist/index.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: marketplace-index
@@ -146,7 +249,8 @@ jobs:
           if-no-files-found: error
 
   sign:
-    needs: index
+    needs: [plan, index]
+    if: needs.plan.outputs.publish == 'true'
     environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -182,7 +286,8 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [build, index, sign]
+    needs: [plan, build, index, sign]
+    if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -192,6 +297,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.plan.outputs.ref }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -207,17 +313,37 @@ jobs:
           name: marketplace-signature
           path: dist
       - name: Verify index signature and archives
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
         run: bash scripts/verify-release.sh "$TAG" dist
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/pi-rust-ext-*
             dist/index.json
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      # Notes come from CHANGELOG.md; a release made from a hand-pushed tag without a section gets generated notes.
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
         run: |
-          flags=(--verify-tag --title "$TAG" --generate-notes)
-          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
-          gh release create "$TAG" "${flags[@]}" dist/pi-rust-ext-* dist/index.json dist/index.json.sig
+          flags=(--verify-tag --title "$TAG")
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          if cargo xtask notes "$VERSION" > notes.md; then
+            flags+=(--notes-file notes.md)
+          else
+            flags+=(--generate-notes)
+          fi
+          files=(dist/pi-rust-ext-* dist/index.json dist/index.json.sig)
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            gh release create "$TAG" "${flags[@]}" "${files[@]}"
+          fi

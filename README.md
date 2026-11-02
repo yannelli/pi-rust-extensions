@@ -79,6 +79,7 @@ For example, `pi install marketplace:todo`. You can also open `/extensions` in t
 | `crates/pi-rust-ext` | The multi-call binary |
 | `extensions/<name>` | One crate for each extension |
 | `crates/marketplace-index` | Writes the release `index.json` |
+| `crates/xtask` | Release tooling: `cargo xtask plan`, `prepare`, `notes`, and `check-tag` |
 | `marketplace.json` | Catalog data for the release index |
 | `scripts/verify-release.sh` | Checks the signature and archives of a release |
 
