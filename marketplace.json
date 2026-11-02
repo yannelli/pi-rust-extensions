@@ -82,6 +82,19 @@
       ]
     },
     {
+      "name": "deferred",
+      "displayName": "Deferred",
+      "description": "Deferred loading, name-only listing, and disabling of tools, MCP tools, skills, context files, and prompt sections, with a deferred_search tool that loads them on demand.",
+      "version": "0.4.1",
+      "args": [
+        "deferred"
+      ],
+      "tags": [
+        "context",
+        "tool"
+      ]
+    },
+    {
       "name": "goal",
       "displayName": "Goal",
       "description": "Persistent goals, task trees, autonomous continuation, and completion audits.",

@@ -36,6 +36,7 @@ For example, `pi install marketplace:todo`. You can also open `/extensions` in t
 | [`compactor`](extensions/compactor/README.md) | Zero-LLM structured compaction summaries or LLM summaries with an active-work header, plus session recall and context budget tools. |
 | [`observational-memory`](extensions/observational-memory/README.md) | Records observations and reflections during a session, uses them as the compaction summary, and adds a recall tool. |
 | [`context-include`](extensions/context-include/README.md) | Expand `@path.md` lines in `AGENTS.md` context files into an extra system prompt section. |
+| [`deferred`](extensions/deferred/README.md) | Defer tools, MCP tools, skills, context files, and prompt sections, list them by name only, or disable them, with `deferred_search` to load them on demand. |
 
 ### Tools
 
