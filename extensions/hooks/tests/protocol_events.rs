@@ -135,3 +135,22 @@ async fn task_created_hook_blocks_the_todo_call() {
     );
     host.finish().await.unwrap();
 }
+
+#[tokio::test]
+async fn post_tool_use_gets_duration_and_mcp_server() {
+    let env = env();
+    let out = env.dir.path().join("post.json");
+    hooks(&env, "PostToolUse", None, "true");
+    let script = format!("#!/bin/sh\ncat > {}\n", out.display());
+    std::fs::write(env.dir.path().join("PostToolUse.sh"), script).unwrap();
+    let mut host = start(&env).await;
+    let call = json!({ "type": "tool_call", "toolCallId": "t1", "toolName": "mcp__fs__read", "input": {} });
+    event(&mut host, 1, "tool_call", call, &env).await;
+    let result = json!({ "type": "tool_result", "toolCallId": "t1", "toolName": "mcp__fs__read",
+        "input": {}, "content": [{ "type": "text", "text": "ok" }], "isError": false });
+    event(&mut host, 2, "tool_result", result, &env).await;
+    let sent: Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    assert!(sent["duration_ms"].is_u64(), "{sent}");
+    assert_eq!(sent["mcp_server"]["name"], "fs");
+    host.finish().await.unwrap();
+}

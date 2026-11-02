@@ -109,6 +109,20 @@ pub fn new_session_file(agent_dir: &Path, cwd: &str) -> std::io::Result<PathBuf>
     Ok(file)
 }
 
+/// A UUID-shaped id from `seed` and the current time.
+pub fn uuid_like(seed: &str) -> String {
+    let (ms, _) = now();
+    let hex = trust_hash(seed, &ms.to_string(), None, &json!(null));
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
 fn slug() -> String {
     let (ms, _) = now();
     format!(

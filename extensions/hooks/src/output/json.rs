@@ -69,7 +69,11 @@ pub fn apply_json(cx: &Interpret, json: &Value, out: &mut Outcome) {
             let message = decision.and_then(|d| text(d.get("message")));
             match behavior {
                 Some("allow") => out.permission = Some((Permission::Allow, message)),
-                Some("deny") => out.permission = Some((Permission::Deny, message)),
+                Some("deny") => {
+                    out.permission = Some((Permission::Deny, message));
+                    out.interrupt =
+                        decision.and_then(|d| d.get("interrupt")) == Some(&Value::Bool(true));
+                }
                 _ => {}
             }
             if !codex {
@@ -88,6 +92,10 @@ pub fn apply_json(cx: &Interpret, json: &Value, out: &mut Outcome) {
             }
         }
         "PreCompact" if codex => {}
+        "UserPromptSubmit" if !codex => {
+            out.block = block;
+            out.session_title = text(get("sessionTitle"));
+        }
         "UserPromptSubmit"
         | "Stop"
         | "SubagentStop"

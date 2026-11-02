@@ -55,6 +55,9 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     let call: ToolCallEvent = ev.event_as()?;
     let (host, snap) = (ev.host(), ev.snapshot());
     rt.lock().stop_blocks = 0;
+    if call.tool_name.starts_with("mcp__") {
+        load_mcp_sources(&rt, host).await;
+    }
     let tool = hook_tool_name(&call.tool_name);
     let mut input = to_hook_input(&call.tool_name, &call.input, Path::new(&snap.cwd));
     let payload =
@@ -93,6 +96,9 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         if let Some(new_input) = request.updated_input {
             input = new_input;
             updated = true;
+        }
+        if request.interrupt {
+            stop_run(host, "A PermissionRequest hook stopped the run".into());
         }
         match request.permission {
             Some((Permission::Deny, reason)) => {
@@ -142,6 +148,9 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
             final_input["command"] = json!(format!(". '{quoted}'; {command}"));
         }
     }
+    rt.lock()
+        .tool_started
+        .insert(call.tool_call_id.clone(), std::time::Instant::now());
     Ok(match merge_patch_diff(&call.input, &final_input) {
         Some(diff) => EventReply::patch(json!({ "input": diff })),
         None => EventReply::none(),
@@ -171,6 +180,10 @@ pub async fn tool_result(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     });
     if result.is_error {
         payload["error"] = json!(text);
+        payload["is_interrupt"] = json!(text.trim() == "Operation aborted");
+    }
+    if let Some(started) = rt.lock().tool_started.remove(&result.tool_call_id) {
+        payload["duration_ms"] = json!(started.elapsed().as_millis() as u64);
     }
     let mut d = tool_dispatch("PostToolUse", &tool, &input, payload);
     d.codex_payload = Some(codex);
@@ -325,4 +338,29 @@ pub async fn confirm_with_notice(
 fn own_block(rt: &Runtime, id: &str, reason: impl Into<String>) -> EventReply {
     rt.lock().own_blocks.insert(id.to_owned());
     EventReply::block(reason)
+}
+
+/// Fills the MCP server source cache once per session from `pi.getMcpServers()`.
+async fn load_mcp_sources(rt: &Runtime, host: &Host) {
+    if rt.lock().mcp_sources.is_some() {
+        return;
+    }
+    let servers = host
+        .pi_call("pi", "getMcpServers", Vec::new())
+        .await
+        .unwrap_or(Value::Null);
+    let sources = servers
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| {
+            let name = s.get("name")?.as_str()?.to_owned();
+            let source = ["source", "scope"]
+                .iter()
+                .find_map(|k| s.get(*k).and_then(Value::as_str))
+                .unwrap_or("user");
+            Some((name, source.to_owned()))
+        })
+        .collect();
+    rt.lock().mcp_sources = Some(sources);
 }
