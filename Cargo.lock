@@ -788,6 +788,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-compact-tui"
+version = "0.5.1"
+dependencies = [
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-compactor"
 version = "0.5.4"
 dependencies = [
@@ -1060,6 +1070,7 @@ dependencies = [
  "pi-ext-background-tasks",
  "pi-ext-chrome",
  "pi-ext-claude-marketplace",
+ "pi-ext-compact-tui",
  "pi-ext-compactor",
  "pi-ext-computer-use",
  "pi-ext-context-include",

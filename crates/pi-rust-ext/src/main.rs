@@ -28,6 +28,7 @@ const EXTENSIONS: &[Extension] = &[
     ("web-search", pi_ext_web_search::main),
     ("chrome", pi_ext_chrome::main),
     ("computer-use", pi_ext_computer_use::main),
+    ("compact-tui", pi_ext_compact_tui::main),
 ];
 
 fn main() -> ExitCode {

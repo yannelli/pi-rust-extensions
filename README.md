@@ -69,6 +69,7 @@ For example, `pi install marketplace:todo`. You can also open `/extensions` in t
 | Extension | Description |
 | --- | --- |
 | [`statusline`](extensions/statusline/README.md) | Configurable footer status line: builtin presets and themes, command scripts, Claude Code, Cursor, and Codex status lines, and the `/statusline` editor. |
+| [`compact-tui`](extensions/compact-tui/README.md) | Compact animated rows for the built-in tools, a working indicator that names each step, a busy title, and a run summary. |
 | [`iterm2`](extensions/iterm2/README.md) | iTerm2 integration: tab color follows the agent state, session badge, status bar user variables, attention requests, and `/terminal-setup`. |
 
 ## Layout
