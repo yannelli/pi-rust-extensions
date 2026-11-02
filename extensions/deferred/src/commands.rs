@@ -4,17 +4,19 @@ use pi_ext_sdk::SettingsScope;
 use pi_ext_sdk::prelude::*;
 
 use crate::config::{self, Kind, Mode, NAMESPACE};
+use crate::ui::rows::Scope;
 use crate::{Shared, fmt, load_config, lock};
 
-pub(crate) const DESCRIPTION: &str = "Show what is deferred, or edit rules: [status|reload|reset|set <kind> <pattern> <mode>|unset <kind> <pattern>] [--project]";
+pub(crate) const DESCRIPTION: &str = "Browse and change what is deferred, or: [status|reload|reset|set <kind> <pattern> <mode>|unset <kind> <pattern>] [--project]";
 
-const USAGE: &str = "Usage: /deferred [status|reload|reset], /deferred set <tools|skills|context|sections> <pattern> \
+const USAGE: &str = "Usage: /deferred (the panel), /deferred [status|reload|reset], /deferred set <tools|skills|context|sections> <pattern> \
     <on|names|deferred|off> [--project], or /deferred unset <kind> <pattern> [--project].";
 
 pub(crate) async fn run(state: Shared, args: String, ctx: CommandCtx) -> Result<()> {
     let words: Vec<&str> = args.split_whitespace().collect();
     let host = ctx.host();
     let text = match words.first().copied() {
+        None if host.has_ui() => return crate::ui::run::open(state, &ctx).await,
         None | Some("status") => status(&state),
         Some("reload") => {
             reload(&state, &ctx).await;
@@ -82,13 +84,31 @@ async fn edit(
         }
         None => None,
     };
+    let scope = if project {
+        Scope::Project
+    } else {
+        Scope::Global
+    };
+    write_rule(state, ctx, kind, pattern, mode, scope).await
+}
+
+/// Sets (`Some`) or removes (`None`) the rule `kind.pattern` in the `scope` settings file,
+/// then reloads the config.
+pub(crate) async fn write_rule(
+    state: &Shared,
+    ctx: &CommandCtx,
+    kind: Kind,
+    pattern: &str,
+    mode: Option<Mode>,
+    scope: Scope,
+) -> std::result::Result<String, String> {
     let host = ctx.host();
-    let (path, scope) = match project {
-        true => (
+    let (path, scope) = match scope {
+        Scope::Project => (
             host.project_dir().join("settings.json"),
             SettingsScope::Project,
         ),
-        false => (
+        Scope::Global => (
             host.agent_dir().join("settings.json"),
             SettingsScope::Global,
         ),

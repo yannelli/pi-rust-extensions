@@ -63,7 +63,15 @@ The `<deferred>` section is in the prompt only while something is deferred. The 
 
 ## Commands
 
-- `/deferred` or `/deferred status`: shows the config sources, the rules, `auto`, and parse warnings. After a prompt, it also shows each kind's counts, names, an estimate of the tokens kept out of the prompt, and the tools loaded this session.
+- `/deferred`: opens the panel, laid out like pi's `/acp` browser. Without a UI it prints the status instead.
+  - Tabs: Tools, Skills, Context, Sections, and Rules, each with a count. The title line shows the estimated tokens kept out of the prompt.
+  - Each row shows the mode (`●` on, `◐` names, `○` deferred, `✕` off), the estimated tokens, and why the item has that mode. The reason is `[global]` or `[project]` for a rule that names the item, `rule <pattern>` for a pattern, `auto`, or `pinned` when pi decides. Tools the model loaded show `loaded`.
+  - Typing filters the current tab. `Tab` and `Shift+Tab` switch tabs. `Esc` clears the search, then closes.
+  - `←`/`→` move the selected item or rule to the previous or next mode. The change is written to the scope of the item's own rule, or to the global settings.
+  - `Enter` opens the actions pane, which shows the details and these actions: set each mode, remove the item's rule, and unload a loaded tool. In a trusted project, a new rule asks whether to save to the global or the project settings.
+  - Pinned items cannot change: skills with `disable-model-invocation`, and MCP tools that pi keeps undeclared without a rule. Rules from `deferred.json` files are read-only in the panel, so edit the file.
+  - Changes apply from the next prompt.
+- `/deferred status`: shows the config sources, the rules, `auto`, and parse warnings. After a prompt, it also shows each kind's counts, names, an estimate of the tokens kept out of the prompt, and the tools loaded this session.
 - `/deferred set <tools|skills|context|sections> <pattern> <mode> [--project]`: writes one rule to the `deferred` setting in `<agentDir>/settings.json`, or in `<cwd>/.pi/settings.json` with `--project`. pi refuses the project file for an untrusted project. A pattern cannot contain spaces.
 - `/deferred unset <kind> <pattern> [--project]`: removes a rule.
 - `/deferred reset`: forgets the tools the model loaded, so the rules apply to them again.

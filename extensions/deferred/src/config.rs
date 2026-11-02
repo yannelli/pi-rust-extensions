@@ -6,6 +6,8 @@ use serde_json::{Map, Value};
 
 pub const NAMESPACE: &str = "deferred";
 pub const FILE_NAME: &str = "deferred.json";
+/// The source name of rules from the `deferred` setting.
+pub const SETTING_SOURCE: &str = "setting `deferred`";
 pub const DEFAULT_AUTO_PERCENT: f64 = 10.0;
 pub const DEFAULT_MAX_RESULTS: usize = 5;
 
@@ -95,6 +97,8 @@ pub struct Rule {
     pub kind: Kind,
     pub pattern: String,
     pub mode: Mode,
+    /// The config source the rule came from.
+    pub source: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -147,6 +151,7 @@ impl Config {
                         kind,
                         pattern: pattern.clone(),
                         mode,
+                        source: source.to_owned(),
                     }),
                     None => self.warn(source, format!("bad mode {mode} for `{pattern}`")),
                 }
@@ -175,6 +180,11 @@ impl Config {
 
     /// The mode of the last rule that matches; `None` when no rule does.
     pub fn mode(&self, kind: Kind, name: &str) -> Option<Mode> {
+        self.rule(kind, name).map(|rule| rule.mode)
+    }
+
+    /// The last rule that matches.
+    pub fn rule(&self, kind: Kind, name: &str) -> Option<&Rule> {
         let matches = |rule: &&Rule| {
             rule.kind == kind
                 && match kind {
@@ -182,7 +192,7 @@ impl Config {
                     _ => glob(&rule.pattern, name),
                 }
         };
-        self.rules.iter().rev().find(matches).map(|rule| rule.mode)
+        self.rules.iter().rev().find(matches)
     }
 }
 
