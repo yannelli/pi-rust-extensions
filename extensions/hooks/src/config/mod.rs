@@ -54,6 +54,7 @@ pub fn load(input: &LoadInput) -> Loaded {
     loaded.options = Options::merge(&layers);
     let options = loaded.options.clone();
     let scoped = |scope: Scope| options.scope.allows(scope);
+    let mut claude_disabled = false;
 
     if options.claude {
         let root = project_root(input.cwd, ".claude");
@@ -76,7 +77,10 @@ pub fn load(input: &LoadInput) -> Loaded {
             .collect();
         let disabled = docs
             .iter()
-            .any(|(_, _, doc)| doc.get("disableAllHooks") == Some(&Value::Bool(true)));
+            .rev()
+            .find_map(|(_, _, doc)| doc.get("disableAllHooks").and_then(Value::as_bool))
+            .unwrap_or(false);
+        claude_disabled = disabled;
         if disabled {
             pi_ext_sdk::info!("hooks: disableAllHooks is set; Claude hooks are off");
         } else {
@@ -91,30 +95,39 @@ pub fn load(input: &LoadInput) -> Loaded {
     }
 
     if options.codex {
-        let global = scoped(Scope::Global).then(|| codex::load_layer(&input.paths.codex_home));
-        let root = project_root(input.cwd, ".codex").join(".codex");
-        let project = (scoped(Scope::Project) && !same_path(&root, &input.paths.codex_home))
-            .then(|| {
+        let mut layers: Vec<(Scope, codex::CodexLayer)> = Vec::new();
+        if scoped(Scope::Global) {
+            if let Some(system) = &input.paths.codex_system {
+                layers.push((Scope::Global, codex::load_layer(system)));
+            }
+            layers.push((Scope::Global, codex::load_layer(&input.paths.codex_home)));
+        }
+        if scoped(Scope::Project) {
+            for dir in codex_project_dirs(input.cwd) {
+                if same_path(&dir, &input.paths.codex_home) {
+                    continue;
+                }
                 let any = ["hooks.json", "config.toml"]
                     .iter()
-                    .filter_map(|name| project_layer(input, &root.join(name), &mut loaded))
+                    .filter_map(|name| project_layer(input, &dir.join(name), &mut loaded))
                     .count();
-                (any > 0).then(|| codex::load_layer(&root))
-            })
-            .flatten();
-        let feature = project
-            .as_ref()
-            .and_then(|l| l.feature)
-            .or(global.as_ref().and_then(|l| l.feature));
+                if any > 0 {
+                    layers.push((Scope::Project, codex::load_layer(&dir)));
+                }
+            }
+        }
+        let feature = layers.iter().rev().find_map(|(_, l)| l.feature);
+        let states = codex::hook_states(&input.paths.codex_home);
         if feature == Some(false) {
             pi_ext_sdk::info!("hooks: Codex [features] hooks = false; Codex hooks are off");
         } else {
-            let layers = [(Scope::Global, global), (Scope::Project, project)];
             for (scope, layer) in layers {
-                for (path, hooks) in layer.map(|l| l.hooks).unwrap_or_default() {
-                    loaded
-                        .hooks
-                        .extend(parse_hooks(Source::Codex, scope, &path, &hooks));
+                for (path, hooks) in layer.hooks {
+                    let defs = parse_hooks(Source::Codex, scope, &path, &hooks);
+                    loaded.hooks.extend(
+                        defs.into_iter()
+                            .filter(|def| states.get(&def.codex_state_key()) != Some(&false)),
+                    );
                 }
             }
         }
@@ -127,13 +140,32 @@ pub fn load(input: &LoadInput) -> Loaded {
         ];
         for (scope, path, doc) in docs {
             if let Some(hooks) = doc.filter(|_| scoped(scope)).and_then(|d| d.get("hooks")) {
-                loaded
-                    .hooks
-                    .extend(parse_hooks(Source::Pi, scope, path, hooks));
+                let defs = parse_hooks(Source::Pi, scope, path, hooks);
+                // Plugin hooks come from Claude Code plugins, so Claude `disableAllHooks` covers them.
+                loaded.hooks.extend(
+                    defs.into_iter()
+                        .filter(|def| !(claude_disabled && def.plugin.is_some())),
+                );
             }
         }
     }
     loaded
+}
+
+/// `.codex` dirs from the project root down to `cwd`; Codex loads each one.
+fn codex_project_dirs(cwd: &Path) -> Vec<PathBuf> {
+    let root = cwd
+        .ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .unwrap_or(cwd);
+    let mut dirs: Vec<PathBuf> = cwd
+        .ancestors()
+        .take_while(|dir| dir.starts_with(root))
+        .map(|dir| dir.join(".codex"))
+        .filter(|dir| dir.is_dir())
+        .collect();
+    dirs.reverse();
+    dirs
 }
 
 /// `Some(path)` when the project file exists and the project is trusted; records skipped files.
@@ -163,7 +195,7 @@ pub fn parse_hooks(source: Source, scope: Scope, file: &Path, hooks: &Value) -> 
     };
     let mut defs = Vec::new();
     for (event, groups) in events {
-        for group in groups.as_array().into_iter().flatten() {
+        for (group_index, group) in groups.as_array().into_iter().flatten().enumerate() {
             let matcher = group
                 .get("matcher")
                 .and_then(Value::as_str)
@@ -175,11 +207,12 @@ pub fn parse_hooks(source: Source, scope: Scope, file: &Path, hooks: &Value) -> 
                 data: field("pluginData"),
             };
             let has_plugin = plugin.id.is_some() || plugin.root.is_some() || plugin.data.is_some();
-            for handler in group
+            for (handler_index, handler) in group
                 .get("hooks")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
+                .enumerate()
             {
                 if !handler.is_object() {
                     continue;
@@ -193,6 +226,7 @@ pub fn parse_hooks(source: Source, scope: Scope, file: &Path, hooks: &Value) -> 
                     handler.clone(),
                 );
                 def.plugin = has_plugin.then(|| plugin.clone());
+                def.position = (group_index, handler_index);
                 defs.push(def);
             }
         }

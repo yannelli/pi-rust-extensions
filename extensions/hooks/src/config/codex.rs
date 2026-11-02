@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde_json::{Map, Value};
@@ -40,6 +41,23 @@ pub fn load_layer(dir: &Path) -> CodexLayer {
         }
     }
     layer
+}
+
+/// User `config.toml` `[hooks.state."<key>"] enabled`: per-hook switches set in Codex `/hooks`.
+pub fn hook_states(codex_home: &Path) -> HashMap<String, bool> {
+    let doc = read_toml(&codex_home.join("config.toml"));
+    let states = doc
+        .as_ref()
+        .and_then(|d| d.pointer("/hooks/state"))
+        .and_then(Value::as_object);
+    states
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, state)| {
+            let enabled = state.get("enabled")?.as_bool()?;
+            Some((key.trim().to_owned(), enabled))
+        })
+        .collect()
 }
 
 pub fn read_toml(path: &Path) -> Option<Value> {

@@ -23,6 +23,7 @@ fn env() -> Env {
     let paths = Paths {
         claude_dir: base.join("claude"),
         codex_home: base.join("codex"),
+        codex_system: None,
         temp_dir: base.join("tmp"),
         agent_dir: Some(base.join("agent")),
     };
@@ -113,7 +114,7 @@ async fn updated_input_patches_the_event() {
     write_hooks(
         &env.paths.codex_home.join("hooks.json"),
         "PreToolUse",
-        Some("^shell$"),
+        Some("Bash"),
         &cmd,
     );
     let mut host = start(&env).await;

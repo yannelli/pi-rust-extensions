@@ -32,6 +32,8 @@ pub struct State {
     pub reverting_model: Option<String>,
     pub turn: u64,
     pub spill: u64,
+    /// Consecutive Stop blocks since the last tool call or user input.
+    pub stop_blocks: u32,
     pub flag_trust_all: bool,
 }
 

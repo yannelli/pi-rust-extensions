@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 use crate::output::RawRun;
 
 const SYSTEM: &str = "You evaluate a hook event for a coding agent. Reply with only a JSON object: \
-{\"ok\": true} to allow, or {\"ok\": false, \"reason\": \"...\"} to block.";
+{\"ok\": true} to allow, or {\"ok\": false, \"reason\": \"...\"} to block. Add \
+\"impossible\": true when the condition can never be satisfied.";
 
 pub fn prompt_text(template: &str, input: &str) -> String {
     if template.contains("$ARGUMENTS") {
@@ -16,7 +17,14 @@ pub fn prompt_text(template: &str, input: &str) -> String {
     }
 }
 
-pub async fn run_prompt(host: &Host, handler: &Value, input: String, timeout: Duration) -> RawRun {
+pub async fn run_prompt(
+    host: &Host,
+    event: &str,
+    handler: &Value,
+    input: String,
+    timeout: Duration,
+) -> RawRun {
+    let continue_on_block = handler.get("continueOnBlock") == Some(&Value::Bool(true));
     let template = handler
         .get("prompt")
         .and_then(Value::as_str)
@@ -28,12 +36,12 @@ pub async fn run_prompt(host: &Host, handler: &Value, input: String, timeout: Du
     match tokio::time::timeout(timeout, host.complete(request)).await {
         Err(_) => RawRun::failed(format!("timed out after {}s", timeout.as_secs_f64())),
         Ok(Err(err)) => RawRun::failed(format!("llm.complete failed: {err}")),
-        Ok(Ok(response)) => reply_to_run(&response.text),
+        Ok(Ok(response)) => reply_to_run(&response.text, event, continue_on_block),
     }
 }
 
 /// `{ok, reason}` or `{decision, reason}` -> a run whose stdout the normal rules read.
-pub fn reply_to_run(text: &str) -> RawRun {
+pub fn reply_to_run(text: &str, event: &str, continue_on_block: bool) -> RawRun {
     let parsed = text
         .find('{')
         .zip(text.rfind('}'))
@@ -51,15 +59,17 @@ pub fn reply_to_run(text: &str) -> RawRun {
             reply.get("decision").and_then(Value::as_str),
             Some("block" | "deny")
         );
-    if blocked {
-        RawRun::exit(
-            0,
-            json!({ "decision": "block", "reason": reason }).to_string(),
-            "",
-        )
-    } else {
-        RawRun::exit(0, "", "")
-    }
+    let impossible = reply.get("impossible") == Some(&Value::Bool(true));
+    let output = match event {
+        _ if !blocked => return RawRun::exit(0, "", ""),
+        "PermissionRequest" | "PermissionDenied" => return RawRun::exit(0, "", ""),
+        "Stop" | "SubagentStop" if impossible => return RawRun::exit(0, "", ""),
+        "PreToolUse" | "PostToolUse" if !continue_on_block => {
+            json!({ "decision": "block", "reason": reason, "continue": false, "stopReason": reason })
+        }
+        _ => json!({ "decision": "block", "reason": reason }),
+    };
+    RawRun::exit(0, output.to_string(), "")
 }
 
 #[cfg(test)]
@@ -74,17 +84,25 @@ mod tests {
 
     #[test]
     fn replies() {
-        let block = reply_to_run("```json\n{\"ok\": false, \"reason\": \"tests fail\"}\n```");
+        let reply = "```json\n{\"ok\": false, \"reason\": \"tests fail\"}\n```";
+        let block = reply_to_run(reply, "Stop", false);
         assert_eq!(
             block.stdout,
             r#"{"decision":"block","reason":"tests fail"}"#
         );
-        assert_eq!(reply_to_run(r#"{"ok": true}"#).stdout, "");
+        assert_eq!(reply_to_run(r#"{"ok": true}"#, "Stop", false).stdout, "");
+        let impossible = r#"{"ok": false, "reason": "r", "impossible": true}"#;
+        assert_eq!(reply_to_run(impossible, "Stop", false).stdout, "");
+        let ends_turn = reply_to_run(reply, "PreToolUse", false).stdout;
+        assert!(ends_turn.contains(r#""continue":false"#), "{ends_turn}");
+        let keeps_going = reply_to_run(reply, "PreToolUse", true).stdout;
+        assert!(!keeps_going.contains("continue"), "{keeps_going}");
+        assert_eq!(reply_to_run(reply, "PermissionRequest", false).stdout, "");
         assert!(
-            reply_to_run(r#"{"decision":"deny"}"#)
+            reply_to_run(r#"{"decision":"deny"}"#, "Stop", false)
                 .stdout
                 .contains("block")
         );
-        assert_eq!(reply_to_run("sure").code, Some(1));
+        assert_eq!(reply_to_run("sure", "Stop", false).code, Some(1));
     }
 }

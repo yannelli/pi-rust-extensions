@@ -23,28 +23,52 @@ pub async fn run(cx: &Context, def: &HookDef, input: String) -> RawRun {
     let timeout = def.timeout();
     match def.kind() {
         "http" => http::run_http(&def.handler, input, timeout).await,
-        "prompt" => prompt::run_prompt(&cx.host, &def.handler, input, timeout).await,
+        "prompt" => prompt::run_prompt(&cx.host, &def.event, &def.handler, input, timeout).await,
         _ => {
-            let args = def
-                .handler
-                .get("args")
-                .and_then(Value::as_array)
-                .map(|args| {
-                    args.iter()
-                        .map(|a| a.as_str().map_or_else(|| a.to_string(), str::to_owned))
-                        .collect()
-                });
+            let env = hook_env(cx, def);
+            let args: Option<Vec<String>> =
+                def.handler
+                    .get("args")
+                    .and_then(Value::as_array)
+                    .map(|args| {
+                        args.iter()
+                            .map(|a| a.as_str().map_or_else(|| a.to_string(), str::to_owned))
+                            .map(|a| expand_placeholders(&a, &env))
+                            .collect()
+                    });
+            let mut command = def.str_field("command").unwrap_or_default().to_owned();
+            if args.is_some() {
+                command = expand_placeholders(&command, &env);
+            }
             let spec = CommandSpec {
-                command: def.str_field("command").unwrap_or_default().to_owned(),
+                command,
                 args,
                 stdin: input,
                 cwd: cx.cwd.clone(),
-                env: hook_env(cx, def),
+                env,
                 timeout,
+                login_shell: def.source.is_codex(),
             };
             run_command(spec).await
         }
     }
+}
+
+const PLACEHOLDERS: &[&str] = &[
+    "CLAUDE_PROJECT_DIR",
+    "CLAUDE_PLUGIN_ROOT",
+    "CLAUDE_PLUGIN_DATA",
+];
+
+/// Exec form has no shell, so path placeholders are replaced as plain strings.
+pub fn expand_placeholders(text: &str, env: &[(String, String)]) -> String {
+    let mut text = text.to_owned();
+    for name in PLACEHOLDERS {
+        if let Some((_, value)) = env.iter().find(|(key, _)| key == name) {
+            text = text.replace(&format!("${{{name}}}"), value);
+        }
+    }
+    text
 }
 
 pub fn hook_env(cx: &Context, def: &HookDef) -> Vec<(String, String)> {
@@ -82,4 +106,25 @@ pub fn hook_env(cx: &Context, def: &HookDef) -> Vec<(String, String)> {
         }
     }
     env
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholders_expand_from_the_hook_env() {
+        let env = vec![
+            ("CLAUDE_PROJECT_DIR".to_owned(), "/repo".to_owned()),
+            ("CLAUDE_PLUGIN_ROOT".to_owned(), "/plug".to_owned()),
+        ];
+        assert_eq!(
+            expand_placeholders("${CLAUDE_PROJECT_DIR}/x ${CLAUDE_PLUGIN_ROOT} $HOME", &env),
+            "/repo/x /plug $HOME"
+        );
+        assert_eq!(
+            expand_placeholders("${CLAUDE_PLUGIN_DATA}", &env),
+            "${CLAUDE_PLUGIN_DATA}"
+        );
+    }
 }

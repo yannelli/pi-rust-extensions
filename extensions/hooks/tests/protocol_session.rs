@@ -23,6 +23,7 @@ fn env(hooks: Value) -> Env {
     let paths = Paths {
         claude_dir: base.join("claude"),
         codex_home: base.join("codex"),
+        codex_system: None,
         temp_dir: base.join("tmp"),
         agent_dir: Some(base.join("agent")),
     };
@@ -202,5 +203,27 @@ async fn hooks_list_command_notifies_listing() {
     );
     host.answer(&id, Value::Null).await;
     assert_eq!(host.expect_response(1).await["result"], Value::Null);
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn exec_form_expands_placeholders_and_paths_are_absolute() {
+    let env = env(json!({}));
+    let handler = json!({ "type": "command", "command": "sh",
+        "args": ["-c", "cat > \"$0\"", "${CLAUDE_PROJECT_DIR}/in.json"] });
+    rewrite_hooks(
+        &env,
+        json!({ "PreToolUse": [{ "matcher": "Read", "hooks": [handler] }] }),
+    );
+    let mut host = start(&env).await;
+    let ctx = hooks_ctx(&env.cwd, false, true);
+    let call = json!({ "type": "tool_call", "toolCallId": "t1", "toolName": "read", "input": { "path": "src/../a.txt" } });
+    host.event(1, "tool_call", call, ctx).await;
+    let sent: Value =
+        serde_json::from_str(&std::fs::read_to_string(env.cwd.join("in.json")).unwrap()).unwrap();
+    assert_eq!(
+        sent["tool_input"]["file_path"],
+        env.cwd.join("a.txt").display().to_string()
+    );
     host.finish().await.unwrap();
 }

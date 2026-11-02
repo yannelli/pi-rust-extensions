@@ -73,6 +73,18 @@ pub fn extension(paths: Paths) -> Extension {
     ext = on(ext, &rt, "tool_call", events::tool::tool_call);
     ext = on(ext, &rt, "tool_result", events::tool::tool_result);
     ext = on(ext, &rt, "turn_end", events::tool::turn_end);
+    ext = on(
+        ext,
+        &rt,
+        "before_provider_request",
+        events::agent::before_provider_request,
+    );
+    ext = on(
+        ext,
+        &rt,
+        "after_provider_response",
+        events::agent::after_provider_response,
+    );
     let command_rt = rt.clone();
     let start_rt = rt.clone();
     ext.command(

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use pi_ext_sdk::event_types::{ToolCallEvent, ToolResultEvent};
@@ -7,10 +8,13 @@ use pi_ext_sdk::prelude::*;
 use crate::decide::{contexts, first_block, first_stop, fold_tool, stop_text};
 use crate::dispatch::{Dispatch, dispatch};
 use crate::matcher::Target;
-use crate::output::Permission;
+use crate::model::Source;
+use crate::output::{Outcome, Permission};
 use crate::paths::env_file;
 use crate::runtime::Runtime;
-use crate::tools::{from_hook_input, hook_tool_name, to_hook_input};
+use crate::tools::{
+    codex_tool_input, codex_tool_name, from_hook_input, hook_tool_name, to_hook_input,
+};
 
 fn tool_dispatch(event: &'static str, tool: &str, input: &Value, payload: Value) -> Dispatch {
     let mut d = Dispatch::new(event, Target::Tool(tool.to_owned()), payload);
@@ -18,24 +22,51 @@ fn tool_dispatch(event: &'static str, tool: &str, input: &Value, payload: Value)
     d
 }
 
+/// Codex `tool_name` and `tool_input` (`apply_patch` for edits), merged over the Claude payload.
+fn codex_fields(pi_tool: &str, tool: &str, input: &Value) -> Value {
+    json!({ "tool_name": codex_tool_name(tool), "tool_input": codex_tool_input(pi_tool, input) })
+}
+
+/// Codex `updatedInput` for `apply_patch` holds patch text that pi edit and write cannot take.
+fn drop_patch_rewrites(pi_tool: &str, outcomes: &mut [Outcome]) {
+    if !matches!(pi_tool, "edit" | "write") {
+        return;
+    }
+    for outcome in outcomes
+        .iter_mut()
+        .filter(|o| o.source == Some(Source::Codex))
+    {
+        if outcome.updated_input.take().is_some() {
+            pi_ext_sdk::warn!("hooks: Codex updatedInput for apply_patch is not supported");
+        }
+    }
+}
+
+fn stop_run(host: &Host, reason: String) {
+    let host = host.clone();
+    tokio::spawn(async move {
+        let _ = host.notify_warning(reason).await;
+        let _ = host.abort().await;
+    });
+}
+
 pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     let call: ToolCallEvent = ev.event_as()?;
     let (host, snap) = (ev.host(), ev.snapshot());
+    rt.lock().stop_blocks = 0;
     let tool = hook_tool_name(&call.tool_name);
-    let mut input = to_hook_input(&call.tool_name, &call.input);
+    let mut input = to_hook_input(&call.tool_name, &call.input, Path::new(&snap.cwd));
     let payload =
         json!({ "tool_name": tool, "tool_input": input, "tool_use_id": call.tool_call_id });
-    let pre = fold_tool(
-        &dispatch(
-            &rt,
-            host,
-            snap,
-            tool_dispatch("PreToolUse", &tool, &input, payload),
-        )
-        .await,
-    );
+    let mut d = tool_dispatch("PreToolUse", &tool, &input, payload);
+    d.codex_payload = Some(codex_fields(&call.tool_name, &tool, &input));
+    let mut outcomes = dispatch(&rt, host, snap, d).await;
+    drop_patch_rewrites(&call.tool_name, &mut outcomes);
+    let pre = fold_tool(&outcomes);
     if let Some(reason) = pre.stop {
-        return Ok(EventReply::block(stop_text(&reason)));
+        let reason = stop_text(&reason);
+        stop_run(host, reason.clone());
+        return Ok(EventReply::block(reason));
     }
     if !pre.context.is_empty() {
         rt.lock()
@@ -55,15 +86,9 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     }
     if !matches!(permission, Some((Permission::Allow, _))) {
         let payload = json!({ "tool_name": tool, "tool_input": input, "tool_use_id": call.tool_call_id, "permission_suggestions": [] });
-        let request = fold_tool(
-            &dispatch(
-                &rt,
-                host,
-                snap,
-                tool_dispatch("PermissionRequest", &tool, &input, payload),
-            )
-            .await,
-        );
+        let mut d = tool_dispatch("PermissionRequest", &tool, &input, payload);
+        d.codex_payload = Some(codex_fields(&call.tool_name, &tool, &input));
+        let request = fold_tool(&dispatch(&rt, host, snap, d).await);
         if let Some(new_input) = request.updated_input {
             input = new_input;
             updated = true;
@@ -118,8 +143,10 @@ pub async fn tool_result(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     let result: ToolResultEvent = ev.event_as()?;
     let (host, snap) = (ev.host(), ev.snapshot());
     let tool = hook_tool_name(&result.tool_name);
-    let input = to_hook_input(&result.tool_name, &result.input);
+    let input = to_hook_input(&result.tool_name, &result.input, Path::new(&snap.cwd));
     let text = content_text(&result.content);
+    let mut codex = codex_fields(&result.tool_name, &tool, &input);
+    codex["tool_response"] = json!(text);
     let mut payload = json!({
         "tool_name": tool, "tool_input": input, "tool_use_id": result.tool_call_id,
         "tool_response": { "content": result.content, "text": text, "isError": result.is_error, "details": result.details },
@@ -128,6 +155,7 @@ pub async fn tool_result(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         payload["error"] = json!(text);
     }
     let mut d = tool_dispatch("PostToolUse", &tool, &input, payload);
+    d.codex_payload = Some(codex);
     if result.is_error {
         d.claude = Some("PostToolUseFailure");
     }
@@ -157,13 +185,17 @@ pub async fn tool_result(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         appended.extend(outcome.feedback.clone());
     }
     appended.extend(contexts(&outcomes));
-    if let Some(reason) = first_stop(&outcomes) {
-        appended.push(stop_text(&reason));
-        let host = host.clone();
-        tokio::spawn(async move {
-            let _ = host.notify_warning(stop_text(&reason)).await;
-            let _ = host.abort().await;
-        });
+    for outcome in &outcomes {
+        let Some(reason) = outcome.stop.as_deref().map(stop_text) else {
+            continue;
+        };
+        if outcome.source == Some(Source::Codex) {
+            content = vec![content::text(reason)];
+        } else {
+            appended.push(reason.clone());
+            stop_run(host, reason);
+            break;
+        }
     }
     content.extend(
         appended
@@ -187,14 +219,24 @@ pub async fn turn_end(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     if results.is_empty() {
         return Ok(EventReply::none());
     }
-    let tool_results: Vec<Value> = results
+    let cwd = Path::new(&ev.snapshot().cwd).to_path_buf();
+    let tool_calls: Vec<Value> = results
         .iter()
         .map(|r| {
-            let content: Vec<Value> = r.get("content").and_then(Value::as_array).cloned().unwrap_or_default();
+            let content: Vec<Value> = r
+                .get("content")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let pi_tool = r
+                .get("toolName")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let input = call_arguments(ev.event(), r.get("toolCallId"));
             json!({
-                "tool_name": hook_tool_name(r.get("toolName").and_then(Value::as_str).unwrap_or_default()),
+                "tool_name": hook_tool_name(pi_tool),
+                "tool_input": to_hook_input(pi_tool, &input, &cwd),
                 "tool_use_id": r.get("toolCallId"),
-                "is_error": r.get("isError").and_then(Value::as_bool).unwrap_or(false),
                 "tool_response": content_text(&content),
             })
         })
@@ -202,16 +244,40 @@ pub async fn turn_end(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     let d = Dispatch::new(
         "PostToolBatch",
         Target::Any,
-        json!({ "tool_results": tool_results }),
+        json!({ "tool_calls": tool_calls }),
     )
     .claude_only();
-    let outcomes = dispatch(&rt, ev.host(), ev.snapshot(), d).await;
+    let host = ev.host();
+    let outcomes = dispatch(&rt, host, ev.snapshot(), d).await;
+    let context = contexts(&outcomes);
+    if !context.is_empty() {
+        let message = CustomMessage::new("hooks-context", context.join("\n\n"))
+            .display(false)
+            .deliver_as(DeliverAs::Steer);
+        host.send_message(message).await?;
+    }
     if let Some(reason) = first_stop(&outcomes)
         .map(|r| stop_text(&r))
         .or_else(|| first_block(&outcomes))
     {
-        let message = CustomMessage::new("hooks-feedback", reason).deliver_as(DeliverAs::Steer);
-        ev.host().send_message(message).await?;
+        let message =
+            CustomMessage::new("hooks-feedback", reason.clone()).deliver_as(DeliverAs::NextTurn);
+        host.send_message(message).await?;
+        stop_run(host, reason);
     }
     Ok(EventReply::none())
+}
+
+/// The arguments of a tool call in the `turn_end` assistant message.
+fn call_arguments(event: &Value, id: Option<&Value>) -> Value {
+    event
+        .pointer("/message/content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|block| {
+            block.get("type").and_then(Value::as_str) == Some("toolCall") && block.get("id") == id
+        })
+        .and_then(|block| block.get("arguments").cloned())
+        .unwrap_or_else(|| json!({}))
 }

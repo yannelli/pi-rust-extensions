@@ -7,6 +7,7 @@ use crate::decide::{contexts, first_block, first_stop, stop_text};
 use crate::dispatch::{Dispatch, dispatch};
 use crate::events::tool::content_text;
 use crate::matcher::Target;
+use crate::model::Source;
 use crate::runtime::Runtime;
 
 pub async fn input(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
@@ -17,6 +18,7 @@ pub async fn input(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     {
         let mut state = rt.lock();
         state.stop_hook_active = false;
+        state.stop_blocks = 0;
         state.turn += 1;
     }
     let d = Dispatch::new(
@@ -89,7 +91,11 @@ pub fn error_type(message: &str) -> &'static str {
         "billing_error"
     } else if has(&["max_tokens", "max output", "maximum output"]) {
         "max_output_tokens"
-    } else if has(&["500", "502", "503", "529", "overloaded", "server error"]) {
+    } else if has(&["overloaded", "529"]) {
+        "overloaded"
+    } else if has(&["model_not_found", "model not found"]) {
+        "model_not_found"
+    } else if has(&["500", "502", "503", "server error"]) {
         "server_error"
     } else if has(&["400", "invalid request", "invalid_request"]) {
         "invalid_request"
@@ -139,8 +145,33 @@ pub async fn agent_settled(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply>
         let _ = host.notify_info(stop_text(&reason)).await;
         return Ok(EventReply::none());
     }
-    if let Some(reason) = first_block(&outcomes) {
-        rt.lock().stop_hook_active = true;
+    let feedback: Vec<String> = outcomes
+        .iter()
+        .filter(|o| o.source != Some(Source::Codex))
+        .filter_map(|o| o.context.clone())
+        .filter(|c| !c.trim().is_empty())
+        .collect();
+    let reason =
+        first_block(&outcomes).or_else(|| (!feedback.is_empty()).then(|| feedback.join("\n\n")));
+    if let Some(reason) = reason {
+        let cap = stop_block_cap();
+        let capped = {
+            let mut state = rt.lock();
+            let capped = state.stop_blocks >= cap;
+            if !capped {
+                state.stop_blocks += 1;
+                state.stop_hook_active = true;
+            }
+            capped
+        };
+        if capped {
+            let _ = host
+                .notify_warning(format!(
+                    "Stop hooks continued {cap} times in a row; ending the turn"
+                ))
+                .await;
+            return Ok(EventReply::none());
+        }
         let message = CustomMessage::new("hooks-stop", reason)
             .display(false)
             .deliver_as(DeliverAs::FollowUp)
@@ -148,6 +179,42 @@ pub async fn agent_settled(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply>
         host.send_message(message).await?;
     }
     Ok(EventReply::none())
+}
+
+/// Claude ends the turn after 8 consecutive Stop continuations (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`).
+fn stop_block_cap() -> u32 {
+    std::env::var("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(8)
+}
+
+/// Codex PreModelRequest: diagnostic only, so the request does not wait for it.
+pub async fn before_provider_request(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
+    model_request(rt, &ev, "PreModelRequest", json!({}));
+    Ok(EventReply::none())
+}
+
+/// Codex PostModelRequest from the HTTP status; pi reports no error text or token usage here.
+pub async fn after_provider_response(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
+    let status = ev.event().get("status").and_then(Value::as_u64);
+    let completed = status.is_some_and(|s| (200..300).contains(&s));
+    let payload = json!({
+        "status": if completed { "completed" } else { "failed" },
+        "error": (!completed).then(|| format!("HTTP {}", status.unwrap_or_default())),
+        "token_usage": null,
+    });
+    model_request(rt, &ev, "PostModelRequest", payload);
+    Ok(EventReply::none())
+}
+
+fn model_request(rt: Arc<Runtime>, ev: &EventCtx, event: &'static str, payload: Value) {
+    let (host, snap) = (ev.host().clone(), ev.snapshot().clone());
+    tokio::spawn(async move {
+        let mut d = Dispatch::new(event, Target::Any, payload);
+        d.claude = None;
+        dispatch(&rt, &host, &snap, d).await;
+    });
 }
 
 /// `pi.events` channels for subagents, and whether each one starts or stops an agent.

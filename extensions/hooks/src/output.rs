@@ -109,12 +109,17 @@ impl Outcome {
     }
 }
 
-/// Events where exit 2 blocks.
+/// Events where exit 2 blocks (Codex PermissionRequest denies, PostToolUse replaces the result).
 pub fn exit2_blocks(source: Source, event: &str) -> bool {
     if source.is_codex() {
         return matches!(
             event,
-            "PreToolUse" | "UserPromptSubmit" | "Stop" | "SubagentStop"
+            "PreToolUse"
+                | "PermissionRequest"
+                | "PostToolUse"
+                | "UserPromptSubmit"
+                | "Stop"
+                | "SubagentStop"
         );
     }
     matches!(
@@ -127,6 +132,12 @@ pub fn exit2_blocks(source: Source, event: &str) -> bool {
             | "PreCompact"
             | "PreModelSwitch"
     )
+}
+
+/// Claude `onFailure: "block"`: like exit 2, plus PermissionRequest; never on Stop/SubagentStop.
+fn failure_blocks(event: &str) -> bool {
+    event == "PermissionRequest"
+        || (exit2_blocks(Source::Claude, event) && !matches!(event, "Stop" | "SubagentStop"))
 }
 
 fn plain_stdout_is_context(source: Source, event: &str) -> bool {
@@ -167,9 +178,11 @@ pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
     let json = json_output(&raw.stdout);
     let stderr = raw.stderr.trim();
     let blocks = exit2_blocks(cx.source, cx.event);
+    let invalid_json = json.is_none() && looks_like_json(&raw.stdout);
     match raw.code {
         Some(0) => match &json {
             Some(json) => apply_json(cx, json, &mut out),
+            None if invalid_json => out.error = Some("invalid JSON output".into()),
             None if !raw.stdout.trim().is_empty() => {
                 if codex && matches!(cx.event, "Stop" | "SubagentStop") {
                     out.error = Some("plain stdout is invalid here; JSON required".into());
@@ -179,12 +192,34 @@ pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
             }
             None => {}
         },
+        Some(2) if codex && blocks && stderr.is_empty() => {
+            out.error = Some(format!(
+                "{} hook exited with code 2 but wrote no reason to stderr",
+                cx.event
+            ));
+        }
+        Some(2)
+            if !codex
+                && matches!(cx.event, "Stop" | "SubagentStop")
+                && raw.stdout.trim().is_empty()
+                && stderr.contains("No such file or directory") =>
+        {
+            out.error = Some(format!("exit 2: {stderr}"));
+        }
         Some(2) => {
             if !codex && let Some(json) = &json {
                 apply_json(cx, json, &mut out);
             }
             if blocks {
-                out.block = Some(exit2_reason(cx, stderr));
+                let json_reason = out
+                    .block
+                    .clone()
+                    .or_else(|| match &out.permission {
+                        Some((Permission::Deny, reason)) => reason.clone(),
+                        _ => None,
+                    })
+                    .filter(|r| !r.is_empty() && r != "Blocked by hook");
+                out.block = Some(json_reason.unwrap_or_else(|| exit2_reason(cx, stderr)));
                 out.permission = None;
                 out.updated_input = None;
             } else if matches!(cx.event, "PostToolUse" | "PostToolUseFailure") {
@@ -210,16 +245,42 @@ pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
             {
                 apply_json(cx, json, &mut out);
             }
-            if cx.on_failure_block && !codex && blocks {
-                out.block = Some(if stderr.is_empty() {
-                    format!("hook failed ({what})")
-                } else {
-                    exit2_reason(cx, stderr)
-                });
-            }
         }
     }
+    let failed = raw.code != Some(0) && raw.code != Some(2) || invalid_json && raw.code == Some(0);
+    if cx.on_failure_block && !codex && failed && failure_blocks(cx.event) {
+        out.block = Some(failure_reason(cx, raw, stderr));
+        out.permission = None;
+        out.updated_input = None;
+    }
     out
+}
+
+/// Stdout that a hook meant as JSON: starts with `{` and ends with `}`.
+fn looks_like_json(stdout: &str) -> bool {
+    let text = stdout.trim();
+    text.starts_with('{') && text.ends_with('}')
+}
+
+fn failure_reason(cx: &Interpret, raw: &RawRun, stderr: &str) -> String {
+    let timed_out = raw
+        .error
+        .as_deref()
+        .is_some_and(|e| e.starts_with("timed out"));
+    let what = if timed_out { "timed out" } else { "failed" };
+    let detail = [stderr, raw.error.as_deref().unwrap_or_default()]
+        .into_iter()
+        .find(|t| !t.is_empty())
+        .map(|t| format!("\n{t}"))
+        .unwrap_or_default();
+    let head = match cx.tool {
+        Some(tool) => format!("{}:{tool} hook error", cx.event),
+        None => format!("{} hook error", cx.event),
+    };
+    format!(
+        "{head}: [{}]: {what}; blocking because onFailure is \"block\"{detail}",
+        cx.label
+    )
 }
 
 fn exit2_reason(cx: &Interpret, stderr: &str) -> String {
