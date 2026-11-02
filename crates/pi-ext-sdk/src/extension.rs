@@ -10,13 +10,14 @@ use crate::error::Result;
 use crate::handler;
 use crate::host::Host;
 use crate::registry::{Command, Registry, VirtualModel, put};
-use crate::render::{EntryRender, MessageRender, ToolCallRender, ToolResultRender};
+use crate::render::{EntryRender, IntoRendered, MessageRender, ToolCallRender, ToolResultRender};
 use crate::reply::{EventReply, ToolResult};
 use crate::spec::{
     AutocompleteRequest, CommandSpec, CompletionItem, FlagSpec, RouteRequest, ShortcutSpec,
     Suggestions, ToolSpec,
 };
 use crate::surface::SurfaceEvent;
+use crate::theme::Theme;
 
 /// Builder for a native extension. Finish with [`Extension::run`].
 pub struct Extension {
@@ -64,58 +65,70 @@ impl Extension {
     }
 
     /// Draws the call row of tool `name` (upstream `renderCall`). pi asks once per width and
-    /// input, and draws the lines when they arrive; `None` draws no lines.
-    pub fn render_tool_call<F, Fut>(mut self, name: &str, render: F) -> Self
+    /// input, and draws the lines when they arrive; `None` draws no lines. For a tool that this
+    /// extension does not add, such as the built-in `bash`, it draws pi's own row of that tool
+    /// while no other renderer draws it (feature `toolRenderers`).
+    pub fn render_tool_call<R, F, Fut>(mut self, name: &str, render: F) -> Self
     where
+        R: IntoRendered,
         F: Fn(ToolCallRender, Host) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+        Fut: Future<Output = Result<R>> + Send + 'static,
     {
         put(
             &mut self.registry.call_renderers,
             name,
-            handler::with_host(render),
+            handler::render(render),
         );
         self
     }
 
     /// Draws the result row of tool `name` (upstream `renderResult`).
-    pub fn render_tool_result<F, Fut>(mut self, name: &str, render: F) -> Self
+    pub fn render_tool_result<R, F, Fut>(mut self, name: &str, render: F) -> Self
     where
+        R: IntoRendered,
         F: Fn(ToolResultRender, Host) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+        Fut: Future<Output = Result<R>> + Send + 'static,
     {
         put(
             &mut self.registry.result_renderers,
             name,
-            handler::with_host(render),
+            handler::render(render),
         );
         self
     }
 
+    /// `"self"`: the renderers of tool `name` draw their own frame; `"default"`: pi's frame.
+    pub fn render_shell(mut self, name: &str, shell: &str) -> Self {
+        put(&mut self.registry.render_shells, name, shell.to_owned());
+        self
+    }
+
     /// Draws custom messages of `custom_type` (upstream `registerMessageRenderer`).
-    pub fn message_renderer<F, Fut>(mut self, custom_type: &str, render: F) -> Self
+    pub fn message_renderer<R, F, Fut>(mut self, custom_type: &str, render: F) -> Self
     where
+        R: IntoRendered,
         F: Fn(MessageRender, Host) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+        Fut: Future<Output = Result<R>> + Send + 'static,
     {
         put(
             &mut self.registry.message_renderers,
             custom_type,
-            handler::with_host(render),
+            handler::render(render),
         );
         self
     }
 
     /// Draws custom session entries of `custom_type` (upstream `registerEntryRenderer`).
-    pub fn entry_renderer<F, Fut>(mut self, custom_type: &str, render: F) -> Self
+    pub fn entry_renderer<R, F, Fut>(mut self, custom_type: &str, render: F) -> Self
     where
+        R: IntoRendered,
         F: Fn(EntryRender, Host) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Option<Vec<String>>>> + Send + 'static,
+        Fut: Future<Output = Result<R>> + Send + 'static,
     {
         put(
             &mut self.registry.entry_renderers,
             custom_type,
-            handler::with_host(render),
+            handler::render(render),
         );
         self
     }
@@ -258,6 +271,17 @@ impl Extension {
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         self.registry.on_footer.push(handler::with_host(handle));
+        self
+    }
+
+    /// Runs with pi's new theme each time the TUI theme changes (feature `theme_changed`).
+    /// Read the current theme with [`Host::theme`].
+    pub fn on_theme_change<F, Fut>(mut self, handle: F) -> Self
+    where
+        F: Fn(Theme, Host) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.registry.on_theme.push(handler::with_host(handle));
         self
     }
 

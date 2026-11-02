@@ -2,7 +2,7 @@ use serde_json::{Map, Value, json};
 
 use crate::handler::{
     AutocompleteFn, CommandFn, CompleteFn, EventFn, FooterFn, HostFn, PrepareFn, RenderFn, RouteFn,
-    ShortcutFn, SurfaceFn, ToolFn,
+    ShortcutFn, SurfaceFn, ThemeFn, ToolFn,
 };
 use crate::protocol::PROTOCOL_VERSION;
 use crate::render::{EntryRender, MessageRender, ToolCallRender, ToolResultRender};
@@ -41,6 +41,8 @@ pub(crate) struct Registry {
     pub(crate) on_shutdown: Vec<HostFn>,
     pub(crate) on_surface: Vec<SurfaceFn>,
     pub(crate) on_footer: Vec<FooterFn>,
+    pub(crate) on_theme: Vec<ThemeFn>,
+    pub(crate) render_shells: Vec<(String, String)>,
     pub(crate) prepare: Vec<(String, PrepareFn)>,
     pub(crate) call_renderers: Vec<(String, RenderFn<ToolCallRender>)>,
     pub(crate) result_renderers: Vec<(String, RenderFn<ToolResultRender>)>,
@@ -75,7 +77,33 @@ impl Registry {
         spec.prepare_arguments |= has_key(&self.prepare, &spec.name);
         spec.render_call |= has_key(&self.call_renderers, &spec.name);
         spec.render_result |= has_key(&self.result_renderers, &spec.name);
+        if spec.render_shell.is_none() {
+            spec.render_shell = find(&self.render_shells, &spec.name);
+        }
         spec
+    }
+
+    /// `toolRenderers`: renderers of tools this extension does not add, such as built-in tools.
+    fn tool_renderers(&self) -> Vec<Value> {
+        let own = |name: &str| self.tools.iter().any(|(spec, _)| spec.name == name);
+        let mut names: Vec<&str> = keys(&self.call_renderers);
+        names.extend(keys(&self.result_renderers));
+        let mut entries: Vec<Value> = Vec::new();
+        for name in names {
+            if own(name) || entries.iter().any(|entry| entry["toolName"] == name) {
+                continue;
+            }
+            let mut entry = json!({
+                "toolName": name,
+                "renderCall": has_key(&self.call_renderers, name),
+                "renderResult": has_key(&self.result_renderers, name),
+            });
+            if let Some(shell) = find(&self.render_shells, name) {
+                entry["renderShell"] = json!(shell);
+            }
+            entries.push(entry);
+        }
+        entries
     }
 
     pub(crate) fn put_tool(&mut self, spec: ToolSpec, run: ToolFn) {
@@ -126,6 +154,9 @@ impl Registry {
         if !self.on_footer.is_empty() && !names.iter().any(|name| name == "footer_changed") {
             names.push("footer_changed".into());
         }
+        if !self.on_theme.is_empty() && !names.iter().any(|name| name == "theme_changed") {
+            names.push("theme_changed".into());
+        }
         names
     }
 
@@ -161,6 +192,7 @@ impl Registry {
             ("autocomplete", json!(autocomplete)),
             ("messageRenderers", json!(keys(&self.message_renderers))),
             ("entryRenderers", json!(keys(&self.entry_renderers))),
+            ("toolRenderers", json!(self.tool_renderers())),
         ];
         for (key, value) in fields {
             if value.as_array().is_some_and(|items| !items.is_empty()) {

@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use super::{Host, lines, without_nulls};
 use crate::error::Result;
 use crate::panel::PanelBuilder;
+use crate::theme::Theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -19,6 +20,22 @@ pub enum Placement {
     #[default]
     AboveEditor,
     BelowEditor,
+}
+
+/// How chat messages and the editor look (`ui.setChatStyle`, feature `ui.chatStyle`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatStyle {
+    /// Before the first line of each user message; the other lines get the same indent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_prefix: Option<String>,
+    /// Before the first line of the text of each assistant message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assistant_prefix: Option<String>,
+    /// Finished thinking blocks show the hidden thinking label.
+    pub collapse_thinking: bool,
+    /// Rounded editor corners, and side bars in the editor padding.
+    pub rounded_editor: bool,
 }
 
 /// `ui.*` requests. Dialogs fail with `Error::is_no_ui` when pi has no UI.
@@ -119,6 +136,48 @@ impl Host {
     pub async fn set_title(&self, title: &str) -> Result<()> {
         let params = json!({ "title": title });
         self.call("ui.setTitle", params).await.map(drop)
+    }
+
+    /// The text of the working indicator; `None` restores pi's own (feature `ui.working`).
+    pub async fn set_working_message(&self, message: Option<&str>) -> Result<()> {
+        let params = without_nulls(json!({ "message": message }));
+        self.call("ui.setWorkingMessage", params).await.map(drop)
+    }
+
+    /// Frames of the working indicator, drawn as they are; `None` restores pi's spinner.
+    pub async fn set_working_indicator<S: AsRef<str>>(
+        &self,
+        frames: Option<&[S]>,
+        interval_ms: Option<u64>,
+    ) -> Result<()> {
+        let frames: Option<Vec<&str>> =
+            frames.map(|frames| frames.iter().map(AsRef::as_ref).collect());
+        let params = without_nulls(json!({ "frames": frames, "intervalMs": interval_ms }));
+        self.call("ui.setWorkingIndicator", params).await.map(drop)
+    }
+
+    pub async fn set_working_visible(&self, visible: bool) -> Result<()> {
+        let params = json!({ "visible": visible });
+        self.call("ui.setWorkingVisible", params).await.map(drop)
+    }
+
+    /// The label of hidden thinking blocks; `None` restores pi's own.
+    pub async fn set_hidden_thinking_label(&self, label: Option<&str>) -> Result<()> {
+        let params = without_nulls(json!({ "label": label }));
+        self.call("ui.setHiddenThinkingLabel", params)
+            .await
+            .map(drop)
+    }
+
+    /// Message prefixes, collapsed thinking, and the rounded editor; replaces the last style.
+    pub async fn set_chat_style(&self, style: &ChatStyle) -> Result<()> {
+        let params = serde_json::to_value(style).unwrap_or_default();
+        self.call("ui.setChatStyle", params).await.map(drop)
+    }
+
+    /// The theme the TUI draws with (feature `ui.getTheme`).
+    pub async fn theme(&self) -> Result<Theme> {
+        self.call_as("ui.getTheme", json!({})).await
     }
 
     pub async fn set_editor_text(&self, text: &str) -> Result<()> {

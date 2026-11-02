@@ -4,6 +4,64 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// A zero-width token for drawn lines: pi shows its spinner frame in its place on each frame
+/// (feature `render.spinner`). Styles around the token color the frame.
+pub const SPINNER: &str = "\x1b_pi:spinner\x07";
+
+/// The answer of a renderer: the lines, and when pi should ask again for the same inputs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Rendered {
+    pub lines: Vec<String>,
+    /// `refreshMs` (feature `render.refresh`): pi asks again after this time; at least 250.
+    pub refresh_ms: Option<u64>,
+}
+
+impl Rendered {
+    pub fn new(lines: Vec<String>) -> Self {
+        Self {
+            lines,
+            refresh_ms: None,
+        }
+    }
+
+    /// Asks pi to draw the row again after `ms` milliseconds, for example for a clock.
+    pub fn refresh_after(mut self, ms: u64) -> Self {
+        self.refresh_ms = Some(ms);
+        self
+    }
+
+    pub(crate) fn to_value(&self) -> Value {
+        let mut answer = serde_json::json!({ "lines": self.lines });
+        if let Some(ms) = self.refresh_ms {
+            answer["refreshMs"] = ms.into();
+        }
+        answer
+    }
+}
+
+impl From<Vec<String>> for Rendered {
+    fn from(lines: Vec<String>) -> Self {
+        Self::new(lines)
+    }
+}
+
+/// What a renderer returns: `Option<Vec<String>>` (`None` draws no lines) or [`Rendered`].
+pub trait IntoRendered {
+    fn into_rendered(self) -> Option<Rendered>;
+}
+
+impl IntoRendered for Option<Vec<String>> {
+    fn into_rendered(self) -> Option<Rendered> {
+        self.map(Rendered::new)
+    }
+}
+
+impl IntoRendered for Rendered {
+    fn into_rendered(self) -> Option<Rendered> {
+        Some(self)
+    }
+}
+
 /// The render context of a tool row (upstream `ToolRenderContext` without its functions).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
