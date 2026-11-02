@@ -79,6 +79,8 @@ pub struct Outcome {
     pub display_content: Option<String>,
     /// PermissionDenied `retry: true`.
     pub retry: bool,
+    /// PermissionRequest deny with `interrupt: true`.
+    pub interrupt: bool,
     /// Elicitation and ElicitationResult `action` with optional `content`.
     pub elicitation: Option<(String, Option<Value>)>,
     /// WorktreeCreate path: `worktreePath`, or the last stdout line of a command hook.

@@ -21,6 +21,7 @@ pub async fn input(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         state.stop_blocks = 0;
         state.settled_at = None;
         state.turn += 1;
+        state.prompt_id = Some(crate::events::worktree::uuid_like(&event.text));
     }
     let d = Dispatch::new(
         "UserPromptSubmit",
@@ -28,6 +29,9 @@ pub async fn input(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         json!({ "prompt": event.text }),
     );
     let outcomes = dispatch(&rt, ev.host(), ev.snapshot(), d).await;
+    for title in outcomes.iter().filter_map(|o| o.session_title.as_deref()) {
+        let _ = ev.host().set_session_name(title).await;
+    }
     if let Some(reason) = first_stop(&outcomes)
         .map(|r| stop_text(&r))
         .or_else(|| first_block(&outcomes))
@@ -61,6 +65,7 @@ pub async fn agent_end(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         .rev()
         .find(|m| m.get("role").and_then(Value::as_str) == Some("assistant"));
     let mut state = rt.lock();
+    state.last_response_at = Some(std::time::Instant::now());
     state.last_assistant = last.map(|m| {
         let content = m
             .get("content")
@@ -126,7 +131,15 @@ pub async fn agent_settled(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply>
             state.last_error.clone(),
         )
     };
-    let payload = json!({ "stop_hook_active": active, "last_assistant_message": last });
+    let background: Vec<Value> = rt
+        .lock()
+        .active_work
+        .iter()
+        .filter(|(_, text)| !text.trim().is_empty())
+        .map(|(source, text)| json!({ "source": source, "description": text }))
+        .collect();
+    let payload = json!({ "stop_hook_active": active, "last_assistant_message": last,
+        "background_tasks": background, "session_crons": [] });
     let outcomes = match error {
         Some(error) => {
             let kind = error_type(&error);
@@ -230,6 +243,23 @@ pub const SUBAGENT_CHANNELS: &[(&str, bool)] = &[
 ];
 
 pub async fn watch_subagents(rt: Arc<Runtime>, host: Host) -> Result<()> {
+    let mut work = host.subscribe("compactor:active-work").await?;
+    let work_rt = rt.clone();
+    tokio::spawn(async move {
+        while let Some(data) = work.recv().await {
+            let id = data
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("background")
+                .to_owned();
+            let text = data
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            work_rt.lock().active_work.insert(id, text);
+        }
+    });
     for (channel, start) in SUBAGENT_CHANNELS {
         let mut subscription = host.subscribe(channel).await?;
         let (rt, host) = (rt.clone(), host.clone());
@@ -264,6 +294,7 @@ pub async fn subagent_event(rt: &Arc<Runtime>, host: &Host, start: bool, data: &
         payload["stop_hook_active"] = json!(false);
         payload["last_assistant_message"] =
             json!(field(&["lastAssistantMessage", "result", "output"]));
+        payload["agent_transcript_path"] = json!(field(&["sessionFile", "transcriptPath"]));
     }
     let outcomes = dispatch(
         rt,

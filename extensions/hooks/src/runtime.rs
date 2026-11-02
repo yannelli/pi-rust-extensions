@@ -40,6 +40,16 @@ pub struct State {
     pub added_dirs: Vec<PathBuf>,
     /// Tool calls this extension blocked.
     pub own_blocks: HashSet<String>,
+    /// Id of the user prompt being processed (`prompt_id`).
+    pub prompt_id: Option<String>,
+    /// When each tool call left `tool_call`, for `duration_ms`.
+    pub tool_started: HashMap<String, std::time::Instant>,
+    /// MCP server name -> its config source, from `getMcpServers`.
+    pub mcp_sources: Option<HashMap<String, String>>,
+    /// `compactor:active-work` texts by publisher id, for Stop `background_tasks`.
+    pub active_work: HashMap<String, String>,
+    /// When the last assistant response ended.
+    pub last_response_at: Option<std::time::Instant>,
     /// When the agent last settled with no follow-up; cleared by user input.
     pub settled_at: Option<std::time::Instant>,
     pub flag_trust_all: bool,
@@ -204,6 +214,9 @@ impl Runtime {
         state.stop_hook_active = false;
         state.last_assistant = None;
         state.last_error = None;
+        state.prompt_id = None;
+        state.tool_started.clear();
+        state.mcp_sources = None;
     }
 
     /// Asks the user about an untrusted hook. `true` when it may run now.

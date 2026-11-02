@@ -9,6 +9,8 @@ pub struct ToolDecision {
     pub permission: Option<(Permission, String)>,
     pub updated_input: Option<Value>,
     pub context: Vec<String>,
+    /// A PermissionRequest deny asked to stop the run.
+    pub interrupt: bool,
 }
 
 pub fn fold_tool(outcomes: &[Outcome]) -> ToolDecision {
@@ -27,6 +29,7 @@ pub fn fold_tool(outcomes: &[Outcome]) -> ToolDecision {
         permission,
         updated_input: outcomes.iter().rev().find_map(|o| o.updated_input.clone()),
         context: contexts(outcomes),
+        interrupt: outcomes.iter().any(|o| o.interrupt),
     }
 }
 
@@ -49,9 +52,16 @@ pub fn first_block(outcomes: &[Outcome]) -> Option<String> {
 pub fn contexts(outcomes: &[Outcome]) -> Vec<String> {
     outcomes
         .iter()
-        .filter_map(|o| o.context.clone())
+        .filter_map(|o| o.context.as_deref())
         .filter(|c| !c.trim().is_empty())
+        .map(escape_reminders)
         .collect()
+}
+
+/// Claude gives the model `<system-reminder>` tags in hook context with `<` as `&lt;`.
+pub fn escape_reminders(text: &str) -> String {
+    text.replace("<system-reminder>", "&lt;system-reminder>")
+        .replace("</system-reminder>", "&lt;/system-reminder>")
 }
 
 /// `stopReason` text, or a default.
@@ -60,5 +70,22 @@ pub fn stop_text(reason: &str) -> String {
         "A hook stopped processing".into()
     } else {
         reason.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reminder_tags_are_escaped() {
+        let out = Outcome {
+            context: Some("a <system-reminder>x</system-reminder>".into()),
+            ..Outcome::default()
+        };
+        assert_eq!(
+            contexts(&[out]),
+            ["a &lt;system-reminder>x&lt;/system-reminder>"]
+        );
     }
 }

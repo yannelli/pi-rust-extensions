@@ -69,7 +69,13 @@ async fn setup(rt: &Arc<Runtime>, host: &Host, snap: &Snapshot, init_only: bool)
 /// SessionStart: context is held for the next `before_agent_start`.
 pub async fn run_session_start(rt: &Arc<Runtime>, host: &Host, snap: &Snapshot, source: &str) {
     let model = snap.model.as_ref().map(|m| m.id.clone());
-    let payload = json!({ "source": source, "model": model });
+    let mut payload = json!({ "source": source, "model": model });
+    if matches!(source, "resume" | "fork")
+        && let Some(cost) = resume_cost(host, snap).await
+        && let (Value::Object(map), Value::Object(cost)) = (&mut payload, cost)
+    {
+        map.extend(cost);
+    }
     let outcomes = dispatch(
         rt,
         host,
@@ -210,6 +216,18 @@ pub async fn model_select(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> 
         "source": source,
     });
     let (host, snap) = (ev.host(), ev.snapshot());
+    let mut payload = payload;
+    let (rate, pricing) = cache_write_rate(host, &provider, &id).await;
+    let tokens = context_tokens(snap);
+    let warm = rt
+        .lock()
+        .last_response_at
+        .is_some_and(|at| at.elapsed().as_secs() < CACHE_TTL_SECS);
+    payload["context_tokens"] = json!(tokens);
+    payload["prompt_cache_warm"] = json!(warm);
+    payload["cache_ttl"] = json!("5m");
+    payload["estimated_cache_write_usd"] = json!(usd(tokens, rate));
+    payload["pricing"] = json!(pricing);
     if !restore && let Some(reason) = pre_model_switch(&rt, host, snap, &id, payload.clone()).await
     {
         let _ = host
@@ -261,4 +279,61 @@ async fn pre_model_switch(
         }
         _ => None,
     }
+}
+
+const CACHE_TTL_SECS: u64 = 300;
+/// USD per million cache-write tokens when the model has no known price.
+const DEFAULT_CACHE_WRITE: f64 = 3.75;
+
+fn context_tokens(snap: &Snapshot) -> u64 {
+    snap.context_usage
+        .as_ref()
+        .and_then(|u| u.get("tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn usd(tokens: u64, rate: f64) -> f64 {
+    (tokens as f64 * rate / 1_000_000.0 * 10_000.0).round() / 10_000.0
+}
+
+/// The model's `cost.cacheWrite` (USD per million tokens) and `"catalog"`, else the default rate.
+async fn cache_write_rate(host: &Host, provider: &str, id: &str) -> (f64, &'static str) {
+    let model = host.find_model(provider, id).await.ok().flatten();
+    let rate = model
+        .as_ref()
+        .and_then(|m| m.extra.get("cost"))
+        .and_then(|c| c.get("cacheWrite"))
+        .and_then(Value::as_f64)
+        .filter(|r| *r > 0.0);
+    match rate {
+        Some(rate) => (rate, "catalog"),
+        None => (DEFAULT_CACHE_WRITE, "default"),
+    }
+}
+
+/// SessionStart resume fields, when the transcript has an assistant response.
+async fn resume_cost(host: &Host, snap: &Snapshot) -> Option<Value> {
+    let branch = host.branch(None).await.ok()?;
+    let last = branch
+        .iter()
+        .rev()
+        .filter_map(|e| e.get("message"))
+        .find(|m| m.get("role").and_then(Value::as_str) == Some("assistant"))?;
+    let at = last.get("timestamp").and_then(Value::as_u64)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    let seconds = now.saturating_sub(at) / 1000;
+    let tokens = context_tokens(snap);
+    let (rate, _) = match &snap.model {
+        Some(m) => cache_write_rate(host, &m.provider, &m.id).await,
+        None => (DEFAULT_CACHE_WRITE, "default"),
+    };
+    Some(json!({
+        "seconds_since_last_response": seconds,
+        "context_tokens": tokens,
+        "prompt_cache_likely_expired": seconds >= CACHE_TTL_SECS,
+        "estimated_cache_write_usd": usd(tokens, rate),
+    }))
 }

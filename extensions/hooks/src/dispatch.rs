@@ -226,6 +226,9 @@ fn hook_input(snap: &Snapshot, d: &Dispatch, def: &HookDef, rt: &Runtime) -> Str
     if let (Value::Object(base), Value::Object(extra)) = (&mut payload, &d.payload) {
         base.extend(extra.clone());
         base.insert("hook_event_name".into(), json!(def.event));
+        if !def.source.is_codex() {
+            claude_common(base, snap, def, rt);
+        }
         if def.source.is_codex() {
             if let Some(Value::Object(codex)) = &d.codex_payload {
                 base.extend(codex.clone());
@@ -238,6 +241,54 @@ fn hook_input(snap: &Snapshot, d: &Dispatch, def: &HookDef, rt: &Runtime) -> Str
         }
     }
     payload.to_string()
+}
+
+/// Claude common fields: `prompt_id`, `effort`, `session_title`, and `mcp_server` for MCP tools.
+fn claude_common(
+    base: &mut serde_json::Map<String, Value>,
+    snap: &Snapshot,
+    def: &HookDef,
+    rt: &Runtime,
+) {
+    let state = rt.lock();
+    if let Some(id) = &state.prompt_id {
+        base.insert("prompt_id".into(), json!(id));
+    }
+    let effort = snap
+        .thinking_level
+        .as_deref()
+        .and_then(|level| match level {
+            "minimal" | "low" => Some("low"),
+            "medium" | "high" | "xhigh" => Some(level),
+            _ => None,
+        });
+    let tool_context =
+        TOOL_EVENTS.contains(&def.event.as_str()) || matches!(&*def.event, "Stop" | "SubagentStop");
+    if let Some(level) = effort.filter(|_| tool_context) {
+        base.insert("effort".into(), json!({ "level": level }));
+    }
+    if matches!(&*def.event, "SessionStart" | "UserPromptSubmit")
+        && let Some(title) = &snap.session_name
+    {
+        base.insert("session_title".into(), json!(title));
+    }
+    let server = base
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .and_then(|name| name.strip_prefix("mcp__"))
+        .and_then(|rest| rest.split_once("__"))
+        .map(|(server, _)| server.to_owned());
+    if let Some(server) = server.filter(|_| TOOL_EVENTS.contains(&def.event.as_str())) {
+        let source = state
+            .mcp_sources
+            .as_ref()
+            .and_then(|m| m.get(&server).cloned())
+            .unwrap_or_else(|| "user".into());
+        base.insert(
+            "mcp_server".into(),
+            json!({ "name": server, "source": source }),
+        );
+    }
 }
 
 fn spawn_async(rt: Arc<Runtime>, cx: Arc<Context>, def: HookDef, input: String) {
