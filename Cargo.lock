@@ -832,6 +832,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-deferred"
+version = "0.4.1"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-e2e"
 version = "0.4.1"
 dependencies = [
@@ -1051,6 +1063,7 @@ dependencies = [
  "pi-ext-compactor",
  "pi-ext-computer-use",
  "pi-ext-context-include",
+ "pi-ext-deferred",
  "pi-ext-e2e",
  "pi-ext-goal",
  "pi-ext-hooks",

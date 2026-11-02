@@ -31,6 +31,7 @@ pi-ext-hooks = { path = "../../extensions/hooks" }
 pi-ext-permissions = { path = "../../extensions/permissions" }
 pi-ext-claude-marketplace = { path = "../../extensions/claude-marketplace" }
 pi-ext-context-include = { path = "../../extensions/context-include" }
+pi-ext-deferred = { path = "../../extensions/deferred" }
 pi-ext-web-search = { path = "../../extensions/web-search" }
 pi-ext-chrome = { path = "../../extensions/chrome" }
 pi-ext-computer-use = { path = "../../extensions/computer-use" }
