@@ -3,9 +3,10 @@ use std::sync::Arc;
 use pi_ext_sdk::event_types::{SessionShutdownEvent, SessionStartEvent};
 use pi_ext_sdk::prelude::*;
 
-use crate::decide::{contexts, first_block, first_stop, stop_text};
+use crate::decide::{contexts, first_block, first_stop, fold_tool, stop_text};
 use crate::dispatch::{Dispatch, dispatch};
 use crate::matcher::Target;
+use crate::output::Permission;
 use crate::runtime::Runtime;
 
 pub async fn session_start(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
@@ -38,7 +39,8 @@ pub async fn run_session_start(rt: &Arc<Runtime>, host: &Host, snap: &Snapshot, 
         if let Some(title) = &outcome.session_title {
             let _ = host.set_session_name(title).await;
         }
-        if let Some(message) = outcome.initial_user_message.clone() {
+        let print_mode = source == "startup" && !host.has_ui();
+        if let Some(message) = outcome.initial_user_message.clone().filter(|_| print_mode) {
             let host = host.clone();
             tokio::spawn(async move {
                 if let Err(err) = host.send_user_message(message, None).await {
@@ -148,18 +150,20 @@ pub async fn model_select(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> 
     if reverting.as_deref() == Some(&format!("{provider}/{id}")) {
         return Ok(EventReply::none());
     }
+    let restore = event.get("source").and_then(Value::as_str) == Some("restore");
+    let source = match event.get("source").and_then(Value::as_str) {
+        Some("set") => "command",
+        Some("cycle") => "picker",
+        Some("restore") => "resume",
+        _ => "sdk",
+    };
     let payload = json!({
-        "model": id, "provider": provider,
-        "previous_model": previous.as_ref().map(|(_, id)| id), "previous_provider": previous.as_ref().map(|(p, _)| p),
-        "source": event.get("source"),
+        "from_model": previous.as_ref().map(|(_, id)| id), "to_model": id,
+        "requested_model": if restore { json!(null) } else { json!(id) },
+        "source": source,
     });
     let (host, snap) = (ev.host(), ev.snapshot());
-    let pre =
-        Dispatch::new("PreModelSwitch", Target::Value(id.clone()), payload.clone()).claude_only();
-    let outcomes = dispatch(&rt, host, snap, pre).await;
-    if let Some(reason) = first_stop(&outcomes)
-        .map(|r| stop_text(&r))
-        .or_else(|| first_block(&outcomes))
+    if !restore && let Some(reason) = pre_model_switch(&rt, host, snap, &id, payload.clone()).await
     {
         let _ = host
             .notify_warning(format!("Model switch blocked by hook: {reason}"))
@@ -179,4 +183,37 @@ pub async fn model_select(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> 
     let outcomes = dispatch(&rt, host, snap, post).await;
     rt.lock().held_context.extend(contexts(&outcomes));
     Ok(EventReply::none())
+}
+
+/// The block reason, if PreModelSwitch hooks refuse the switch (deny > ask > allow).
+async fn pre_model_switch(
+    rt: &Arc<Runtime>,
+    host: &Host,
+    snap: &Snapshot,
+    id: &str,
+    payload: Value,
+) -> Option<String> {
+    let pre = Dispatch::new("PreModelSwitch", Target::Value(id.into()), payload).claude_only();
+    let outcomes = dispatch(rt, host, snap, pre).await;
+    if let Some(reason) = first_stop(&outcomes).map(|r| stop_text(&r)) {
+        return Some(reason);
+    }
+    let timed_out = outcomes
+        .iter()
+        .find_map(|o| o.error.as_deref().filter(|e| e.starts_with("timed out")));
+    if let Some(error) = timed_out {
+        return Some(format!("PreModelSwitch hook {error}"));
+    }
+    match fold_tool(&outcomes).permission {
+        Some((Permission::Deny, reason)) => Some(reason),
+        Some((Permission::Ask, reason)) => {
+            let allowed = host.has_ui()
+                && host
+                    .confirm(&format!("Hook: switch to {id}?"), &reason)
+                    .await
+                    .unwrap_or(false);
+            (!allowed).then_some(reason)
+        }
+        _ => None,
+    }
 }

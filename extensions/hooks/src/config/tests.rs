@@ -17,6 +17,7 @@ fn fixture() -> Fixture {
     let paths = Paths {
         claude_dir: base.join("claude"),
         codex_home: base.join("codex"),
+        codex_system: None,
         temp_dir: base.join("tmp"),
         agent_dir: None,
     };
@@ -214,4 +215,67 @@ fn claude_settings_in_home_load_once() {
     );
     let loaded = load_with(&f, true);
     assert_eq!(commands(&loaded), ["claude/global:cg", "claude/project:cl"]);
+}
+
+#[test]
+fn disable_all_hooks_follows_settings_precedence() {
+    let f = fixture();
+    write(
+        &f.paths.claude_dir.join("settings.json"),
+        &json!({ "disableAllHooks": true, "hooks": { "Stop": [{ "hooks": [{ "command": "cg" }] }] } })
+            .to_string(),
+    );
+    let plugin =
+        json!({ "hooks": { "Stop": [{ "plugin": "p@m", "hooks": [{ "command": "plug" }] }] } });
+    write(&f.agent.join("ext/hooks.json"), &plugin.to_string());
+    assert!(
+        commands(&load_with(&f, true)).is_empty(),
+        "plugin hooks follow Claude"
+    );
+    write(
+        &f.cwd.join(".claude/settings.json"),
+        r#"{"disableAllHooks":false}"#,
+    );
+    assert_eq!(
+        commands(&load_with(&f, true)),
+        ["claude/global:cg", "pi/global plugin p@m:plug"]
+    );
+}
+
+#[test]
+fn codex_layers_and_hook_state() {
+    let f = fixture();
+    let system = f.cwd.parent().unwrap().join("etc-codex");
+    let paths = Paths {
+        codex_system: Some(system.clone()),
+        ..f.paths.clone()
+    };
+    let f = Fixture { paths, ..f };
+    write(&system.join("hooks.json"), &hooks_json("sys"));
+    write(&f.paths.codex_home.join("hooks.json"), &hooks_json("xg"));
+    write(&f.cwd.join(".codex/hooks.json"), &hooks_json("root"));
+    let nested = f.cwd.join("a/b");
+    write(&nested.join(".codex/hooks.json"), &hooks_json("nested"));
+    let key = format!(
+        "{}:pre_tool_use:0:0",
+        f.paths.codex_home.join("hooks.json").display()
+    );
+    write(
+        &f.paths.codex_home.join("config.toml"),
+        &format!("[hooks.state.\"{key}\"]\nenabled = false\n"),
+    );
+    let loaded = load(&LoadInput {
+        paths: &f.paths,
+        agent_dir: &f.agent,
+        cwd: &nested,
+        project_trusted: true,
+    });
+    assert_eq!(
+        commands(&loaded),
+        [
+            "codex/global:sys",
+            "codex/project:root",
+            "codex/project:nested"
+        ]
+    );
 }

@@ -21,6 +21,8 @@ pub struct CommandSpec {
     pub cwd: PathBuf,
     pub env: Vec<(String, String)>,
     pub timeout: Duration,
+    /// Codex runs shell-form hooks as `$SHELL -lc` (falls back to `/bin/sh`).
+    pub login_shell: bool,
 }
 
 pub async fn run_command(spec: CommandSpec) -> RawRun {
@@ -30,7 +32,7 @@ pub async fn run_command(spec: CommandSpec) -> RawRun {
             command.args(args);
             command
         }
-        None => shell_command(&spec.command),
+        None => shell_command(&spec.command, spec.login_shell),
     };
     if spec.cwd.is_dir() {
         command.current_dir(&spec.cwd);
@@ -112,14 +114,19 @@ impl Drop for GroupGuard {
 }
 
 #[cfg(unix)]
-fn shell_command(line: &str) -> Command {
-    let mut command = Command::new("sh");
-    command.arg("-c").arg(line);
+fn shell_command(line: &str, login: bool) -> Command {
+    let shell = std::env::var("SHELL").ok().filter(|s| !s.trim().is_empty());
+    let mut command = match (login, shell) {
+        (true, Some(shell)) => Command::new(shell),
+        (true, None) => Command::new("/bin/sh"),
+        (false, _) => Command::new("sh"),
+    };
+    command.arg(if login { "-lc" } else { "-c" }).arg(line);
     command
 }
 
 #[cfg(windows)]
-fn shell_command(line: &str) -> Command {
+fn shell_command(line: &str, _login: bool) -> Command {
     let mut command = Command::new("cmd");
     command
         .args(["/d", "/s", "/c"])
@@ -195,6 +202,7 @@ mod tests {
             cwd: std::env::temp_dir(),
             env: vec![("HOOK_TEST".into(), "v".into())],
             timeout: Duration::from_secs(timeout),
+            login_shell: false,
         }
     }
 

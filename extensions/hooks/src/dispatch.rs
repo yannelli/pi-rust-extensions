@@ -7,20 +7,43 @@ use serde_json::{Value, json};
 use tokio::task::JoinSet;
 
 use crate::exec::{self, Context};
-use crate::matcher::{Target, if_rule_matches, matches};
-use crate::model::{HookDef, Source};
+use crate::matcher::{Target, if_rule_matches, matches_event};
+use crate::model::{HookDef, Source, canonical};
 use crate::output::{Interpret, Outcome, RawRun, interpret, terminal_sequence_allowed};
 use crate::runtime::Runtime;
 use crate::trust::LastRun;
 
-const NO_MATCHER: &[&str] = &["UserPromptSubmit", "PostToolBatch", "Stop", "Interrupt"];
+const NO_MATCHER: &[&str] = &[
+    "UserPromptSubmit",
+    "PostToolBatch",
+    "Stop",
+    "Interrupt",
+    "PreModelRequest",
+    "PostModelRequest",
+];
 const TURN_EVENTS: &[&str] = &[
     "UserPromptSubmit",
     "PreToolUse",
     "PermissionRequest",
     "PostToolUse",
     "Stop",
+    "PreCompact",
+    "PostCompact",
+    "SubagentStart",
+    "SubagentStop",
+    "Interrupt",
+    "PreModelRequest",
+    "PostModelRequest",
 ];
+const TOOL_EVENTS: &[&str] = &[
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PermissionRequest",
+    "PermissionDenied",
+];
+/// Claude caps each context string and plain stdout at 10,000 characters.
+const CLAUDE_CONTEXT_LIMIT: usize = 10_000;
 
 /// One hook event to fire. `claude` names the event for Claude and pi hooks, `codex` for Codex hooks.
 pub struct Dispatch {
@@ -30,6 +53,8 @@ pub struct Dispatch {
     /// Claude tool name and hook `tool_input`, for `if` rules.
     pub tool: Option<(String, Value)>,
     pub payload: Value,
+    /// Fields that replace `payload` fields for Codex hooks.
+    pub codex_payload: Option<Value>,
 }
 
 impl Dispatch {
@@ -40,6 +65,7 @@ impl Dispatch {
             target,
             tool: None,
             payload,
+            codex_payload: None,
         }
     }
 
@@ -75,13 +101,16 @@ pub async fn dispatch(
     d: Dispatch,
 ) -> Vec<Outcome> {
     rt.ensure_loaded(host, snap).await;
-    let selected = select(rt, &d);
+    let selected = select(rt, &d, Path::new(&snap.cwd));
     let mut runnable = Vec::new();
     for def in selected {
         if !rt.resolve_trust(host, &def).await {
             continue;
         }
-        if def.bool_field("once") && !rt.lock().ran_once.insert(def.hash.clone()) {
+        if def.source == Source::Pi
+            && def.bool_field("once")
+            && rt.lock().ran_once.contains(&def.hash)
+        {
             continue;
         }
         runnable.push(def);
@@ -105,7 +134,8 @@ pub async fn dispatch(
     let mut sync_count = 0;
     for def in runnable {
         let input = hook_input(snap, &d, &def, rt);
-        if def.is_async() {
+        let sync_end = def.source.is_codex() && def.event == "SessionEnd";
+        if def.is_async() && !sync_end {
             spawn_async(rt.clone(), cx.clone(), def, input);
             continue;
         }
@@ -139,9 +169,10 @@ pub async fn dispatch(
         if let Some(error) = &outcome.error {
             pi_ext_sdk::warn!("hooks: {def}: {error}");
         }
-        if def.source.is_codex() {
-            outcome.context = outcome.context.map(|c| spill_context(rt, &cx, &def, c));
+        if def.bool_field("once") && raw.code == Some(0) && outcome.block.is_none() {
+            rt.lock().ran_once.insert(def.hash.clone());
         }
+        cap_outcome(rt, &cx, &def, &mut outcome);
         universal(host, &outcome).await;
         runs.push((def.hash.clone(), last_run(&raw, &outcome, elapsed)));
         outcomes.push(outcome);
@@ -150,20 +181,23 @@ pub async fn dispatch(
     outcomes
 }
 
-fn select(rt: &Runtime, d: &Dispatch) -> Vec<HookDef> {
+fn select(rt: &Runtime, d: &Dispatch, cwd: &Path) -> Vec<HookDef> {
+    let mut seen = std::collections::HashSet::new();
     rt.hooks()
         .into_iter()
         .filter(|def| d.event_for(def.source) == Some(def.event.as_str()))
         .filter(|def| {
             NO_MATCHER.contains(&def.event.as_str())
-                || matches(def.source, def.matcher.as_deref(), &d.target)
+                || matches_event(def.source, &def.event, def.matcher.as_deref(), &d.target)
         })
         .filter(|def| match (def.str_field("if"), &d.tool) {
-            (Some(rule), Some((name, input))) => if_rule_matches(rule, name, input),
+            (Some(_), _) if !TOOL_EVENTS.contains(&def.event.as_str()) => false,
+            (Some(rule), Some((name, input))) => if_rule_matches(rule, name, input, cwd),
             _ => true,
         })
         .filter(|def| !rt.is_disabled(&def.hash))
         .filter(supported)
+        .filter(|def| seen.insert((def.source.is_codex(), canonical(&def.handler).to_string())))
         .collect()
 }
 
@@ -188,7 +222,11 @@ fn hook_input(snap: &Snapshot, d: &Dispatch, def: &HookDef, rt: &Runtime) -> Str
         base.extend(extra.clone());
         base.insert("hook_event_name".into(), json!(def.event));
         if def.source.is_codex() {
-            base.insert("model".into(), json!(snap.model_ref()));
+            if let Some(Value::Object(codex)) = &d.codex_payload {
+                base.extend(codex.clone());
+            }
+            let model = snap.model.as_ref().map(|m| m.id.clone());
+            base.insert("model".into(), json!(model));
             if TURN_EVENTS.contains(&def.event.as_str()) {
                 base.insert("turn_id".into(), json!(format!("turn-{}", rt.lock().turn)));
             }
@@ -204,10 +242,16 @@ fn spawn_async(rt: Arc<Runtime>, cx: Arc<Context>, def: HookDef, input: String) 
         };
         let started = Instant::now();
         let raw = exec::run(&cx, &def, input).await;
-        let outcome = Outcome {
-            error: raw.error.clone(),
-            ..Outcome::default()
+        let label = def.summary();
+        let read = Interpret {
+            source: def.source,
+            event: &def.event,
+            tool: None,
+            label: &label,
+            on_failure_block: false,
         };
+        let mut outcome = interpret(&read, &raw);
+        cap_outcome(&rt, &cx, &def, &mut outcome);
         rt.record_runs(
             &cx.host,
             vec![(
@@ -215,8 +259,20 @@ fn spawn_async(rt: Arc<Runtime>, cx: Arc<Context>, def: HookDef, input: String) 
                 last_run(&raw, &outcome, started.elapsed()),
             )],
         );
-        if def.bool_field("asyncRewake") && raw.code == Some(2) && !raw.stderr.trim().is_empty() {
-            let message = CustomMessage::new("hooks-rewake", raw.stderr.trim())
+        if let Some(message) = &outcome.system_message {
+            let _ = cx.host.notify_warning(message.clone()).await;
+        }
+        if let Some(context) = outcome.context.filter(|c| !c.trim().is_empty()) {
+            rt.lock().held_context.push(context);
+        }
+        let rewake = [raw.stderr.trim(), raw.stdout.trim()]
+            .into_iter()
+            .find(|t| !t.is_empty());
+        if def.bool_field("asyncRewake")
+            && raw.code == Some(2)
+            && let Some(text) = rewake
+        {
+            let message = CustomMessage::new("hooks-rewake", text)
                 .deliver_as(DeliverAs::FollowUp)
                 .trigger_turn(true);
             if let Err(err) = cx.host.send_message(message).await {
@@ -224,6 +280,43 @@ fn spawn_async(rt: Arc<Runtime>, cx: Arc<Context>, def: HookDef, input: String) 
             }
         }
     });
+}
+
+/// Codex `additionalContextLimit` and the Claude 10,000-character cap: overflow goes to a file.
+fn cap_outcome(rt: &Runtime, cx: &Context, def: &HookDef, outcome: &mut Outcome) {
+    let limit = if def.source.is_codex() {
+        let tokens = def
+            .handler
+            .get("additionalContextLimit")
+            .and_then(Value::as_u64)
+            .unwrap_or(2500);
+        if tokens == 0 {
+            return;
+        }
+        tokens as usize * 4
+    } else {
+        CLAUDE_CONTEXT_LIMIT
+    };
+    let fields = [
+        &mut outcome.context,
+        &mut outcome.feedback,
+        &mut outcome.block,
+        &mut outcome.system_message,
+        &mut outcome.initial_user_message,
+    ];
+    for (index, field) in fields.into_iter().enumerate() {
+        let claude_field = matches!(index, 0 | 3 | 4);
+        if !def.source.is_codex() && !claude_field {
+            continue;
+        }
+        if let Some(text) = field.take() {
+            *field = Some(if text.chars().count() > limit {
+                spill(rt, cx, &text, def.source.is_codex(), limit)
+            } else {
+                text
+            });
+        }
+    }
 }
 
 async fn universal(host: &Host, outcome: &Outcome) {
@@ -239,31 +332,40 @@ async fn universal(host: &Host, outcome: &Outcome) {
     }
 }
 
-/// Codex `additionalContextLimit` (tokens, about 4 chars each): overflow goes to a file.
-fn spill_context(rt: &Runtime, cx: &Context, def: &HookDef, context: String) -> String {
-    let limit = def
-        .handler
-        .get("additionalContextLimit")
-        .and_then(Value::as_u64)
-        .unwrap_or(2500);
-    if limit == 0 || context.len() as u64 <= limit * 4 {
-        return context;
-    }
+fn spill(rt: &Runtime, cx: &Context, text: &str, head_and_tail: bool, limit: usize) -> String {
     let n = {
         let mut state = rt.lock();
         state.spill += 1;
         state.spill
     };
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let id = crate::model::trust_hash(
+        &cx.session_id,
+        &n.to_string(),
+        Some(&nanos.to_string()),
+        &json!(text.len()),
+    );
     let dir = rt.paths.temp_dir.join("hook_outputs").join(&cx.session_id);
-    let path = dir.join(format!("{n}.txt"));
-    if let Err(err) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, &context)) {
+    let path = dir.join(format!("{}.txt", &id[..32]));
+    if let Err(err) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, text)) {
         pi_ext_sdk::warn!("hooks: cannot write {}: {err}", path.display());
     }
-    spill_message(&path, &context)
+    spill_message(&path, text, head_and_tail, limit)
 }
 
-pub fn spill_message(path: &Path, context: &str) -> String {
-    let preview: String = context.chars().take(2000).collect();
+/// Claude previews the first 2,000 characters; Codex previews head and tail within the limit.
+pub fn spill_message(path: &Path, text: &str, head_and_tail: bool, limit: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let preview = if head_and_tail {
+        let half = (limit / 2).min(chars.len() / 2);
+        let head: String = chars[..half].iter().collect();
+        let tail: String = chars[chars.len() - half..].iter().collect();
+        format!("{head}\n[...]\n{tail}")
+    } else {
+        chars.iter().take(2000).collect()
+    };
     format!(
         "Hook output is too large; full text in {}. Preview:\n{preview}",
         path.display()

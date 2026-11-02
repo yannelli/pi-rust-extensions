@@ -46,13 +46,18 @@ fn exit_codes() {
     assert!(post.block.is_none());
     let cx = Interpret {
         source: C,
-        event: "Stop",
-        tool: None,
+        event: "PreToolUse",
+        tool: Some("Bash"),
         label: "s",
         on_failure_block: true,
     };
     let failed = interpret(&cx, &RawRun::exit(1, "", "lint failed"));
-    assert_eq!(failed.block.as_deref(), Some("lint failed"));
+    assert_eq!(
+        failed.block.as_deref(),
+        Some(
+            "PreToolUse:Bash hook error: [s]: failed; blocking because onFailure is \"block\"\nlint failed"
+        )
+    );
     let codex_fail = Interpret { source: X, ..cx };
     assert!(
         interpret(&codex_fail, &RawRun::exit(1, "", "x"))
@@ -60,9 +65,43 @@ fn exit_codes() {
             .is_none()
     );
     let timeout = interpret(&cx, &RawRun::failed("timed out after 1s"));
+    assert!(timeout.block.unwrap().contains(": timed out; blocking"));
+    let bad_json = interpret(&cx, &RawRun::exit(0, "{oops}", ""));
+    assert!(bad_json.block.is_some());
+    let stop = Interpret {
+        event: "Stop",
+        tool: None,
+        ..cx
+    };
+    assert!(interpret(&stop, &RawRun::exit(1, "", "x")).block.is_none());
+    let request = Interpret {
+        event: "PermissionRequest",
+        ..cx
+    };
+    let denied = interpret(&request, &RawRun::exit(1, "", "x"));
+    assert_eq!(denied.decision().map(|d| d.0), Some(Permission::Deny));
+}
+
+#[test]
+fn exit2_reason_prefers_json_and_codex_needs_stderr() {
+    let out = run(
+        C,
+        "Stop",
+        2,
+        r#"{"decision":"block","reason":"run tests"}"#,
+        "err",
+    );
+    assert_eq!(out.block.as_deref(), Some("run tests"));
+    assert!(run(X, "PreToolUse", 2, "", "").block.is_none());
+    assert!(run(X, "PreToolUse", 2, "", "").error.is_some());
+    let denied = run(X, "PermissionRequest", 2, "", "no");
     assert_eq!(
-        timeout.block.as_deref(),
-        Some("hook failed (timed out after 1s)")
+        denied.decision(),
+        Some((Permission::Deny, Some("no".into())))
+    );
+    assert_eq!(
+        run(X, "PostToolUse", 2, "", "redo").block.as_deref(),
+        Some("redo")
     );
 }
 
@@ -154,8 +193,50 @@ fn permission_decisions_and_precedence() {
     );
     let approve = run(C, "PreToolUse", 0, r#"{"decision":"approve"}"#, "");
     assert_eq!(approve.permission.unwrap().0, Permission::Allow);
-    let codex_ask = run(X, "PreToolUse", 0, r#"{"permissionDecision":"ask"}"#, "");
+    let spec = |body: &str| format!(r#"{{"hookSpecificOutput":{body}}}"#);
+    let codex_ask = run(
+        X,
+        "PreToolUse",
+        0,
+        &spec(r#"{"permissionDecision":"ask"}"#),
+        "",
+    );
     assert!(codex_ask.permission.is_none() && codex_ask.error.is_some());
+    let codex_allow = run(
+        X,
+        "PreToolUse",
+        0,
+        &spec(r#"{"permissionDecision":"allow"}"#),
+        "",
+    );
+    assert!(codex_allow.permission.is_none() && codex_allow.error.is_some());
+    let rewrite = spec(r#"{"permissionDecision":"allow","updatedInput":{"command":"y"}}"#);
+    let codex_rewrite = run(X, "PreToolUse", 0, &rewrite, "");
+    assert_eq!(
+        codex_rewrite.permission, None,
+        "a rewrite is not an approval"
+    );
+    assert_eq!(codex_rewrite.updated_input, Some(json!({ "command": "y" })));
+    let bare_deny = run(
+        X,
+        "PreToolUse",
+        0,
+        &spec(r#"{"permissionDecision":"deny"}"#),
+        "",
+    );
+    assert!(bare_deny.permission.is_none() && bare_deny.error.is_some());
+    let codex_approve = run(X, "PreToolUse", 0, r#"{"decision":"approve"}"#, "");
+    assert!(codex_approve.permission.is_none() && codex_approve.error.is_some());
+    let empty_block = run(X, "Stop", 0, r#"{"decision":"block"}"#, "");
+    assert!(empty_block.block.is_none() && empty_block.error.is_some());
+    let switch = run(
+        C,
+        "PreModelSwitch",
+        0,
+        &spec(r#"{"permissionDecision":"deny"}"#),
+        "",
+    );
+    assert_eq!(switch.decision().map(|d| d.0), Some(Permission::Deny));
     let codex_input = run(
         X,
         "PreToolUse",
@@ -266,8 +347,12 @@ fn json_detection_and_universal_fields() {
     assert!(json_output("{\"a\":1} trailing").is_none());
     assert!(json_output("{not json}").is_none());
     assert!(json_output("[1]").is_none());
-    let plain = run(C, "UserPromptSubmit", 0, "{not json}", "");
-    assert_eq!(plain.context.as_deref(), Some("{not json}"));
+    let broken = run(C, "UserPromptSubmit", 0, "{not json}", "");
+    assert!(broken.context.is_none() && broken.error.is_some());
+    let plain = run(C, "UserPromptSubmit", 0, "{not json", "");
+    assert_eq!(plain.context.as_deref(), Some("{not json"));
+    let missing = run(C, "Stop", 2, "", "sh: x.sh: No such file or directory");
+    assert!(missing.block.is_none());
     let out = run(
         C,
         "UserPromptSubmit",

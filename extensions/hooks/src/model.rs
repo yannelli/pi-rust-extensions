@@ -67,6 +67,8 @@ pub struct HookDef {
     pub handler: Value,
     pub plugin: Option<Plugin>,
     pub hash: String,
+    /// Matcher group and handler index in the file, for Codex `[hooks.state]` keys.
+    pub position: (usize, usize),
 }
 
 impl HookDef {
@@ -88,6 +90,7 @@ impl HookDef {
             handler,
             plugin: None,
             hash,
+            position: (0, 0),
         }
     }
 
@@ -111,11 +114,24 @@ impl HookDef {
     }
 
     pub fn timeout(&self) -> Duration {
-        let codex_short =
-            self.source.is_codex() && matches!(&*self.event, "SessionEnd" | "Interrupt");
+        let codex = self.source.is_codex();
+        let codex_short = codex && matches!(&*self.event, "SessionEnd" | "Interrupt");
+        let claude_end = !codex && self.event == "SessionEnd";
+        if !codex && self.kind() == "command" && self.is_async() {
+            return Duration::from_secs_f64(MAX_TIMEOUT_SECS);
+        }
         let default = match self.kind() {
             "prompt" => 30.0,
             _ if codex_short => 1.0,
+            _ if claude_end => 1.5,
+            _ if !codex
+                && matches!(
+                    &*self.event,
+                    "UserPromptSubmit" | "PreModelSwitch" | "PostModelSwitch"
+                ) =>
+            {
+                30.0
+            }
             _ => 600.0,
         };
         let mut secs = self
@@ -126,6 +142,8 @@ impl HookDef {
             .map(|s| s.min(MAX_TIMEOUT_SECS));
         if codex_short {
             secs = secs.map(|s| s.min(3.0));
+        } else if claude_end {
+            secs = secs.map(|s| s.clamp(1.5, 60.0));
         }
         Duration::from_secs_f64(secs.unwrap_or(default))
     }
@@ -172,6 +190,19 @@ impl HookDef {
             text.push_str(&format!("\n  sends env vars: {}", vars.join(", ")));
         }
         text
+    }
+
+    /// Codex `[hooks.state]` key: `<file>:<snake_event>:<group>:<handler>`.
+    pub fn codex_state_key(&self) -> String {
+        let mut event = String::new();
+        for (i, c) in self.event.chars().enumerate() {
+            if c.is_ascii_uppercase() && i > 0 {
+                event.push('_');
+            }
+            event.push(c.to_ascii_lowercase());
+        }
+        let (group, handler) = self.position;
+        format!("{}:{event}:{group}:{handler}", self.file.display())
     }
 
     pub fn label(&self) -> String {
@@ -308,6 +339,18 @@ mod tests {
             def(Source::Claude, "SessionEnd", long).timeout().as_secs(),
             10
         );
+        let end = def(Source::Claude, "SessionEnd", json!({ "command": "x" }));
+        assert_eq!(end.timeout().as_millis(), 1500);
+        let huge = json!({ "command": "x", "timeout": 600 });
+        assert_eq!(def(Source::Pi, "SessionEnd", huge).timeout().as_secs(), 60);
+        let ups = def(
+            Source::Claude,
+            "UserPromptSubmit",
+            json!({ "command": "x" }),
+        );
+        assert_eq!(ups.timeout().as_secs(), 30);
+        let bg = json!({ "command": "x", "async": true, "timeout": 5 });
+        assert_eq!(def(Source::Claude, "Stop", bg).timeout().as_secs(), 86_400);
         let prompt = json!({ "type": "prompt", "prompt": "p" });
         assert_eq!(def(Source::Pi, "Stop", prompt).timeout().as_secs(), 30);
     }

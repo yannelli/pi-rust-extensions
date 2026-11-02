@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 pub struct Paths {
     pub claude_dir: PathBuf,
     pub codex_home: PathBuf,
+    /// Codex system layer, `/etc/codex` on Unix.
+    pub codex_system: Option<PathBuf>,
     pub temp_dir: PathBuf,
     /// Overrides the agent dir from `initialize`.
     pub agent_dir: Option<PathBuf>,
@@ -23,6 +25,7 @@ impl Paths {
             codex_home: var("CODEX_HOME")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| home.join(".codex")),
+            codex_system: cfg!(unix).then(|| PathBuf::from("/etc/codex")),
             temp_dir: std::env::temp_dir(),
             agent_dir: None,
         }

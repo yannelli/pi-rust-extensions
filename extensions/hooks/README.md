@@ -1,8 +1,8 @@
 # hooks
 
-Created 2026-10-29. Last updated 2026-10-30.
+Created 2026-10-29. Last updated 2026-11-02.
 
-Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both tools and a pi-native hooks file, maps pi events onto hook events, runs the matching handlers, and applies their decisions to pi. The contract it follows is `research/hooks.md` (Claude Code and Codex docs read 2026-10-29).
+Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both tools and a pi-native hooks file, maps pi events onto hook events, runs the matching handlers, and applies their decisions to pi. It follows the Claude Code hooks reference (code.claude.com/docs/en/hooks) and the Codex hooks docs (developers.openai.com/codex/hooks), read 2026-11-02.
 
 ## Commands and flags
 
@@ -44,14 +44,15 @@ The extension registers no tools.
 | Source | Global | Project |
 | --- | --- | --- |
 | Claude | `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` | `<root>/.claude/settings.json`, `<root>/.claude/settings.local.json` |
-| Codex | `$CODEX_HOME` (else `~/.codex`) `hooks.json` and `config.toml` | `<root>/.codex/hooks.json`, `<root>/.codex/config.toml` |
+| Codex | `/etc/codex` (Unix), then `$CODEX_HOME` (else `~/.codex`): `hooks.json` and `config.toml` | Each `.codex/hooks.json` and `.codex/config.toml` from the git root down to the cwd |
 | pi | `<agentDir>/ext/hooks.json` | `<cwd>/.pi/ext/hooks.json` |
 
 - `<root>` is the session cwd when it holds `.claude` (or `.codex`), else the nearest parent directory with `.git`, else the cwd. `CLAUDE_PROJECT_DIR` is the Claude `<root>`.
 - Hooks from all files merge.
 - Project files of all three sources load only when the ctx snapshot says `isProjectTrusted: true`. Otherwise the extension skips them and shows one warning per session that lists the skipped files. Options in an untrusted project `.pi/ext/hooks.json` are skipped too.
-- `disableAllHooks: true` in any loaded Claude file turns off the Claude source.
-- Codex `[features] hooks = false` (or `codex_hooks = false`) turns off the Codex source. A project `config.toml` value overrides the global one.
+- `disableAllHooks` follows Claude settings precedence: the value in the most specific loaded file wins (local, then project, then user). A project `false` overrides a user `true`. When it is `true`, pi-native groups with a `plugin` id are off too, because they come from Claude Code plugins.
+- Codex `[features] hooks = false` (or `codex_hooks = false`) turns off the Codex source. The most specific layer that sets it wins.
+- Codex `[hooks.state."<file>:<snake_event>:<group>:<handler>"] enabled = false` in the user `config.toml` turns off one Codex hook, as Codex `/hooks` does. `trusted_hash` is not read; pi uses its own trust list.
 - Codex inline hooks in `config.toml` (`[[hooks.<Event>]]` with `[[hooks.<Event>.hooks]]`) merge with `hooks.json` of the same layer, with a log warning.
 - pi-native files use the Claude settings shape and Claude semantics. Matcher groups can carry `plugin`, `pluginRoot`, and `pluginData` (written by `claude-marketplace`). The hook gets `CLAUDE_PLUGIN_ROOT`, `PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and `PLUGIN_DATA` from them, and `/hooks` shows the plugin id.
 
@@ -80,21 +81,22 @@ Each hook has a hash: sha256 hex of the canonical JSON (sorted keys) `{ file, ev
 
 | pi event | Hook events | Effect |
 | --- | --- | --- |
-| `session_start` | SessionStart (`startup`, `resume` for reload and resume, `clear` for new, `fork`) | Reloads config. `additionalContext` and plain stdout are held for the next `before_agent_start`. `sessionTitle` sets the session name. `initialUserMessage` is sent as a user message. |
+| `session_start` | SessionStart (`startup`, `resume` for reload and resume, `clear` for new, `fork`) | Reloads config. `additionalContext` and plain stdout are held for the next `before_agent_start`. `sessionTitle` sets the session name. `initialUserMessage` is sent as a user message only on `startup` without a UI (print mode). |
 | `session_shutdown` | SessionEnd (`prompt_input_exit` for quit, `clear`, `resume`, else `other`; Codex `other`) | Advisory. |
 | `input` (interactive and rpc) | UserPromptSubmit | Block (exit 2, `decision: "block"`, `continue: false`) answers `handled` and shows the reason. Context transforms the text to `text + "\n\n" + context`. Resets `stop_hook_active`. |
 | `before_agent_start` | none | Delivers held context once as `{ message: { customType: "hooks-context", content, display: false } }`. |
-| `tool_call` | PreToolUse, then PermissionRequest (unless PreToolUse allowed or denied) | Deny gives `{ block: true, reason }`. Precedence: deny > defer > ask > allow. `ask` asks with `ui.confirm`; without a UI the call is blocked. `updatedInput` replaces the whole input (the patch removes keys the hook dropped). `additionalContext` is appended to the tool result. `continue: false` blocks with `stopReason`. |
-| `tool_result` | PostToolUse, or PostToolUseFailure when `isError` (Claude and pi; Codex gets PostToolUse) | Claude `decision: "block"` appends the reason; Codex replaces the content with it. Exit 2 stderr and `additionalContext` are appended. Claude `updatedToolOutput` replaces the content (a string becomes a text block, other values become JSON text). `continue: false` appends `stopReason` and aborts the run. |
-| `turn_end` with tool results | PostToolBatch (Claude and pi) | A block reason is sent as a `hooks-feedback` steer message. |
+| `tool_call` | PreToolUse, then PermissionRequest (unless PreToolUse allowed or denied) | Deny gives `{ block: true, reason }`. Precedence: deny > defer > ask > allow. `ask` asks with `ui.confirm`; without a UI the call is blocked. `updatedInput` replaces the whole input (the patch removes keys the hook dropped). `additionalContext` is appended to the tool result. Claude `continue: false` blocks with `stopReason` and aborts the run. Codex `allow` with `updatedInput` rewrites the input but does not approve; Codex `updatedInput` for `apply_patch` (pi edit and write) is ignored with a log line. |
+| `tool_result` | PostToolUse, or PostToolUseFailure when `isError` (Claude and pi; Codex gets PostToolUse) | Claude `decision: "block"` appends the reason; Codex replaces the content with it. Exit 2 stderr and `additionalContext` are appended. Claude `updatedToolOutput` replaces the content (a string becomes a text block, other values become JSON text). Claude `continue: false` appends `stopReason` and aborts the run. Codex `continue: false` and Codex exit 2 replace the content with the reason, and the run continues. |
+| `turn_end` with tool results | PostToolBatch (Claude and pi) | `additionalContext` is sent as a `hooks-context` steer message (`display: false`) before the next model call. A block or `continue: false` shows the reason, keeps it as a `hooks-feedback` message for the next turn, and aborts the run. |
 | `agent_end` | none | Keeps the last assistant text and whether it ended with an error. |
-| `agent_settled` | Stop; StopFailure (Claude and pi) after an error; Codex Interrupt when aborted | A Stop block sends `hooks-stop` with the reason (`display: false`, `deliverAs: followUp`, `triggerTurn: true`) and sets `stop_hook_active` until the next user input. `continue: false` from any hook wins. |
+| `agent_settled` | Stop; StopFailure (Claude and pi) after an error; Codex Interrupt when aborted | A Stop block sends `hooks-stop` with the reason (`display: false`, `deliverAs: followUp`, `triggerTurn: true`) and sets `stop_hook_active` until the next user input. Claude and pi `additionalContext` continue the turn in the same way. After 8 consecutive continuations (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`), the next one is skipped and the turn ends; a tool call or user input resets the count. `continue: false` from any hook wins. |
 | `session_before_compact` | PreCompact (`manual`, else `auto`) | Block or `continue: false` cancels the compaction. |
 | `session_compact` | PostCompact, then SessionStart with source `compact` | Context is held. |
-| `model_select` | PreModelSwitch, then PostModelSwitch (Claude and pi) | pi sends `model_select` after the switch, so a block switches back to the previous model and shows the reason. PostModelSwitch context is held. |
+| `model_select` | PreModelSwitch, then PostModelSwitch (Claude and pi) | pi sends `model_select` after the switch, so a block switches back to the previous model and shows the reason. Exit 2, `decision: "block"`, `permissionDecision: "deny"`, `continue: false`, and a timeout block. `ask` asks with `ui.confirm`; without a UI it blocks. PreModelSwitch does not run for a `restore` switch. PostModelSwitch context is held. |
+| `before_provider_request`, `after_provider_response` | Codex PreModelRequest, PostModelRequest | Diagnostic only; the request does not wait. PostModelRequest `status` is `completed` for a 2xx HTTP status, else `failed` with `error: "HTTP <status>"`; `token_usage` is `null`. |
 | `pi.events` subagent channels | SubagentStart, SubagentStop | See below. |
 
-Matcher targets: tool name for tool events, `source` for SessionStart, `reason` for SessionEnd, `trigger` for Pre/PostCompact, agent type for Subagent events, error type for StopFailure (`rate_limit`, `authentication_failed`, `billing_error`, `max_output_tokens`, `server_error`, `invalid_request`, `unknown`, from the error text), model id for Pre/PostModelSwitch. UserPromptSubmit, PostToolBatch, Stop, and Interrupt ignore the matcher.
+Matcher targets: tool name for tool events, `source` for SessionStart, `reason` for SessionEnd, `trigger` for Pre/PostCompact, agent type for Subagent events, error type for StopFailure (`rate_limit`, `overloaded`, `authentication_failed`, `billing_error`, `max_output_tokens`, `model_not_found`, `server_error`, `invalid_request`, `unknown`, from the error text), model id for Pre/PostModelSwitch. UserPromptSubmit, PostToolBatch, Stop, Interrupt, PreModelRequest, and PostModelRequest ignore the matcher.
 
 ### Subagent channel contract
 
@@ -103,34 +105,43 @@ The extension subscribes to `subagents:start` and `subagent:async-started` (Suba
 ## Matchers
 
 - Claude and pi: `*`, `""`, or omitted match all. A matcher of only `[A-Za-z0-9_\- ,|]` is an exact name or a `|`/`,` list. Other matchers are unanchored regexes (`Edit.*` also matches `NotebookEdit`).
-- Codex: unanchored regex. For tools, the regex is tested against the Claude name and the Codex aliases: `Bash` also as `shell`, `exec_command`, `local_shell`; `Edit` and `Write` also as `apply_patch`.
+- Claude StopFailure: the exact-name set is only `[A-Za-z0-9_|]`, so a hyphen, space, or comma makes the matcher a regex.
+- Codex: `*` or `""` match all. A matcher of only `[A-Za-z0-9_|]` is an exact name or a `|` list; other matchers are unanchored regexes. Tool matchers test the Codex name and its aliases: `apply_patch` (pi edit and write) also as `Edit` and `Write`.
 - An invalid regex matches nothing and is logged.
-- `if` (Claude, tool events): one rule such as `Bash(git *)` or `Edit(*.ts)`. The tool name must match, and the pattern (`*` is a wildcard, a trailing `:*` is a prefix) must match the whole primary input: Bash `command`, Read/Edit/Write/LS `file_path` or `path`, Glob/Grep `pattern`.
+- `if` (Claude, tool events only; a hook with `if` on another event never runs): one rule such as `Bash(git *)` or `Edit(*.ts)`. The tool name must match, and the pattern (`*` is a wildcard, a trailing `:*` is a prefix) must match the whole primary input: Bash `command`, Read/Edit/Write/LS `file_path` (absolute, or relative to the cwd), Glob/Grep `pattern`.
+- Bash `if` rules test each subcommand: the command is split on `&&`, `||`, `;`, `|`, `&`, and newlines outside quotes, `$()` and backtick bodies are added, and leading `VAR=value` words are removed. A pattern with more than the command name (`Bash(git push *)`) runs the hook for any command with `$`, `$()`, or backticks. Unclosed quotes run the hook.
 
-Tool names: `bash` -> `Bash`, `read` -> `Read`, `edit` -> `Edit`, `write` -> `Write`, `grep` -> `Grep`, `find` -> `Glob`, `ls` -> `LS`, `powershell` -> `PowerShell`; other names (MCP tools too) are unchanged. `tool_input` adds `file_path` next to `path` for read/edit/write, and `old_string`/`new_string` for edit (top level for one edit, and in each `edits` item). `updatedInput` maps back to pi names; `file_path` wins over `path`.
+Tool names: `bash` -> `Bash`, `read` -> `Read`, `edit` -> `Edit`, `write` -> `Write`, `grep` -> `Grep`, `find` -> `Glob`, `ls` -> `LS`, `powershell` -> `PowerShell`; other names (MCP tools too) are unchanged. `tool_input` adds an absolute `file_path` (`~` and relative paths resolved against the cwd) next to `path` for read/edit/write, and `old_string`/`new_string` for edit (top level for one edit, and in each `edits` item). `updatedInput` maps back to pi names; `file_path` wins over `path`.
+
+Codex tool input: pi edit and write reach Codex hooks as `tool_name: "apply_patch"` with `tool_input: { command }`, an `*** Begin Patch` text (`*** Add File` for write, `*** Update File` with one `@@` hunk per edit for edit). Codex PostToolUse `tool_response` is the result text.
 
 ## Stdin
 
-All events: `session_id`, `transcript_path` (session file or `null`), `cwd`, `hook_event_name`, `permission_mode: "default"`. Codex also gets `model` (`provider/id`) and, on UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, and Stop, `turn_id`. Tool events: `tool_name`, `tool_input`, `tool_use_id`; PostToolUse adds `tool_response` `{ content, text, isError, details }`, PostToolUseFailure adds `error`. PostToolBatch: `tool_results`. Stop: `stop_hook_active`, `last_assistant_message`; StopFailure adds `error` and `error_details`. UserPromptSubmit: `prompt`. SessionStart: `source`, `model`. SessionEnd: `reason`. Pre/PostCompact: `trigger`; PreCompact `custom_instructions`; PostCompact `compact_summary`. Pre/PostModelSwitch: `model`, `provider`, `previous_model`, `previous_provider`, `source`. Subagent events: `agent_id`, `agent_type`; SubagentStop adds `stop_hook_active` and `last_assistant_message`.
+All events: `session_id`, `transcript_path` (session file or `null`), `cwd`, `hook_event_name`, `permission_mode: "default"`. Codex also gets `model` (the model id) and, on UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, Stop, PreCompact, PostCompact, SubagentStart, SubagentStop, Interrupt, PreModelRequest, and PostModelRequest, `turn_id`. Tool events: `tool_name`, `tool_input`, `tool_use_id`; PostToolUse adds `tool_response` `{ content, text, isError, details }`, PostToolUseFailure adds `error`. PostToolBatch: `tool_calls`, each `{ tool_name, tool_input, tool_use_id, tool_response }` with the result text. Stop: `stop_hook_active`, `last_assistant_message`; StopFailure adds `error` and `error_details`. UserPromptSubmit: `prompt`. SessionStart: `source`, `model`. SessionEnd: `reason`. Pre/PostCompact: `trigger`; PreCompact `custom_instructions`; PostCompact `compact_summary`. Pre/PostModelSwitch: `from_model`, `to_model`, `requested_model` (`null` on `resume`), `source` (`command` for a set, `picker` for a cycle, `resume` for a restore, else `sdk`). PostModelRequest: `status`, `error`, `token_usage`. Subagent events: `agent_id`, `agent_type`; SubagentStop adds `stop_hook_active` and `last_assistant_message`.
 
 ## Output rules
 
 - Stdout counts as JSON only when the trimmed text starts with `{`, ends with `}`, and parses.
-- Exit 0: JSON is applied. Exit 2: blocks on PreToolUse, UserPromptSubmit, Stop, SubagentStop, PostToolBatch, PreCompact, PreModelSwitch (Codex: PreToolUse, UserPromptSubmit, Stop, SubagentStop), with stderr as the reason; Claude JSON is still read but cannot override the block. On PostToolUse, exit 2 stderr goes to the model. Other exit codes are non-blocking errors; Claude JSON still applies.
+- Exit 0: JSON is applied. Text that starts with `{` and ends with `}` but does not parse is a non-blocking error and is not used as context.
+- Exit 2: blocks on PreToolUse, UserPromptSubmit, Stop, SubagentStop, PostToolBatch, PreCompact, PreModelSwitch (Codex: PreToolUse, PermissionRequest (deny), PostToolUse (replaces the result), UserPromptSubmit, Stop, SubagentStop). The reason is the reason of a blocking JSON decision, else stderr. Claude JSON is still read but cannot override the block. Claude and pi PostToolUse exit 2 stderr goes to the model. A Codex exit 2 with empty stderr is a non-blocking error. A Claude Stop or SubagentStop exit 2 with empty stdout and `No such file or directory` on stderr is a non-blocking error.
+- Other exit codes are non-blocking errors; Claude JSON still applies.
 - PreToolUse exit 2 reason (Claude and pi): `PreToolUse:<Tool> hook error: [<command>]: <stderr>`.
-- `permissionDecision` is read under `hookSpecificOutput` and at the top level. Legacy `decision: approve|block` maps to allow and deny. Codex `ask`, `continue`, and `stopReason` on PreToolUse mark the hook failed and the tool runs; Codex `updatedInput` needs `allow`.
+- Claude and pi `permissionDecision` is read under `hookSpecificOutput` and at the top level. Legacy `decision: approve|block` maps to allow and deny.
+- Codex reads `permissionDecision` under `hookSpecificOutput` only. These outputs mark the run failed, and the action continues: on PreToolUse `ask`, `allow` without `updatedInput`, `updatedInput` without `allow`, `deny` without a reason, `decision: "approve"`, `continue: false`, `stopReason`, `suppressOutput`; on PermissionRequest `updatedInput`, `updatedPermissions`, `interrupt: true`, `continue: false`, `stopReason`, `suppressOutput`; on PostToolUse `updatedMCPToolOutput`, `suppressOutput`; `decision: "block"` without a reason on any event. Codex PreCompact reads only the universal fields.
 - Plain stdout is context only for UserPromptSubmit, SessionStart, PostModelSwitch (Claude and pi) and SessionStart, UserPromptSubmit, SubagentStart (Codex). Codex Stop and SubagentStop need JSON.
 - Universal JSON: `continue: false` stops and wins over decisions; `systemMessage` shows a warning; `suppressOutput` has no effect; `terminalSequence` is written to the terminal when it is BEL or OSC 0/1/2/9/99/777.
-- Codex `additionalContextLimit` (tokens, default 2500, about 4 characters per token, 0 for no limit): longer context goes to `<tmp>/hook_outputs/<session_id>/<n>.txt` and the model gets the path and a 2,000-character preview.
+- Claude and pi: `additionalContext`, `systemMessage`, `initialUserMessage`, and plain stdout are capped at 10,000 characters each. Longer text goes to `<tmp>/hook_outputs/<session_id>/<id>.txt` and is replaced by the path and the first 2,000 characters.
+- Codex `additionalContextLimit` (tokens, default 2500, about 4 characters per token, 0 for no limit) applies to context, feedback, block reasons, and `systemMessage`. Longer text goes to the same directory and is replaced by the path and a head and tail preview within the limit.
 
 ## Handlers
 
-- `command`: `sh -c <command>` (`cmd /d /s /c` on Windows), or exec form without a shell when `args` is set. Stdin is the event JSON; the cwd is the session cwd. `timeout` in seconds, at most 86400 (default 600; Codex SessionEnd and Interrupt default 1, at most 3). On timeout or when the hook is cancelled, the process group gets SIGTERM, then SIGKILL after 5 seconds; on Windows, `taskkill /T /F` ends the process tree. Stdout is capped at 1 MB and stderr at 64 KB. Env: the extension env plus `CLAUDE_PROJECT_DIR`, the plugin vars, and `CLAUDE_ENV_FILE` for SessionStart. Codex `commandWindows` is ignored; `shell: "powershell"` is skipped with a log line.
-- `async: true`: runs in the background (8 at a time), cannot block, and only records its result. `asyncRewake: true`: same, and exit 2 sends stderr to the model as a `hooks-rewake` follow-up message that starts a turn.
-- `onFailure: "block"` (Claude and pi): a nonzero exit other than 2, or a timeout, blocks on events where exit 2 blocks.
-- `http` (Claude and pi): POSTs the event JSON to `url` with `headers`. `$VAR` and `${VAR}` in headers expand only for names in `allowedEnvVars`; other names become empty. The trust prompt shows the header templates and the `allowedEnvVars` names. A 2xx body is read like stdout; other statuses are non-blocking errors. Default timeout 600 seconds.
-- `prompt` (Claude and pi): asks the session model (or `model`) through `llm.complete` with the prompt, `$ARGUMENTS` replaced by the event JSON (appended when there is no placeholder). The reply must hold `{ "ok": bool, "reason"? }` or `{ "decision", "reason" }`; `ok: false` blocks with the reason. Default timeout 30 seconds.
-- `once: true`: runs once per session. `statusMessage`: shown as the `hooks` status while the handlers run.
+- `command`: `sh -c <command>` (Codex: `$SHELL -lc <command>`, else `/bin/sh -lc`; `cmd /d /s /c` on Windows), or exec form without a shell when `args` is set. In exec form, `${CLAUDE_PROJECT_DIR}`, `${CLAUDE_PLUGIN_ROOT}`, and `${CLAUDE_PLUGIN_DATA}` in `command` and `args` are replaced as plain strings. Stdin is the event JSON; the cwd is the session cwd. `timeout` in seconds, at most 86400 (default 600; Claude and pi UserPromptSubmit, PreModelSwitch, and PostModelSwitch default 30; Claude and pi SessionEnd default 1.5, from 1.5 to 60; Codex SessionEnd and Interrupt default 1, at most 3). Claude and pi `async` command hooks have no timeout. On timeout or when the hook is cancelled, the process group gets SIGTERM, then SIGKILL after 5 seconds; on Windows, `taskkill /T /F` ends the process tree. Stdout is capped at 1 MB and stderr at 64 KB. Env: the extension env plus `CLAUDE_PROJECT_DIR`, the plugin vars, and `CLAUDE_ENV_FILE` for SessionStart. Codex `commandWindows` is ignored; `shell: "powershell"` is skipped with a log line.
+- `async: true`: runs in the background (8 at a time) and cannot block. Its `additionalContext` is held for the next `before_agent_start`, and `systemMessage` shows a warning. `asyncRewake: true`: same, and exit 2 sends stderr (or stdout when stderr is empty) to the model as a `hooks-rewake` follow-up message that starts a turn. Codex SessionEnd hooks always run in the foreground.
+- `onFailure: "block"` (Claude and pi): a start failure, an exit other than 0 or 2, a timeout, an HTTP error, or JSON that does not parse blocks on events where exit 2 blocks, except Stop and SubagentStop. On PermissionRequest it denies. The reason is `<Event>:<Tool> hook error: [<command>]: failed; blocking because onFailure is "block"` (`timed out` after a timeout), then stderr.
+- `http` (Claude and pi): POSTs the event JSON to `url` with `headers`. `$VAR` and `${VAR}` in headers expand only for names in `allowedEnvVars`; other names become empty. The trust prompt shows the header templates and the `allowedEnvVars` names. A 2xx body that is empty or a JSON object is read like stdout; another 2xx body and other statuses are non-blocking errors. Default timeout 600 seconds.
+- `prompt` (Claude and pi): asks the session model (or `model`) through `llm.complete` with the prompt, `$ARGUMENTS` replaced by the event JSON (appended when there is no placeholder). The reply must hold `{ "ok": bool, "reason"? }` or `{ "decision", "reason" }`; On `ok: false`: Stop and SubagentStop continue the turn with the reason, unless the reply sets `impossible: true`; PreToolUse and PostToolUse end the turn (block plus `continue: false`), or with `continueOnBlock: true` give the reason to the model; PermissionRequest and PermissionDenied ignore it; other events block. Default timeout 30 seconds.
+- `once: true` (pi-native hooks only; Claude and Codex settings ignore it): after one run that exits 0 and does not block, the hook does not run again this session.
+- The same handler in more than one file runs once per event. `statusMessage`: shown as the `hooks` status while the handlers run.
 
 ### CLAUDE_ENV_FILE
 
@@ -144,7 +155,7 @@ SessionStart hooks get `CLAUDE_ENV_FILE=<agentDir>/ext/hooks/env/<session_id>.sh
 | `<agentDir>/ext/hooks/state.json` | `{ trusted, denied, disabled }` lists of hook hashes. `/hooks` reads `disabled` here and writes new disabled hooks to the options files. |
 | `<agentDir>/ext/hooks/last-runs.json` | Last run per hook hash: time, duration, exit code, result, stdout, stderr (4,000 characters each). |
 | `<agentDir>/ext/hooks/env/<session_id>.sh` | `CLAUDE_ENV_FILE`. |
-| `<tmp>/hook_outputs/<session_id>/` | Codex context overflow. |
+| `<tmp>/hook_outputs/<session_id>/` | Hook output over the size limits. |
 
 ## Differences from upstream and unsupported items
 
@@ -167,7 +178,14 @@ Claude Code and Codex events that do not fire, because pi has no matching event:
 | Elicitation, ElicitationResult | Claude | pi sends no MCP elicitation events to extensions. |
 
 - PermissionRequest runs on each tool call that PreToolUse did not allow or deny, because pi has no permission dialog.
-- Handler types `agent` and `mcp_tool` are skipped with a log line. Codex `prompt` and `agent` are skipped, as in Codex.
+- Handler types `agent` and `mcp_tool` (Claude and Codex) are skipped with a log line, because the extension has no call path into pi's MCP client or a subagent runner. Codex `prompt` and `agent` are skipped, as in Codex.
+- Matcher regexes use the Rust `regex` syntax, not JavaScript `RegExp`: lookaround and backreferences are invalid and match nothing.
+- The per-event handler type limits of Claude (for example, SessionStart allows only `command` and `mcp_tool`) are not checked, and prompt hooks have no limit of 12 at a time.
+- SessionEnd hooks each get their own timeout, not one shared budget. `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` is not read.
+- On Windows, shell-form hooks run with `cmd`, not Git Bash or PowerShell.
+- Codex: `trusted_hash` in `[hooks.state]`, `project_root_markers`, plugin hooks (`.codex-plugin/plugin.json` and plugin `hooks/hooks.json`), and `continue: false` on SessionStart `compact` and PostCompact are not supported.
+- Input fields that are not sent: Claude `mcp_server`, `duration_ms`, `is_interrupt`, `session_title`, `agent_transcript_path`, Stop `background_tasks` and `session_crons`, and the cost fields of SessionStart and PreModelSwitch; Codex `agent_transcript_path`.
+- Output fields that have no effect: UserPromptSubmit `sessionTitle` and `suppressOriginalPrompt`, PostToolUse `classifierContext`, Claude PermissionRequest `decision.interrupt`. Context text is not escaped for `<system-reminder>` tags.
 - Unsupported handler and settings fields: `shell: "powershell"` on non-Windows, `commandWindows`/`command_windows`, Claude `updatedPermissions`, `updatedMCPToolOutput` beyond replacing the content, SessionStart `watchPaths` and `reloadSkills`, managed settings (`allowManagedHooksOnly`, `allowedHttpHookUrls`, `httpHookAllowedEnvVars`, Codex `requirements.toml`), plugin `hooks/hooks.json` files outside the pi-native file, and skill or subagent frontmatter hooks.
 - `permission_mode` is `default`. `prompt_id`, `scratchpad_dir`, `effort`, and `agent_id`/`agent_type` in the main session are not sent.
 - SubagentStart context and SubagentStop blocks go to `pi.events` channels, because the extension cannot reach the subagent session.

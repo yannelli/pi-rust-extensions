@@ -25,6 +25,7 @@ fn env() -> Env {
     let paths = Paths {
         claude_dir: base.join("claude"),
         codex_home: base.join("codex"),
+        codex_system: None,
         temp_dir: base.join("tmp"),
         agent_dir: Some(base.join("agent")),
     };

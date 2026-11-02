@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::output::RawRun;
 
-/// POSTs the event JSON; a 2xx body is read like stdout, other statuses are non-blocking errors.
+/// POSTs the event JSON; a 2xx JSON body is read like stdout, other bodies and statuses are errors.
 pub async fn run_http(handler: &Value, body: String, timeout: Duration) -> RawRun {
     let Some(url) = handler.get("url").and_then(Value::as_str) else {
         return RawRun::failed("http hook without url");
@@ -39,7 +39,10 @@ pub async fn run_http(handler: &Value, body: String, timeout: Duration) -> RawRu
     };
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
-    if status.is_success() {
+    if status.is_success() && crate::output::json_output(&text).is_none() && !text.trim().is_empty()
+    {
+        RawRun::failed("HTTP 2xx body is not a JSON object")
+    } else if status.is_success() {
         RawRun::exit(0, text, "")
     } else {
         RawRun::exit(1, "", format!("HTTP {status}: {text}"))
