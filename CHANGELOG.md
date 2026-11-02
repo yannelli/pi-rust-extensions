@@ -2,6 +2,12 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.6] - 2026-11-02
+
+### Added
+
+- **hooks:** run mcp_tool and agent hook handlers ([0cf443c](https://github.com/yannelli/pi-rust-extensions/commit/0cf443c1cf72ba82e767400d1df546c76ae69fe7))
+
 ## [0.5.5] - 2026-11-02
 
 ### Added
