@@ -122,6 +122,7 @@ impl HookDef {
         }
         let default = match self.kind() {
             "prompt" => 30.0,
+            "agent" => 60.0,
             _ if codex_short => 1.0,
             _ if claude_end => 1.5,
             _ if !codex
@@ -153,6 +154,12 @@ impl HookDef {
         let text = match self.kind() {
             "http" => self.str_field("url").unwrap_or_default().to_owned(),
             "prompt" => format!("prompt: {}", self.str_field("prompt").unwrap_or_default()),
+            "agent" => format!("agent: {}", self.str_field("prompt").unwrap_or_default()),
+            "mcp_tool" => format!(
+                "mcp: {}/{}",
+                self.str_field("server").unwrap_or_default(),
+                self.str_field("tool").unwrap_or_default()
+            ),
             "command" => {
                 let mut text = self.str_field("command").unwrap_or_default().to_owned();
                 if let Some(args) = self.handler.get("args").and_then(Value::as_array) {
@@ -171,6 +178,11 @@ impl HookDef {
     /// The listing line plus what an http hook sends: header templates and allowed env var names.
     pub fn trust_text(&self) -> String {
         let mut text = self.to_string();
+        if self.kind() == "mcp_tool" {
+            let input = self.handler.get("input").cloned().unwrap_or(json!({}));
+            text.push_str(&format!("\n  input: {input}"));
+            return text;
+        }
         if self.kind() != "http" {
             return text;
         }
