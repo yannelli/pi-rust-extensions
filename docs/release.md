@@ -1,15 +1,23 @@
 # Release
 
-Created 2026-10-29. Last updated 2026-10-31.
+Created 2026-10-29. Last updated 2026-11-02.
 
 ## Start a release
 
-1. Set `version` in `[workspace.package]` of `Cargo.toml`.
-2. Push the tag `v<version>`, for example `v0.1.0`.
+Releases are automatic, as in pi-rust. After CI passes on `main`, `.github/workflows/release.yml` runs `cargo xtask plan`. The plan reads the conventional commits since the last `v*` tag:
 
-A tag such as `v0.2.0-rc.1` creates a GitHub prerelease. `releases/latest` excludes prereleases.
+| Commit | Bump before 1.0 | Bump from 1.0 |
+| --- | --- | --- |
+| `feat!:`, `fix!:`, or a `BREAKING CHANGE:` line | Minor | Major |
+| `feat:` | Patch | Minor |
+| `fix:`, `revert:`, `perf:` | Patch | Patch |
+| `chore:`, `ci:`, `docs:`, `test:`, `refactor:`, and others | None | None |
 
-`.github/workflows/release.yml` stops when the tag is not `v` plus the workspace version.
+When a release is due, the `plan` job runs `cargo xtask prepare <version>`. It sets the workspace version in `Cargo.toml` and each extension version in `marketplace.json`, refreshes `Cargo.lock`, and adds a section to `CHANGELOG.md`. It commits `chore(release): v<version>` to `main`, pushes the annotated tag, and builds and publishes in the same run. A push with `GITHUB_TOKEN` starts no other workflow, so the tag does not start a second run. When `main` has moved past the commit CI tested, the run skips publishing and the next CI run on `main` releases it.
+
+A workspace version without a tag is released as is. To pick a version by hand, set `version` in `[workspace.package]` and update `marketplace.json`, then merge. Pushing the tag `v<version>` yourself also releases that exact version, and `cargo xtask check-tag` stops the run when the tag is not `v` plus the workspace version.
+
+Run the workflow by hand with `bump` (`auto`, `patch`, `minor`, or `major`) and `dry_run`. A dry run builds every target and the index without a tag or a release. A tag such as `v0.2.0-rc.1` creates a GitHub prerelease. `releases/latest` excludes prereleases.
 
 ## What the workflow does
 
@@ -32,7 +40,7 @@ Before the tests, `scripts/fetch-ci-pi.py` installs the published pi host v0.9.2
 Linux builds use `cargo-zigbuild` 0.24.0 and Zig 0.15.2.
 The `index` job writes `SHA256SUMS` with `sha256sum`. It then runs `marketplace-index` to write `index.json`.
 
-The `sign` job uses the `release` environment, whose deployment policy permits `v*` tags.
+The `sign` job uses the `release` environment, whose deployment policy permits `v*` tags and the `main` branch (automatic runs deploy from `main`).
 Its `MARKETPLACE_SIGNING_KEY` secret holds an Ed25519 key in PKCS#8 PEM format.
 The job downloads the index artifact and signs the exact bytes with system OpenSSL.
 It verifies the signature against the client public key, then uploads `index.json.sig` as an artifact.
@@ -41,7 +49,7 @@ This job has no checkout or Rust build steps.
 
 The `publish` job downloads the archives, index, and signature.
 It runs `scripts/verify-release.sh <tag> dist` and creates provenance attestations for the archives and `index.json`.
-It then creates a GitHub release with generated notes and uploads the archives, index, and signature.
+It then creates a GitHub release with the `CHANGELOG.md` section as notes (generated notes when there is none) and uploads the archives, index, and signature. When the release exists, it uploads the files to it.
 
 To check an attestation, run `gh attestation verify <file> -R yannelli/pi-rust-extensions`.
 
@@ -104,7 +112,7 @@ Tests that start pi call `pi_ext_e2e::pi_bin_or_skip`:
 | `PI_BIN` set to an executable file | The test runs that pi |
 | Neither set, and the default `pi-dev` path is missing | The test prints `skipping: pi binary ...` and passes |
 
-CI (`check` on Ubuntu and macOS) and the release `check-tag` job do the following:
+CI (`check` on Ubuntu and macOS) and the release `test` job do the following:
 
 1. `python3 scripts/fetch-ci-pi.py --dest "$RUNNER_TEMP/pi-host"` takes the `yannelli/pi-rust` release `v0.9.2` asset for the runner (`aarch64-apple-darwin`, `x86_64-apple-darwin`, or the Linux musl builds).
 2. It checks the asset against the pinned SHA-256, the release API digest, and `SHA256SUMS`, and extracts only the regular file `pi`.
