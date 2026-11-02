@@ -2,6 +2,18 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.5] - 2026-11-02
+
+### Added
+
+- **compact-tui:** add a compact, animated TUI extension ([07f1a74](https://github.com/yannelli/pi-rust-extensions/commit/07f1a741c41fd948d1804022d33da1e957e2da74))
+- **sdk:** tool renderers for other tools, row spinners and refresh, theme, working indicator, and chat style ([f6a8a9b](https://github.com/yannelli/pi-rust-extensions/commit/f6a8a9bc02a70ed31683f2f64977a8929b27e312))
+- **hooks:** match Claude hook regexes with JavaScript syntax ([f6ad551](https://github.com/yannelli/pi-rust-extensions/commit/f6ad551dc9376a846c41284e0e85516c2f91b8c0))
+
+### Fixed
+
+- **statusline:** use the colors of pi's theme and follow footer changes ([bd23d6c](https://github.com/yannelli/pi-rust-extensions/commit/bd23d6c5f23a9741df73745e37454a28447399e0))
+
 ## [0.5.4] - 2026-11-02
 
 ### Added
