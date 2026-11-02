@@ -2,7 +2,7 @@
 
 Created 2026-11-02. Last updated 2026-11-02.
 
-A compact, animated TUI for pi-rust. It needs a pi-rust whose native protocol has the `toolRenderers` feature; older versions keep pi's own rows.
+A compact, animated TUI for pi-rust. It needs pi-rust 0.12.3 or later; older versions keep pi's own rows.
 
 - **Tool rows.** The built-in tools (`bash`, `read`, `edit`, `write`, `grep`, `find`, `ls`) get one line with a status mark and a title. The output goes behind a `⎿` gutter. A running call shows pi's spinner and its time; a finished call shows its tool mark in the success color, and a failed call shows `✗`. `bash` shows the last 5 output lines, `read` the line count, `edit` a diff with line numbers and tinted rows, and `grep`, `find`, and `ls` a count and the first 5 lines. The expand key (`ctrl+o`) shows more.
 - **Working indicator.** While the agent works, the indicator names the step (`Thinking…`, `Running cargo test…`, `Editing main.rs…`), with a light band that runs across the text, the time, the output tokens, and the interrupt key.
