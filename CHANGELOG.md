@@ -2,6 +2,12 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.3] - 2026-11-02
+
+### Added
+
+- **hooks:** fire the remaining Claude hook events ([83f4208](https://github.com/yannelli/pi-rust-extensions/commit/83f4208ed797efb03130677e3bd17f54a2f098a8))
+
 ## [0.5.2] - 2026-11-02
 
 ### Fixed
