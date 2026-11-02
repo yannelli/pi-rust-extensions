@@ -175,7 +175,7 @@ SessionStart hooks get `CLAUDE_ENV_FILE=<agentDir>/ext/hooks/env/<session_id>.sh
 
 ## Differences from upstream and unsupported items
 
-Events marked pi-rust come from host events that only pi-rust sends; with an older pi they do not fire. Setup, the worktree flag and command, `/add-dir`, the task events, the watcher, and the subagent-based events work with any pi.
+Events marked pi-rust come from host events that only pi-rust 0.12.3 and later send; with an older pi they do not fire. Setup, the worktree flag and command, `/add-dir`, the task events, the watcher, and the subagent-based events work with any pi.
 
 - PermissionRequest runs on each tool call that PreToolUse did not allow or deny, because pi has no permission dialog.
 - Codex `prompt` and `agent` handlers are skipped, as in Codex. `mcp_tool` needs a pi-rust host with `mcp.callTool`; older hosts give a non-blocking error.
