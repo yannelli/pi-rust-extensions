@@ -63,7 +63,8 @@ fn inventory_explains_each_mode() {
         Why::Rule {
             pattern: "read".into(),
             source: SETTING_SOURCE.into(),
-            scope: Some(Scope::Project)
+            scope: Some(Scope::Project),
+            repo: None
         }
     );
     assert_eq!(row("read").exact_scope(), Some(Scope::Project));
@@ -74,10 +75,11 @@ fn inventory_explains_each_mode() {
         Why::Rule {
             pattern: "web_*".into(),
             source: "/a/ext/deferred.json".into(),
-            scope: None
+            scope: None,
+            repo: None
         }
     );
-    assert!(row("manual").pinned() && row("manual").mode == Mode::On);
+    assert!(row("manual").pinned() && row("manual").mode == Mode::User);
     assert!(
         inv.rows
             .iter()
@@ -93,7 +95,7 @@ fn inventory_explains_each_mode() {
         (4, 2, 1, 1)
     );
     let web = inv.rules.iter().find(|r| r.pattern == "web_*").unwrap();
-    assert_eq!((web.scope, web.matches), (None, 1));
+    assert_eq!((web.scope.clone(), web.matches), (None, 1));
     assert_eq!(
         inv.rules
             .iter()
@@ -280,5 +282,120 @@ fn render_fits_the_width_and_shows_the_acp_chrome() {
             .iter()
             .any(|l| l.contains("Searchable, not listed (deferred) (current)")),
         "{plain:?}"
+    );
+}
+
+#[test]
+fn undeclared_mcp_tools_can_be_turned_off_one_by_one() {
+    let inv = inventory(json!({}), None);
+    let mut view = View::new(false);
+    view.selected = names(&view, &inv)
+        .iter()
+        .position(|n| n == "mcp__gh__pr")
+        .unwrap();
+    let row = inv.rows.iter().find(|r| r.name == "mcp__gh__pr").unwrap();
+    assert_eq!(row.why, Why::Undeclared("codemode".into()));
+    assert!(!row.pinned() && row.undeclared);
+    assert_eq!(view.choices(&inv).len(), 4);
+    view.key(&Key::Enter, &inv);
+    for _ in 0..3 {
+        view.key(&Key::Down, &inv);
+    }
+    assert_eq!(
+        view.key(&Key::Enter, &inv),
+        Action::Write {
+            change: Change {
+                kind: Kind::Tool,
+                pattern: "mcp__gh__pr".into(),
+                mode: Some(Mode::Off)
+            },
+            scope: Scope::Global
+        }
+    );
+    let off = inventory(json!({ "tools": { "mcp__gh__pr": "off" } }), None);
+    let saved = |inv: &Inventory| inv.saved();
+    assert_eq!(saved(&off), saved(&inventory(json!({}), None)));
+}
+
+#[test]
+fn skills_cycle_through_user_and_repo_rules_show_their_repo() {
+    let setting = json!({ "skills": { "pdf": "deferred" }, "repos": { "o/r": { "tools": { "read": "off" } } } });
+    let config = Config::load(&crate::config::Layers {
+        setting: Some(&setting),
+        repo: Some("O/R"),
+        ..Default::default()
+    });
+    let tools = vec![
+        json!({ "name": "read", "description": "r", "exposure": "direct", "sourceInfo": { "path": "builtin:read" } }),
+    ];
+    let options = json!({ "skills": [{ "name": "pdf", "description": "PDF", "filePath": "/s/pdf/SKILL.md" }] });
+    let none = BTreeSet::new();
+    let inv = build(&Sources {
+        config: &config,
+        tools: &tools,
+        options: &options,
+        context_window: None,
+        loaded: &none,
+        global: Some(&setting),
+        project: None,
+    });
+    let read = &inv.rows[0];
+    assert_eq!(read.exact_scope(), Some(Scope::Repo("o/r".into())));
+    let mut view = View::new(true).with_repo(Some("O/R".into()));
+    let plain = |view: &View| -> String {
+        let lines = view.render(&inv, 100, None);
+        lines
+            .iter()
+            .map(|l| style::strip(l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(
+        plain(&view).contains("✕ read") && plain(&view).contains("[repo o/r]"),
+        "{}",
+        plain(&view)
+    );
+    assert_eq!(
+        view.key(&Key::Left, &inv),
+        Action::Write {
+            change: Change {
+                kind: Kind::Tool,
+                pattern: "read".into(),
+                mode: Some(Mode::Deferred)
+            },
+            scope: Scope::Repo("o/r".into())
+        }
+    );
+    view.tab = 1;
+    let user = Action::Write {
+        change: Change {
+            kind: Kind::Skill,
+            pattern: "pdf".into(),
+            mode: Some(Mode::User),
+        },
+        scope: Scope::Global,
+    };
+    assert_eq!(view.key(&Key::Right, &inv), user);
+    view.tab = 0;
+    view.key(&Key::Enter, &inv);
+    view.screen = Screen::List;
+    let new = Change {
+        kind: Kind::Tool,
+        pattern: "x".into(),
+        mode: Some(Mode::Off),
+    };
+    assert_eq!(view.write(new.clone(), None), Action::Redraw);
+    assert!(
+        plain(&view).contains("Repo O/R: global settings, this repo only"),
+        "{}",
+        plain(&view)
+    );
+    view.key(&Key::Up, &inv);
+    assert_eq!(
+        view.key(&Key::Enter, &inv),
+        Action::Write {
+            change: new,
+            scope: Scope::Repo("O/R".into())
+        }
     );
 }

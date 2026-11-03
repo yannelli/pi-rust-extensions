@@ -4,8 +4,8 @@ use pi_ext_sdk::{Key, style};
 
 use super::render::muted;
 use super::rows::{self, Inventory, Scope};
-use super::{Action, Choice, Entry, MODES, Screen, TABS, Tone, View};
-use crate::config::Mode;
+use super::{Action, Choice, Entry, Screen, TABS, Tone, View, modes};
+use crate::config::{Kind, Mode};
 
 const PAGE: usize = 10;
 
@@ -16,20 +16,21 @@ impl View {
             Screen::Menu { choice } => self.menu_key(key, inv, choice),
             Screen::Scope { change, choice } => match key {
                 Key::Up | Key::Down => {
+                    let len = self.scopes().len().max(1);
+                    let step = if *key == Key::Down { 1 } else { len - 1 };
                     self.screen = Screen::Scope {
                         change,
-                        choice: 1 - choice,
+                        choice: (choice + step) % len,
                     };
                     Action::Redraw
                 }
                 Key::Enter => {
                     self.screen = Screen::List;
-                    let scope = if choice == 0 {
-                        Scope::Global
-                    } else {
-                        Scope::Project
-                    };
-                    Action::Write { change, scope }
+                    let scope = self.scopes().get(choice).cloned();
+                    Action::Write {
+                        change,
+                        scope: scope.unwrap_or(Scope::Global),
+                    }
                 }
                 _ if key.is_cancel() || matches!(key, Key::Left | Key::Backspace) => {
                     self.screen = Screen::List;
@@ -66,7 +67,8 @@ impl View {
                         Some(Entry::Rule(rule)) => rule.mode,
                         None => Mode::On,
                     };
-                    let choice = MODES.iter().position(|m| *m == current).unwrap_or(0);
+                    let kind = self.selected_kind(inv).unwrap_or(Kind::Tool);
+                    let choice = modes(kind).iter().position(|m| *m == current).unwrap_or(0);
                     self.screen = Screen::Menu { choice };
                 }
             }
@@ -136,11 +138,12 @@ impl View {
             Some(Entry::Rule(rule)) => rule.mode,
             None => return Action::Redraw,
         };
-        let at = MODES.iter().position(|m| *m == current).unwrap_or(0);
-        let next = MODES[if forward {
-            (at + 1) % MODES.len()
+        let list = modes(self.selected_kind(inv).unwrap_or(Kind::Tool));
+        let at = list.iter().position(|m| *m == current).unwrap_or(0);
+        let next = list[if forward {
+            (at + 1) % list.len()
         } else {
-            (at + MODES.len() - 1) % MODES.len()
+            (at + list.len() - 1) % list.len()
         }];
         match self.change(inv, &Choice::Set(next)) {
             Some((change, scope)) => Action::Write {

@@ -30,6 +30,7 @@ pub(super) fn glyph(mode: Mode) -> String {
         Mode::On => style::fg(Color::Green, "●"),
         Mode::Names => accent("◐"),
         Mode::Deferred => warning("○"),
+        Mode::User => style::fg(Color::Magenta, "◇"),
         Mode::Off => style::fg(Color::Red, "✕"),
     }
 }
@@ -40,6 +41,7 @@ pub(super) fn mode_word(mode: Mode, width: usize) -> String {
         Mode::On => style::fg(Color::Green, &text),
         Mode::Names => accent(&text),
         Mode::Deferred => warning(&text),
+        Mode::User => style::fg(Color::Magenta, &text),
         Mode::Off => style::fg(Color::Red, &text),
     }
 }
@@ -59,17 +61,30 @@ pub(super) fn why_marker(row: &Row) -> String {
         Why::Default => String::new(),
         Why::Auto => style::dim(" auto"),
         Why::Pinned(_) => style::dim(" pinned"),
-        Why::Rule { pattern, scope, .. } if *pattern == row.name => {
-            style::dim(&format!(" [{}]", scope_word(*scope)))
+        Why::Undeclared(_) => style::dim(" undeclared"),
+        Why::Rule {
+            pattern,
+            scope,
+            repo,
+            ..
+        } => {
+            let at = match repo {
+                Some(repo) => format!("repo {repo}"),
+                None => scope_word(scope.as_ref()).to_owned(),
+            };
+            match *pattern == row.name {
+                true => style::dim(&format!(" [{at}]")),
+                false => style::dim(&format!(" rule {pattern} [{at}]")),
+            }
         }
-        Why::Rule { pattern, .. } => style::dim(&format!(" rule {pattern}")),
     }
 }
 
-fn scope_word(scope: Option<Scope>) -> &'static str {
+fn scope_word(scope: Option<&Scope>) -> &'static str {
     match scope {
         Some(Scope::Global) => "global",
         Some(Scope::Project) => "project",
+        Some(Scope::Repo(_)) => "repo",
         None => "file",
     }
 }
@@ -139,9 +154,10 @@ fn rule_line(rule: &RuleRow, selected: bool, cols: Option<usize>) -> String {
             mode_word(rule.mode, 0),
         ),
     };
-    let place = match rule.scope {
-        Some(scope) => scope.label().to_owned(),
-        None => format!("{} (read-only)", rule.source),
+    let place = match (&rule.scope, &rule.repo) {
+        (Some(scope), _) => scope.label(),
+        (None, Some(repo)) => format!("{} [repo {repo}] (read-only)", rule.source),
+        (None, None) => format!("{} (read-only)", rule.source),
     };
     let plural = if rule.matches == 1 { "" } else { "es" };
     let matches = muted(&format!(" {} match{plural}", rule.matches));
@@ -190,15 +206,14 @@ impl View {
                     " Save the rule for {} in",
                     change.pattern
                 ))));
-                for (i, label) in [
-                    "Global settings: every project",
-                    "Project settings: this project only",
-                ]
-                .iter()
-                .enumerate()
-                {
+                let labels = self.scopes().into_iter().map(|scope| match scope {
+                    Scope::Global => "Global settings: every project".to_owned(),
+                    Scope::Project => "Project settings: this project only".to_owned(),
+                    Scope::Repo(repo) => format!("Repo {repo}: global settings, this repo only"),
+                });
+                for (i, label) in labels.enumerate() {
                     lines.push(if i == *choice {
-                        format!("{}{}", accent(" → "), accent(label))
+                        format!("{}{}", accent(" → "), accent(&label))
                     } else {
                         format!("   {label}")
                     });

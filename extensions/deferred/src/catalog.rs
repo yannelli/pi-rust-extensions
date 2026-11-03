@@ -6,7 +6,8 @@ use serde_json::Value;
 
 use crate::config::{Config, Kind, Mode};
 use crate::measure::{
-    context_tokens, is_addon, section_tokens, skill_tokens, str_of, summary_line, tool_tokens,
+    context_tokens, is_addon, is_undeclared, section_tokens, skill_tokens, str_of, summary_line,
+    tool_tokens,
 };
 
 /// The search tool of this extension; rules never apply to it.
@@ -51,8 +52,10 @@ pub struct Inputs<'a> {
 pub struct Plan {
     /// Searchable items that are not loaded.
     pub items: Vec<Item>,
-    /// Disabled items with their estimated tokens.
+    /// Disabled items with the estimated prompt tokens they would cost.
     pub off: Vec<(Kind, String, usize)>,
+    /// Skills only the user can run, with their estimated tokens.
+    pub user: Vec<(Kind, String, usize)>,
     /// The tool loadout for the run.
     pub active: Vec<String>,
     /// Managed tools that something else put back in the loadout; they count as loaded.
@@ -127,7 +130,7 @@ fn plan_tools(input: &Inputs, plan: &mut Plan) {
         let name = str_of(tool, "name");
         let is_active = plan.active.iter().any(|n| n == name);
         match mode {
-            Mode::On => {
+            Mode::On | Mode::User => {
                 if !is_active && input.removed.contains(name) {
                     plan.active.push(name.to_owned());
                     plan.restored.push(name.to_owned());
@@ -139,8 +142,12 @@ fn plan_tools(input: &Inputs, plan: &mut Plan) {
                     plan.active.retain(|n| n != name);
                     plan.newly_removed.push(name.to_owned());
                 }
-                plan.off
-                    .push((Kind::Tool, name.to_owned(), tool_tokens(tool)));
+                let cost = if is_undeclared(tool) {
+                    0
+                } else {
+                    tool_tokens(tool)
+                };
+                plan.off.push((Kind::Tool, name.to_owned(), cost));
                 continue;
             }
             Mode::Names | Mode::Deferred => {}
@@ -186,6 +193,12 @@ fn plan_skills(input: &Inputs, plan: &mut Plan) {
         let cost = skill_tokens(skill);
         match mode {
             Mode::On => keep.push(skill.clone()),
+            Mode::User => {
+                let mut skill = skill.clone();
+                skill["disableModelInvocation"] = Value::Bool(true);
+                keep.push(skill);
+                plan.user.push((Kind::Skill, name.to_owned(), cost));
+            }
             Mode::Off => plan.off.push((Kind::Skill, name.to_owned(), cost)),
             Mode::Names | Mode::Deferred => plan.items.push(Item {
                 kind: Kind::Skill,
@@ -200,7 +213,7 @@ fn plan_skills(input: &Inputs, plan: &mut Plan) {
             }),
         }
     }
-    if keep.len() != skills.len() {
+    if keep != *skills {
         plan.skills = Some(keep);
     }
 }
@@ -215,7 +228,7 @@ fn plan_context(input: &Inputs, plan: &mut Plan) {
         let mode = input.config.mode(Kind::Context, path).unwrap_or_default();
         let cost = context_tokens(path, content);
         match mode {
-            Mode::On => keep.push(file.clone()),
+            Mode::On | Mode::User => keep.push(file.clone()),
             Mode::Off => plan.off.push((Kind::Context, path.to_owned(), cost)),
             Mode::Names | Mode::Deferred => {
                 plan.items
@@ -239,7 +252,7 @@ fn plan_sections(input: &Inputs, plan: &mut Plan) {
         let mode = input.config.mode(Kind::Section, name).unwrap_or_default();
         let cost = section_tokens(name, text);
         match mode {
-            Mode::On => continue,
+            Mode::On | Mode::User => continue,
             Mode::Off => plan.off.push((Kind::Section, name.clone(), cost)),
             Mode::Names | Mode::Deferred => {
                 plan.items

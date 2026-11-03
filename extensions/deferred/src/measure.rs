@@ -19,6 +19,11 @@ pub fn is_addon(tool: &Value) -> bool {
     path == "builtin:mcp" || (!origin.is_empty() && origin != "builtin")
 }
 
+/// pi keeps `codemode` and `deferred` exposure tools out of the declarations by itself.
+pub fn is_undeclared(tool: &Value) -> bool {
+    matches!(str_of(tool, "exposure"), "codemode" | "deferred")
+}
+
 pub fn tool_tokens(tool: &Value) -> usize {
     let schema = tool.get("parameters").map_or(0, |p| p.to_string().len());
     tokens(str_of(tool, "name").len() + str_of(tool, "description").len() + schema)

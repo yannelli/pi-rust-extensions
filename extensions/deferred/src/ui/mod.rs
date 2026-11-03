@@ -11,6 +11,15 @@ use crate::config::{Kind, Mode};
 use rows::{Inventory, Row, RuleRow, Scope};
 
 pub const MODES: [Mode; 4] = [Mode::On, Mode::Names, Mode::Deferred, Mode::Off];
+pub const SKILL_MODES: [Mode; 5] = [Mode::On, Mode::Names, Mode::Deferred, Mode::User, Mode::Off];
+
+/// The modes `kind` can take, in panel order.
+pub fn modes(kind: Kind) -> &'static [Mode] {
+    match kind {
+        Kind::Skill => &SKILL_MODES,
+        _ => &MODES,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
@@ -76,6 +85,8 @@ pub struct View {
     pub screen: Screen,
     pub status: Option<(Tone, String)>,
     pub trusted: bool,
+    /// `owner/name` of the cwd's repo, offered as a scope for new rules.
+    pub repo: Option<String>,
 }
 
 impl View {
@@ -87,6 +98,30 @@ impl View {
             screen: Screen::List,
             status: None,
             trusted,
+            repo: None,
+        }
+    }
+
+    pub fn with_repo(mut self, repo: Option<String>) -> Self {
+        self.repo = repo;
+        self
+    }
+
+    /// Where a new rule can go.
+    pub fn scopes(&self) -> Vec<Scope> {
+        let mut scopes = vec![Scope::Global];
+        if self.trusted {
+            scopes.push(Scope::Project);
+        }
+        scopes.extend(self.repo.clone().map(Scope::Repo));
+        scopes
+    }
+
+    /// The kind of the selected entry.
+    pub fn selected_kind(&self, inv: &Inventory) -> Option<Kind> {
+        match self.entries(inv).get(self.selected)? {
+            Entry::Item(row) => Some(row.kind),
+            Entry::Rule(rule) => Some(rule.kind),
         }
     }
 
@@ -127,7 +162,10 @@ impl View {
 
     /// The actions of the selected entry; empty when it cannot be edited here.
     pub fn choices(&self, inv: &Inventory) -> Vec<Choice> {
-        let mut choices: Vec<Choice> = MODES.iter().map(|m| Choice::Set(*m)).collect();
+        let Some(kind) = self.selected_kind(inv) else {
+            return Vec::new();
+        };
+        let mut choices: Vec<Choice> = modes(kind).iter().map(|m| Choice::Set(*m)).collect();
         match self.entries(inv).get(self.selected) {
             Some(Entry::Item(row)) if !row.pinned() => {
                 if row.exact_scope().is_some() {
@@ -172,20 +210,20 @@ impl View {
                     pattern: rule.pattern.clone(),
                     mode,
                 },
-                rule.scope,
+                rule.scope.clone(),
             )),
         }
     }
 
-    /// Write at the known scope, ask when the project is trusted, else write globally.
+    /// Write at the known scope, ask when there is more than one, else write globally.
     pub(super) fn write(&mut self, change: Change, scope: Option<Scope>) -> Action {
-        match (scope, self.trusted) {
-            (Some(scope), _) => Action::Write { change, scope },
-            (None, true) => {
+        match scope {
+            Some(scope) => Action::Write { change, scope },
+            None if self.scopes().len() > 1 => {
                 self.screen = Screen::Scope { change, choice: 0 };
                 Action::Redraw
             }
-            (None, false) => Action::Write {
+            None => Action::Write {
                 change,
                 scope: Scope::Global,
             },
