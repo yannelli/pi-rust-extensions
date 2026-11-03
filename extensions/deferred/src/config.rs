@@ -2,12 +2,14 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 pub const NAMESPACE: &str = "deferred";
 pub const FILE_NAME: &str = "deferred.json";
 /// The source name of rules from the `deferred` setting.
 pub const SETTING_SOURCE: &str = "setting `deferred`";
+/// The key of repo-scoped rule blocks.
+pub const REPOS: &str = "repos";
 pub const DEFAULT_AUTO_PERCENT: f64 = 10.0;
 pub const DEFAULT_MAX_RESULTS: usize = 5;
 
@@ -21,6 +23,8 @@ pub enum Mode {
     Names,
     /// Not listed; `deferred_search` finds and loads it.
     Deferred,
+    /// Skills only: out of the prompt and search, but the user can still run `/skill:name`.
+    User,
     /// Removed, and not searchable.
     Off,
 }
@@ -31,6 +35,7 @@ impl Mode {
             "on" | "load" | "eager" => Self::On,
             "names" | "name" | "name-only" => Self::Names,
             "deferred" | "defer" | "search" => Self::Deferred,
+            "user" | "manual" | "user-only" => Self::User,
             "off" | "disable" | "disabled" => Self::Off,
             _ => return None,
         })
@@ -41,6 +46,7 @@ impl Mode {
             Self::On => "on",
             Self::Names => "names",
             Self::Deferred => "deferred",
+            Self::User => "user",
             Self::Off => "off",
         }
     }
@@ -48,6 +54,11 @@ impl Mode {
     /// The item is searchable: `names` or `deferred`.
     pub fn searchable(self) -> bool {
         matches!(self, Self::Names | Self::Deferred)
+    }
+
+    /// `user` is only for skills.
+    pub fn fits(self, kind: Kind) -> bool {
+        self != Self::User || kind == Kind::Skill
     }
 }
 
@@ -99,6 +110,8 @@ pub struct Rule {
     pub mode: Mode,
     /// The config source the rule came from.
     pub source: String,
+    /// The `repos` key of a repo-scoped rule.
+    pub repo: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -111,6 +124,20 @@ pub struct Config {
     pub max_results: usize,
     /// Problems found while parsing, for `/deferred`.
     pub warnings: Vec<String>,
+    /// `owner/name` of the cwd's `origin` remote.
+    pub repo: Option<String>,
+}
+
+/// The config sources in the order they apply.
+#[derive(Default)]
+pub struct Layers<'a> {
+    pub global_file: Option<(&'a str, &'a Value)>,
+    /// The `deferred` setting as pi merges it.
+    pub setting: Option<&'a Value>,
+    /// The `deferred` block of the project `settings.json`, when pi applies it.
+    pub project_setting: Option<&'a Value>,
+    pub project_file: Option<(&'a str, &'a Value)>,
+    pub repo: Option<&'a str>,
 }
 
 impl Default for Config {
@@ -120,6 +147,7 @@ impl Default for Config {
             auto_percent: Some(DEFAULT_AUTO_PERCENT),
             max_results: DEFAULT_MAX_RESULTS,
             warnings: Vec::new(),
+            repo: None,
         }
     }
 }
@@ -136,6 +164,60 @@ impl Config {
         config
     }
 
+    /// Global file, global setting, matching `repos` blocks, project setting, project file.
+    pub fn load(layers: &Layers) -> Self {
+        let mut config = Self {
+            repo: layers.repo.map(str::to_owned),
+            ..Self::default()
+        };
+        let (global, project) = split_setting(layers.setting, layers.project_setting);
+        let global_file = layers
+            .global_file
+            .and_then(|(n, v)| Some((n, v.as_object()?)));
+        if let Some((name, obj)) = global_file {
+            config.apply(name, obj);
+        }
+        config.apply(SETTING_SOURCE, &global);
+        if let Some(repo) = layers.repo {
+            if let Some((name, obj)) = global_file {
+                config.apply_repos(name, obj, repo);
+            }
+            if let Some(obj) = layers.setting.and_then(Value::as_object) {
+                config.apply_repos(SETTING_SOURCE, obj, repo);
+            }
+        }
+        config.apply(SETTING_SOURCE, &project);
+        if let Some(obj) = layers.project_file.and_then(|(_, v)| v.as_object()) {
+            config.apply(layers.project_file.map_or("", |(n, _)| n), obj);
+        }
+        config
+    }
+
+    /// The blocks of `repos` whose key matches `repo`, ignoring case, in order.
+    fn apply_repos(&mut self, source: &str, obj: &Map<String, Value>, repo: &str) {
+        let Some(repos) = obj.get(REPOS) else {
+            return;
+        };
+        let Some(repos) = repos.as_object() else {
+            return self.warn(source, format!("`{REPOS}` is not an object"));
+        };
+        for (key, block) in repos {
+            if !glob(&key.to_lowercase(), &repo.to_lowercase()) {
+                continue;
+            }
+            match block.as_object() {
+                Some(block) => {
+                    let from = self.rules.len();
+                    self.apply(source, block);
+                    for rule in &mut self.rules[from..] {
+                        rule.repo = Some(key.clone());
+                    }
+                }
+                None => self.warn(source, format!("`{REPOS}.{key}` is not an object")),
+            }
+        }
+    }
+
     fn apply(&mut self, source: &str, obj: &Map<String, Value>) {
         for kind in Kind::ALL {
             let Some(value) = obj.get(kind.key()) else {
@@ -147,11 +229,16 @@ impl Config {
             };
             for (pattern, mode) in map {
                 match mode.as_str().and_then(Mode::parse) {
+                    Some(mode) if !mode.fits(kind) => self.warn(
+                        source,
+                        format!("`user` is for skills only, not `{pattern}`"),
+                    ),
                     Some(mode) => self.rules.push(Rule {
                         kind,
                         pattern: pattern.clone(),
                         mode,
                         source: source.to_owned(),
+                        repo: None,
                     }),
                     None => self.warn(source, format!("bad mode {mode} for `{pattern}`")),
                 }
@@ -194,6 +281,48 @@ impl Config {
         };
         self.rules.iter().rev().find(matches)
     }
+}
+
+/// The merged setting split into the part from the global file and the part the project
+/// `settings.json` sets, so repo rules can apply between them.
+fn split_setting(
+    setting: Option<&Value>,
+    project: Option<&Value>,
+) -> (Map<String, Value>, Map<String, Value>) {
+    let (mut global, mut local) = (Map::new(), Map::new());
+    let Some(setting) = setting.and_then(Value::as_object) else {
+        return (global, local);
+    };
+    let in_project = |path: &[&str], value: &Value| {
+        let found = path.iter().try_fold(project?, |v, key| v.get(key));
+        Some(found? == value)
+    };
+    for (key, value) in setting {
+        let rules = Kind::ALL.iter().any(|k| k.key() == key);
+        match value.as_object() {
+            Some(map) if rules => {
+                for (pattern, mode) in map {
+                    let target = match in_project(&[key, pattern], mode) {
+                        Some(true) => &mut local,
+                        _ => &mut global,
+                    };
+                    let entry = target.entry(key.clone()).or_insert_with(|| json!({}));
+                    if let Some(entry) = entry.as_object_mut() {
+                        entry.insert(pattern.clone(), mode.clone());
+                    }
+                }
+            }
+            _ if key == REPOS => {}
+            _ => {
+                let target = match in_project(&[key], value) {
+                    Some(true) => &mut local,
+                    _ => &mut global,
+                };
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    (global, local)
 }
 
 /// `*` matches any run of characters (`/` too) and `?` one character.
@@ -266,6 +395,43 @@ pub fn edit_rule(block: Option<Value>, kind: Kind, pattern: &str, mode: Option<M
     }
     if rules.is_empty() {
         obj.shift_remove(kind.key());
+    }
+    block
+}
+
+/// `edit_rule` inside `repos.<repo>`; an existing key that differs only in case is reused.
+pub fn edit_repo_rule(
+    block: Option<Value>,
+    repo: &str,
+    kind: Kind,
+    pattern: &str,
+    mode: Option<Mode>,
+) -> Value {
+    let mut block = block
+        .filter(Value::is_object)
+        .unwrap_or_else(|| Value::Object(Map::new()));
+    let obj = block.as_object_mut().expect("object");
+    let repos = obj.entry(REPOS).or_insert_with(|| json!({}));
+    if !repos.is_object() {
+        *repos = json!({});
+    }
+    let repos = repos.as_object_mut().expect("object");
+    let key = repos
+        .keys()
+        .find(|k| k.eq_ignore_ascii_case(repo))
+        .cloned()
+        .unwrap_or_else(|| repo.to_owned());
+    let inner = edit_rule(repos.get(&key).cloned(), kind, pattern, mode);
+    match inner.as_object().is_some_and(Map::is_empty) {
+        true => {
+            repos.shift_remove(&key);
+        }
+        false => {
+            repos.insert(key, inner);
+        }
+    }
+    if repos.is_empty() {
+        obj.shift_remove(REPOS);
     }
     block
 }

@@ -205,3 +205,75 @@ fn summary_line_skips_blanks_and_clips() {
     assert_eq!(summary_line(&long).chars().count(), 121);
     assert_eq!(summary_line(""), "");
 }
+
+#[test]
+fn user_skills_leave_the_prompt_and_search_but_stay_listed_for_pi() {
+    let skill = |name: &str| json!({ "name": name, "description": "d", "filePath": format!("/s/{name}/SKILL.md") });
+    let options = json!({ "skills": [skill("pdf"), skill("deploy"), skill("old")] });
+    let config = json!({ "skills": { "deploy": "manual", "old": "off", "pdf": "names" } });
+    let plan = run(config, &[TOOL], options, None);
+    let skills = plan.skills.as_ref().unwrap();
+    let kept: Vec<(&str, bool)> = skills
+        .iter()
+        .map(|s| {
+            let user = s["disableModelInvocation"].as_bool() == Some(true);
+            (s["name"].as_str().unwrap(), user)
+        })
+        .collect();
+    assert_eq!(kept, [("deploy", true)]);
+    assert_eq!(
+        plan.user,
+        [(Kind::Skill, "deploy".to_owned(), plan.user[0].2)]
+    );
+    let items: Vec<&str> = plan.items.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(items, ["pdf"], "user skills are not searchable");
+}
+
+#[test]
+fn one_off_mcp_tool_leaves_its_siblings_alone() {
+    let config = json!({ "tools": { "mcp__gh__*": "names", "mcp__gh__pr": "off" } });
+    let active = ["read", "mcp__gh__issue", "mcp__gh__pr", TOOL];
+    let plan = run(config, &active, json!({}), None);
+    assert_eq!(names(&plan.active), ["read", TOOL]);
+    let items: Vec<&str> = plan.items.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(items, ["mcp__gh__issue"]);
+    assert_eq!(
+        plan.off,
+        [(Kind::Tool, "mcp__gh__pr".into(), plan.off[0].2)]
+    );
+    assert!(plan.off[0].2 > 0);
+
+    let loaded = BTreeSet::from(["mcp__gh__pr".to_owned()]);
+    let removed = BTreeSet::from(["mcp__gh__pr".to_owned()]);
+    let config = json!({ "tools": { "mcp__gh__pr": "off" } });
+    let plan = run_with(config, &active, json!({}), None, &loaded, &removed);
+    assert_eq!(names(&plan.active), ["read", "mcp__gh__issue"]);
+    assert!(plan.adopted.is_empty() && plan.items.is_empty());
+}
+
+#[test]
+fn off_tools_do_not_count_toward_auto_or_undeclared_savings() {
+    let mut big = tool("mcp__gh__dump", "builtin:mcp", "builtin");
+    big["parameters"] = json!({ "description": "x".repeat(40_000) });
+    let mut undeclared = tool("mcp__gh__secret", "builtin:mcp", "builtin");
+    undeclared["exposure"] = json!("codemode");
+    let tools = [tools(), vec![big, undeclared]].concat();
+    let config = Config::merge([(
+        "t",
+        Some(&json!({ "tools": { "mcp__gh__dump": "off", "mcp__gh__secret": "off" } })),
+    )]);
+    let none = BTreeSet::new();
+    let plan = plan(&Inputs {
+        config: &config,
+        tools: &tools,
+        active: &[],
+        options: &json!({}),
+        context_window: Some(100_000),
+        loaded: &none,
+        removed: &none,
+    });
+    assert!(!plan.auto, "an off tool is not counted for auto");
+    let cost = |name: &str| plan.off.iter().find(|o| o.1 == name).unwrap().2;
+    assert!(cost("mcp__gh__dump") > 10_000);
+    assert_eq!(cost("mcp__gh__secret"), 0, "pi never declared it");
+}

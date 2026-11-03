@@ -25,7 +25,7 @@ async fn defers_then_loads_tools_skills_and_context() {
     let init = host.initialize().await;
     assert_eq!(
         init["events"],
-        json!(["session_start", "before_agent_start"])
+        json!(["session_start", "before_agent_start", "input", "tool_call"])
     );
     assert_eq!(init["tools"][0]["name"], "deferred_search");
 
@@ -197,5 +197,161 @@ async fn resume_restores_loaded_tools_and_nothing_deferred_hides_the_tool() {
     assert_eq!(
         reply["patch"]["systemPromptOptions"]["sections"]["deferred"],
         Value::Null
+    );
+}
+
+#[tokio::test]
+async fn one_off_mcp_tool_is_gone_while_its_sibling_stays() {
+    let setting = json!({ "tools": { "mcp__gh__*": "names", "mcp__gh__issue": "off" } });
+    let fake = Fake::new(
+        setting,
+        &["read", "mcp__gh__issue", "mcp__gh__pr", "deferred_search"],
+    );
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    let start = json!({ "type": "session_start", "reason": "startup" });
+    event(&mut host, &fake, 1, "session_start", start, "/work").await;
+    let plain = json!({ "type": "before_agent_start", "systemPromptOptions": {} });
+    let reply = event(&mut host, &fake, 2, "before_agent_start", plain, "/work").await;
+    assert_eq!(fake.active(), ["read", "deferred_search"]);
+    let index = reply["patch"]["systemPromptOptions"]["sections"]["deferred"]
+        .as_str()
+        .unwrap();
+    assert!(
+        index.contains("Deferred tools: mcp__gh__pr\n")
+            || index.ends_with("Deferred tools: mcp__gh__pr"),
+        "{index}"
+    );
+    assert!(!index.contains("issue"), "{index}");
+
+    for (id, query) in [
+        (3, "select:mcp__gh__issue"),
+        (4, "select:issue"),
+        (5, "issue"),
+    ] {
+        let result = search(&mut host, &fake, id, json!({ "query": query }), "/work").await;
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.starts_with("No deferred item matches"),
+            "{query}: {text}"
+        );
+    }
+    assert_eq!(fake.active(), ["read", "deferred_search"]);
+
+    let call = |name: &str| json!({ "type": "tool_call", "toolName": name, "toolCallId": "t", "input": {} });
+    let blocked = event(
+        &mut host,
+        &fake,
+        6,
+        "tool_call",
+        call("mcp__gh__issue"),
+        "/work",
+    )
+    .await;
+    assert_eq!(blocked["result"]["block"], true, "{blocked}");
+    assert!(
+        blocked["result"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("mcp__gh__issue is turned off"),
+        "{blocked}"
+    );
+    let sibling = event(
+        &mut host,
+        &fake,
+        7,
+        "tool_call",
+        call("mcp__gh__pr"),
+        "/work",
+    )
+    .await;
+    assert_eq!(sibling, json!({}));
+
+    let result = search(
+        &mut host,
+        &fake,
+        8,
+        json!({ "query": "select:pr" }),
+        "/work",
+    )
+    .await;
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Loaded 1 tool(s)")
+    );
+    assert_eq!(fake.active(), ["read", "deferred_search", "mcp__gh__pr"]);
+
+    let params = json!({ "name": "deferred", "args": "status", "ctx": ctx("/work") });
+    host.drive(9, "command.run", params, |m, p| fake.answer(m, p))
+        .await;
+    let status = fake.calls_of("ui.notify").pop().unwrap();
+    let text = status["message"].as_str().unwrap();
+    assert!(
+        text.contains("tools: 0 names, 0 deferred, 1 off") && text.contains("mcp__gh__issue (off)"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn user_skills_leave_the_prompt_and_off_skills_block_their_command() {
+    let setting = json!({ "skills": { "docx": "user", "pdf": "off" } });
+    let fake = Fake::new(setting, &["read", "deferred_search"]);
+    let mut host = TestHost::start(extension());
+    host.initialize().await;
+    let start = json!({ "type": "session_start", "reason": "startup" });
+    event(&mut host, &fake, 1, "session_start", start, "/w").await;
+    let reply = event(
+        &mut host,
+        &fake,
+        2,
+        "before_agent_start",
+        before("/s"),
+        "/w",
+    )
+    .await;
+    let skills = reply["patch"]["systemPromptOptions"]["skills"]
+        .as_array()
+        .unwrap();
+    assert_eq!(skills.len(), 1);
+    assert_eq!(
+        (
+            skills[0]["name"].as_str(),
+            skills[0]["disableModelInvocation"].as_bool()
+        ),
+        (Some("docx"), Some(true))
+    );
+    assert!(
+        !fake.active().contains(&"deferred_search".to_owned()),
+        "nothing is searchable"
+    );
+    let result = search(&mut host, &fake, 3, json!({ "query": "select:docx" }), "/w").await;
+    assert_eq!(result["content"][0]["text"], "Nothing is deferred.");
+
+    let input = |text: &str| json!({ "type": "input", "text": text, "source": "interactive" });
+    let user = event(
+        &mut host,
+        &fake,
+        4,
+        "input",
+        input("/skill:docx make a file"),
+        "/w",
+    )
+    .await;
+    assert_eq!(user, json!({}), "a user skill still runs");
+    let off = event(&mut host, &fake, 5, "input", input("/skill:pdf now"), "/w").await;
+    assert_eq!(off["result"]["action"], "handled");
+    let note = fake.calls_of("ui.notify").pop().unwrap();
+    assert!(
+        note["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("The skill pdf is off"),
+        "{note}"
+    );
+    assert_eq!(
+        event(&mut host, &fake, 6, "input", input("hello"), "/w").await,
+        json!({})
     );
 }

@@ -7,10 +7,11 @@ use crate::config::{self, Kind, Mode, NAMESPACE};
 use crate::ui::rows::Scope;
 use crate::{Shared, fmt, load_config, lock};
 
-pub(crate) const DESCRIPTION: &str = "Browse and change what is deferred, or: [status|reload|reset|set <kind> <pattern> <mode>|unset <kind> <pattern>] [--project]";
+pub(crate) const DESCRIPTION: &str = "Browse and change what is deferred, or: [status|reload|reset|set <kind> <pattern> <mode>|unset <kind> <pattern>] [--project|--repo <owner/name>]";
 
 const USAGE: &str = "Usage: /deferred (the panel), /deferred [status|reload|reset], /deferred set <tools|skills|context|sections> <pattern> \
-    <on|names|deferred|off> [--project], or /deferred unset <kind> <pattern> [--project].";
+    <on|names|deferred|user|off> [--project|--repo <owner/name>], or /deferred unset <kind> <pattern> [--project|--repo <owner/name>]. \
+    `user` is for skills only; `--repo` without a name uses the cwd's repo.";
 
 pub(crate) async fn run(state: Shared, args: String, ctx: CommandCtx) -> Result<()> {
     let words: Vec<&str> = args.split_whitespace().collect();
@@ -66,12 +67,8 @@ async fn edit(
     words: &[&str],
 ) -> std::result::Result<String, String> {
     let unset = words[0] == "unset";
-    let project = words.contains(&"--project");
-    let rest: Vec<&str> = words[1..]
-        .iter()
-        .copied()
-        .filter(|w| *w != "--project")
-        .collect();
+    let current = lock(state).config.repo.clone();
+    let (project, repo, rest) = flags(&words[1..], current)?;
     let (kind, pattern, mode) = match (unset, rest.as_slice()) {
         (false, [kind, pattern, mode]) => (*kind, *pattern, Some(*mode)),
         (true, [kind, pattern]) => (*kind, *pattern, None),
@@ -84,12 +81,39 @@ async fn edit(
         }
         None => None,
     };
-    let scope = if project {
-        Scope::Project
-    } else {
-        Scope::Global
+    if mode.is_some_and(|m| !m.fits(kind)) {
+        return Err(format!("`user` is for skills only. {USAGE}"));
+    }
+    let scope = match (project, repo) {
+        (true, Some(_)) => return Err(format!("Use `--project` or `--repo`, not both. {USAGE}")),
+        (true, None) => Scope::Project,
+        (false, Some(repo)) => Scope::Repo(repo),
+        (false, None) => Scope::Global,
     };
-    write_rule(state, ctx, kind, pattern, mode, scope).await
+    write_rule(state, ctx, kind, pattern, mode, &scope).await
+}
+
+/// `--project`, `--repo [owner/name]`, and the other words.
+fn flags<'a>(
+    words: &[&'a str],
+    current: Option<String>,
+) -> std::result::Result<(bool, Option<String>, Vec<&'a str>), String> {
+    let (mut project, mut repo, mut rest) = (false, None, Vec::new());
+    let mut iter = words.iter().copied().peekable();
+    while let Some(word) = iter.next() {
+        match word {
+            "--project" => project = true,
+            "--repo" => {
+                let named = iter.next_if(|next| next.contains('/') && !next.starts_with("--"));
+                let name = named.map(str::to_owned).or_else(|| current.clone());
+                repo = Some(name.ok_or_else(|| {
+                    "`--repo` needs <owner/name>: the cwd has no `origin` remote.".to_owned()
+                })?);
+            }
+            _ => rest.push(word),
+        }
+    }
+    Ok((project, repo, rest))
 }
 
 /// Sets (`Some`) or removes (`None`) the rule `kind.pattern` in the `scope` settings file,
@@ -100,22 +124,25 @@ pub(crate) async fn write_rule(
     kind: Kind,
     pattern: &str,
     mode: Option<Mode>,
-    scope: Scope,
+    scope: &Scope,
 ) -> std::result::Result<String, String> {
     let host = ctx.host();
-    let (path, scope) = match scope {
+    let (path, target) = match scope {
         Scope::Project => (
             host.project_dir().join("settings.json"),
             SettingsScope::Project,
         ),
-        Scope::Global => (
+        Scope::Global | Scope::Repo(_) => (
             host.agent_dir().join("settings.json"),
             SettingsScope::Global,
         ),
     };
     let block = config::read_file(&path).and_then(|v| v.get(NAMESPACE).cloned());
-    let block = config::edit_rule(block, kind, pattern, mode);
-    host.set_settings(NAMESPACE, block, scope)
+    let block = match scope {
+        Scope::Repo(repo) => config::edit_repo_rule(block, repo, kind, pattern, mode),
+        _ => config::edit_rule(block, kind, pattern, mode),
+    };
+    host.set_settings(NAMESPACE, block, target)
         .await
         .map_err(|err| format!("Could not write {}: {}", path.display(), err.message()))?;
     reload(state, ctx).await;
@@ -123,8 +150,12 @@ pub(crate) async fn write_rule(
         Some(mode) => format!("Set {} `{pattern}` to {}", kind.key(), mode.as_str()),
         None => format!("Removed the {} rule `{pattern}`", kind.key()),
     };
+    let repo = match scope {
+        Scope::Repo(repo) => format!(" for repo {repo}"),
+        _ => String::new(),
+    };
     Ok(format!(
-        "{change} in {}. It applies from the next prompt.",
+        "{change}{repo} in {}. It applies from the next prompt.",
         path.display()
     ))
 }

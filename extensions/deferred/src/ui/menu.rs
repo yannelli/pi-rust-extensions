@@ -3,7 +3,7 @@
 use pi_ext_sdk::style;
 
 use super::render::{accent, mode_word, muted, why_marker};
-use super::rows::{Inventory, Row, Why};
+use super::rows::{Inventory, Row, Scope, Why};
 use super::{Choice, Entry, View};
 use crate::config::Mode;
 use crate::measure::wrap;
@@ -43,7 +43,10 @@ impl View {
                 ));
                 lines.push(style::dim(&format!(
                     " From: {}",
-                    rule.scope.map_or(rule.source.as_str(), |s| s.label())
+                    rule.scope.as_ref().map_or_else(
+                        || file_label(&rule.source, rule.repo.as_deref()),
+                        Scope::label
+                    )
                 )));
                 lines.push(style::dim(&format!(
                     " Matches {} item(s) now",
@@ -80,6 +83,7 @@ fn choice_label(mode: Mode) -> &'static str {
         Mode::On => "Load normally (on)",
         Mode::Names => "List the name only (names)",
         Mode::Deferred => "Searchable, not listed (deferred)",
+        Mode::User => "Only the user runs it, as /skill:name (user)",
         Mode::Off => "Disable (off)",
     }
 }
@@ -90,13 +94,27 @@ fn explain(row: &Row) -> String {
         Why::Default => format!("{mode} (no rule matches)"),
         Why::Auto => format!("{mode} (auto: extension and MCP tools pass the context share)"),
         Why::Pinned(reason) => format!("{mode} ({reason})"),
+        Why::Undeclared(exposure) => {
+            format!("{mode} (pi keeps it undeclared: `{exposure}` exposure; off blocks its calls)")
+        }
         Why::Rule {
             pattern,
             source,
             scope,
+            repo,
         } => format!(
             "{mode} (rule `{pattern}` in {})",
-            scope.map_or(source.as_str(), |s| s.label())
+            scope
+                .as_ref()
+                .map_or_else(|| file_label(source, repo.as_deref()), Scope::label)
         ),
+    }
+}
+
+/// A `deferred.json` source, with the repo of a repo-scoped rule.
+fn file_label(source: &str, repo: Option<&str>) -> String {
+    match repo {
+        Some(repo) => format!("{source} for repo {repo}"),
+        None => source.to_owned(),
     }
 }

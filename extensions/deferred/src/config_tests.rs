@@ -83,3 +83,87 @@ fn read_file_skips_missing_and_broken() {
     std::fs::write(&path, r#"{"auto": 5}"#).unwrap();
     assert_eq!(read_file(&path), Some(json!({ "auto": 5 })));
 }
+
+#[test]
+fn user_mode_is_for_skills_only() {
+    assert_eq!(Mode::parse("manual"), Some(Mode::User));
+    assert_eq!(Mode::parse("User-Only"), Some(Mode::User));
+    let layer = json!({ "skills": { "deploy": "user" }, "tools": { "bash": "user" } });
+    let config = Config::merge([("x", Some(&layer))]);
+    assert_eq!(config.mode(Kind::Skill, "deploy"), Some(Mode::User));
+    assert_eq!(config.mode(Kind::Tool, "bash"), None);
+    assert_eq!(
+        config.warnings,
+        ["x: `user` is for skills only, not `bash`"]
+    );
+}
+
+#[test]
+fn repo_rules_apply_after_global_and_before_project_rules() {
+    let file = json!({ "tools": { "a": "names" }, "repos": { "Yannelli/Pi-Rust": { "tools": { "a": "off", "b": "off" } } } });
+    let setting = json!({
+        "tools": { "b": "names", "c": "names" },
+        "repos": { "yannelli/*": { "tools": { "c": "deferred" }, "maxResults": 9 }, "other/x": { "tools": { "a": "on" } } }
+    });
+    let project_setting = json!({ "tools": { "c": "names" } });
+    let project_file = json!({ "tools": { "z": "on" } });
+    let layers = |repo| Layers {
+        global_file: Some(("/g.json", &file)),
+        setting: Some(&setting),
+        project_setting: Some(&project_setting),
+        project_file: Some(("/p.json", &project_file)),
+        repo,
+    };
+    let config = Config::load(&layers(Some("yannelli/pi-rust")));
+    assert_eq!(config.mode(Kind::Tool, "a"), Some(Mode::Off));
+    assert_eq!(
+        config.mode(Kind::Tool, "b"),
+        Some(Mode::Off),
+        "repo beats global"
+    );
+    assert_eq!(
+        config.mode(Kind::Tool, "c"),
+        Some(Mode::Names),
+        "project beats repo"
+    );
+    assert_eq!(config.max_results, 9);
+    let a = config.rule(Kind::Tool, "a").unwrap();
+    assert_eq!(
+        (a.source.as_str(), a.repo.as_deref()),
+        ("/g.json", Some("Yannelli/Pi-Rust"))
+    );
+    let order: Vec<(&str, Option<&str>)> = config
+        .rules
+        .iter()
+        .map(|r| (r.pattern.as_str(), r.repo.as_deref()))
+        .collect();
+    assert_eq!(
+        order,
+        [
+            ("a", None),
+            ("b", None),
+            ("a", Some("Yannelli/Pi-Rust")),
+            ("b", Some("Yannelli/Pi-Rust")),
+            ("c", Some("yannelli/*")),
+            ("c", None),
+            ("z", None)
+        ]
+    );
+    let elsewhere = Config::load(&layers(Some("someone/else")));
+    assert_eq!(elsewhere.mode(Kind::Tool, "b"), Some(Mode::Names));
+    assert!(elsewhere.rules.iter().all(|r| r.repo.is_none()));
+    assert_eq!(Config::load(&layers(None)).rules.len(), 4);
+}
+
+#[test]
+fn edit_repo_rule_reuses_the_key_and_prunes_empty_blocks() {
+    let block = json!({ "tools": { "a": "off" }, "repos": { "Owner/Repo": { "skills": { "x": "user" } } } });
+    let block = edit_repo_rule(Some(block), "owner/repo", Kind::Tool, "b", Some(Mode::Off));
+    assert_eq!(
+        block["repos"],
+        json!({ "Owner/Repo": { "skills": { "x": "user" }, "tools": { "b": "off" } } })
+    );
+    let block = edit_repo_rule(Some(block), "owner/repo", Kind::Tool, "b", None);
+    let block = edit_repo_rule(Some(block), "Owner/Repo", Kind::Skill, "x", None);
+    assert_eq!(block, json!({ "tools": { "a": "off" } }));
+}

@@ -50,7 +50,8 @@ async fn inventory(state: &Shared, ctx: &CommandCtx) -> Inventory {
 pub(crate) async fn open(state: Shared, ctx: &CommandCtx) -> Result<()> {
     let (host, snap) = (ctx.host(), ctx.snapshot());
     let trusted = project_trusted(host, snap).await;
-    let mut view = View::new(trusted);
+    let repo = lock(&state).config.repo.clone();
+    let mut view = View::new(trusted).with_repo(repo);
     let mut inv = inventory(&state, ctx).await;
     let mut width = snap.terminal_width.map_or(100, |w| w as usize);
     let mut height = panel_height(snap.terminal_height.map(|h| h as usize));
@@ -81,7 +82,7 @@ pub(crate) async fn open(state: Shared, ctx: &CommandCtx) -> Result<()> {
                         change.kind,
                         &change.pattern,
                         change.mode,
-                        scope,
+                        &scope,
                     )
                     .await;
                     view.status = Some(match result {

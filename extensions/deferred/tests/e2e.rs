@@ -52,3 +52,40 @@ fn deferred_tool_loads_on_the_next_call_and_skills_list_by_name() {
         output.tool_names(1)
     );
 }
+
+#[test]
+fn user_skills_run_by_command_only_and_off_skills_do_not_run() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let run = |mode: &str| {
+        let settings = json!({ "deferred": { "skills": { "demo": mode } } });
+        Run::new(cargo_bin("pi-rust-ext", "pi-rust-ext"))
+            .args(["deferred"])
+            .settings(settings)
+            .file("agent/skills/demo/SKILL.md", SKILL)
+            .turns([Turn::text("done")])
+            .prompt("/skill:demo go")
+            .run()
+            .unwrap()
+    };
+    let output = run("user");
+    let stderr = &output.stderr;
+    let prompt = output.system_prompt(0);
+    assert!(!prompt.contains("<name>demo</name>"), "{prompt}\n{stderr}");
+    assert!(!prompt.contains("Deferred skills"), "{prompt}");
+    let request = output.requests[0].to_string();
+    assert!(
+        request.contains("DEMO-SKILL-BODY-41c2"),
+        "{request}\n{stderr}"
+    );
+
+    let output = run("off");
+    assert!(
+        output.requests.is_empty(),
+        "{:?}\n{}",
+        output.requests,
+        output.stderr
+    );
+    assert!(output.status.success(), "{}", output.stderr);
+}

@@ -137,10 +137,17 @@ pub fn status(
         }
         None => "auto: off".to_owned(),
     });
+    if let Some(repo) = &config.repo {
+        lines.push(format!("repo: {repo} (origin)"));
+    }
     lines.push(format!("rules: {}", config.rules.len()));
     for rule in &config.rules {
+        let repo = rule
+            .repo
+            .as_ref()
+            .map_or(String::new(), |r| format!(" [repo {r}]"));
         lines.push(format!(
-            "  {} {} = {}",
+            "  {} {} = {}{repo}",
             rule.kind.key(),
             rule.pattern,
             rule.mode.as_str()
@@ -167,14 +174,19 @@ pub fn status(
         };
         let (names, hidden) = (of(Mode::Names), of(Mode::Deferred));
         let off: Vec<&(Kind, String, usize)> = plan.off.iter().filter(|o| o.0 == kind).collect();
+        let user: Vec<&(Kind, String, usize)> = plan.user.iter().filter(|o| o.0 == kind).collect();
         let tokens: usize = names.iter().chain(&hidden).map(|i| i.tokens).sum::<usize>()
-            + off.iter().map(|o| o.2).sum::<usize>();
+            + off.iter().chain(&user).map(|o| o.2).sum::<usize>();
         saved += tokens;
-        if names.len() + hidden.len() + off.len() == 0 {
+        if names.len() + hidden.len() + off.len() + user.len() == 0 {
             continue;
         }
+        let user_count = match user.len() {
+            0 => String::new(),
+            n => format!(", {n} user"),
+        };
         lines.push(format!(
-            "{}s: {} names, {} deferred, {} off (~{tokens} tokens)",
+            "{}s: {} names, {} deferred{user_count}, {} off (~{tokens} tokens)",
             kind.label(),
             names.len(),
             hidden.len(),
@@ -185,6 +197,7 @@ pub fn status(
             .chain(&hidden)
             .map(|i| i.name.clone())
             .collect();
+        listed.extend(user.iter().map(|o| format!("{} (user)", o.1)));
         listed.extend(off.iter().map(|o| format!("{} (off)", o.1)));
         lines.push(format!("  {}", clip(&listed, 12)));
     }

@@ -7,21 +7,24 @@ use serde_json::Value;
 use crate::catalog::{Inputs, SECTION, tool_modes};
 use crate::config::{Config, Kind, Mode, Rule, SETTING_SOURCE};
 use crate::measure::{
-    context_tokens, section_tokens, skill_tokens, str_of, summary_line, tool_tokens,
+    context_tokens, is_undeclared, section_tokens, skill_tokens, str_of, summary_line, tool_tokens,
 };
 
-/// A settings file the panel can write.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A settings block the panel can write.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scope {
     Global,
     Project,
+    /// `repos.<owner/name>` of the global settings.
+    Repo(String),
 }
 
 impl Scope {
-    pub fn label(self) -> &'static str {
+    pub fn label(&self) -> String {
         match self {
-            Self::Global => "global settings",
-            Self::Project => "project settings",
+            Self::Global => "global settings".to_owned(),
+            Self::Project => "project settings".to_owned(),
+            Self::Repo(repo) => format!("global settings for repo {repo}"),
         }
     }
 }
@@ -36,7 +39,10 @@ pub enum Why {
         pattern: String,
         source: String,
         scope: Option<Scope>,
+        repo: Option<String>,
     },
+    /// pi keeps the MCP tool undeclared (this exposure) when no rule matches.
+    Undeclared(String),
     /// pi decides, whatever the rules say.
     Pinned(&'static str),
 }
@@ -50,6 +56,8 @@ pub struct Row {
     pub why: Why,
     pub loaded: bool,
     pub tokens: usize,
+    /// pi leaves the item out of the prompt by itself, so its mode saves nothing.
+    pub undeclared: bool,
     pub details: Vec<String>,
 }
 
@@ -57,7 +65,7 @@ impl Row {
     /// The settings scope of a rule that names this item exactly.
     pub fn exact_scope(&self) -> Option<Scope> {
         match &self.why {
-            Why::Rule { pattern, scope, .. } if *pattern == self.name => *scope,
+            Why::Rule { pattern, scope, .. } if *pattern == self.name => scope.clone(),
             _ => None,
         }
     }
@@ -74,6 +82,7 @@ pub struct RuleRow {
     pub mode: Mode,
     pub source: String,
     pub scope: Option<Scope>,
+    pub repo: Option<String>,
     pub matches: usize,
 }
 
@@ -93,7 +102,7 @@ impl Inventory {
     pub fn saved(&self) -> usize {
         self.rows
             .iter()
-            .filter(|r| r.mode != Mode::On && !r.loaded)
+            .filter(|r| r.mode != Mode::On && !r.loaded && !r.undeclared)
             .map(|r| r.tokens)
             .sum()
     }
@@ -114,6 +123,9 @@ fn scope_of(rule: &Rule, sources: &Sources) -> Option<Scope> {
     if rule.source != SETTING_SOURCE {
         return None;
     }
+    if let Some(repo) = &rule.repo {
+        return Some(Scope::Repo(repo.clone()));
+    }
     let has = |block: Option<&Value>| {
         block
             .and_then(|b| b.get(rule.kind.key()))
@@ -133,6 +145,7 @@ fn why(sources: &Sources, kind: Kind, name: &str) -> Why {
             pattern: rule.pattern.clone(),
             source: rule.source.clone(),
             scope: scope_of(rule, sources),
+            repo: rule.repo.clone(),
         },
         None => Why::Default,
     }
@@ -158,8 +171,8 @@ pub fn build(sources: &Sources) -> Inventory {
         let mut why = why(sources, Kind::Tool, name);
         if why == Why::Default && mode != Mode::On {
             why = Why::Auto;
-        } else if why == Why::Default && matches!(exposure, "codemode" | "deferred") {
-            why = Why::Pinned("pi keeps it undeclared (MCP exposure)");
+        } else if why == Why::Default && is_undeclared(tool) {
+            why = Why::Undeclared(exposure.to_owned());
         }
         let path = tool.get("sourceInfo").map_or("", |s| str_of(s, "path"));
         let mut details = vec![format!("Source: {path}")];
@@ -174,6 +187,7 @@ pub fn build(sources: &Sources) -> Inventory {
             why,
             loaded: sources.loaded.contains(name),
             tokens: tool_tokens(tool),
+            undeclared: is_undeclared(tool),
             details,
         });
     }
@@ -188,8 +202,8 @@ pub fn build(sources: &Sources) -> Inventory {
         let hidden = skill.get("disableModelInvocation").and_then(Value::as_bool) == Some(true);
         let (mode, why) = match hidden {
             true => (
-                Mode::On,
-                Why::Pinned("disable-model-invocation: pi never lists it"),
+                Mode::User,
+                Why::Pinned("disable-model-invocation: only the user can run it"),
             ),
             false => (
                 sources.config.mode(Kind::Skill, name).unwrap_or_default(),
@@ -207,6 +221,7 @@ pub fn build(sources: &Sources) -> Inventory {
             why,
             loaded: false,
             tokens,
+            undeclared: hidden,
             details,
         });
     }
@@ -228,6 +243,7 @@ pub fn build(sources: &Sources) -> Inventory {
             why: why(sources, Kind::Context, path),
             loaded: false,
             tokens: context_tokens(path, content),
+            undeclared: false,
             details,
         });
     }
@@ -244,6 +260,7 @@ pub fn build(sources: &Sources) -> Inventory {
             why: why(sources, Kind::Section, name),
             loaded: false,
             tokens: section_tokens(name, text),
+            undeclared: false,
             details: vec![format!("Size: {} bytes", text.len())],
         });
     }
@@ -265,6 +282,7 @@ pub fn build(sources: &Sources) -> Inventory {
             mode: rule.mode,
             source: rule.source.clone(),
             scope: scope_of(rule, sources),
+            repo: rule.repo.clone(),
             matches,
         });
     }
