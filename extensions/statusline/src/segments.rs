@@ -10,7 +10,30 @@ use crate::themes::Role;
 
 pub use crate::items::{Item, ItemKind};
 
-const BAR_CELLS: usize = 10;
+pub const BAR_CELLS: usize = 10;
+
+/// The part that fills each bar cell, or `None` for an empty cell. The used half-cell steps are
+/// shared by the parts in proportion to their tokens, and a cell has the part of its left half.
+pub fn bar_cell_parts(percent: f64, parts: &[u64]) -> Vec<Option<usize>> {
+    let steps = BAR_CELLS * 2;
+    let used = ((percent.clamp(0.0, 100.0) / 100.0) * steps as f64).round() as usize;
+    let total = parts.iter().sum::<u64>().max(1) as u128;
+    let mut sum = 0u128;
+    let ends: Vec<usize> = parts
+        .iter()
+        .map(|tokens| {
+            sum += u128::from(*tokens);
+            ((sum * used as u128 + total / 2) / total) as usize
+        })
+        .collect();
+    let last = parts.len().saturating_sub(1);
+    (0..BAR_CELLS)
+        .map(|cell| {
+            let step = cell * 2;
+            (step < used).then(|| ends.iter().position(|&end| end > step).unwrap_or(last))
+        })
+        .collect()
+}
 
 /// A braille bar in half-cell steps: `⣿` full, `⡇` half, and the blank braille cell
 /// (U+2800) for empty, which keeps the bar width fixed.

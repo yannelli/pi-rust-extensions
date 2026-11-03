@@ -88,6 +88,9 @@ pub struct StatusSnapshot {
     pub subscription: bool,
     pub run_state: RunState,
     pub version: String,
+    /// Estimated tokens of each part of the context, from `ctx.getContextBreakdown`; empty when
+    /// the host has no breakdown.
+    pub context_parts: Vec<u64>,
 }
 
 /// What the extension tracks beside the ctx snapshot.
@@ -99,6 +102,7 @@ pub struct Extras {
     pub compacting: bool,
     pub auto_compact: bool,
     pub version: String,
+    pub context_parts: Vec<u64>,
 }
 
 fn u64_at(value: &Value, key: &str) -> Option<u64> {
@@ -182,6 +186,7 @@ impl StatusSnapshot {
                 run_state
             },
             version: extras.version.clone(),
+            context_parts: extras.context_parts.clone(),
         }
     }
 

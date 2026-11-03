@@ -44,7 +44,9 @@ pub use render::{
     ToolRenderContext, ToolResultRender,
 };
 pub use reply::{EventReply, ToolResult, content, entry};
-pub use snapshot::{ContextUsage, InitParams, Model, ScopedModel, Snapshot};
+pub use snapshot::{
+    ContextBreakdown, ContextPart, ContextUsage, InitParams, Model, ScopedModel, Snapshot,
+};
 pub use spec::{
     AutocompleteRequest, CommandSpec, CompletionItem, FlagSpec, FlagType, OAuthSpec, RouteRequest,
     ShortcutSpec, Suggestions, ToolSpec,

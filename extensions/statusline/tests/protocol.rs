@@ -58,6 +58,7 @@ struct Seen {
     footers: Vec<Vec<String>>,
     warnings: Vec<String>,
     responded: bool,
+    breakdowns: usize,
 }
 
 /// Answers host requests until `done` holds.
@@ -67,6 +68,10 @@ async fn pump(host: &mut TestHost, seen: &mut Seen, event_id: u64, done: impl Fn
         let id = message["id"].clone();
         match message["method"].as_str() {
             Some("settings.get") => host.answer(&id, Value::Null).await,
+            Some("ctx.getContextBreakdown") => {
+                seen.breakdowns += 1;
+                host.answer(&id, json!({"parts": [{"id": "systemPrompt", "label": "System prompt", "tokens": 10}], "total": 10})).await
+            }
             Some("exec") => {
                 host.answer(
                     &id,
@@ -256,4 +261,25 @@ async fn footer_data_changes_render_the_new_run_state() {
         "{line:?}"
     );
     host.finish().await.unwrap();
+}
+
+/// Only a layout that shows `contextBar` asks pi for the context breakdown.
+#[tokio::test]
+async fn the_breakdown_is_read_only_for_a_context_bar() {
+    for (segments, expected) in [(json!(["contextBar"]), 1), (json!(["model", "dir"]), 0)] {
+        let dirs = Dirs::new("breakdown");
+        let config = json!({"chip": "plain", "icons": "none", "segments": segments});
+        dirs.write(&dirs.agent().join("ext/statusline.json"), config);
+        let mut host = TestHost::start(extension(PathBuf::from("/nonexistent-home")));
+        host.initialize_in(dirs.cwd().to_str().unwrap(), dirs.agent().to_str().unwrap())
+            .await;
+        let event = json!({ "name": "session_start", "event": { "type": "session_start" }, "ctx": ctx(&dirs.cwd(), false) });
+        host.request(1, "event", event).await;
+        let mut seen = Seen::default();
+        pump(&mut host, &mut seen, 1, |seen| {
+            seen.responded && !seen.footers.is_empty()
+        })
+        .await;
+        assert_eq!(seen.breakdowns, expected, "{segments}");
+    }
 }

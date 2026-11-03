@@ -1,6 +1,6 @@
 //! Chip shapes: how the colored segments on one side of a status line are drawn and joined.
 
-use crate::colors::{RESET, ThemeColor, background, foreground};
+use crate::colors::{RESET, ThemeColor, background, foreground, shade};
 use crate::themes::ink_for;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +72,43 @@ pub struct Piece {
     pub fg: Fg,
     pub bg: [u8; 3],
     pub ink: Option<Fg>,
+    /// Per-part colors for the cells of a context bar inside `text`.
+    pub bar: Option<BarColors>,
+}
+
+/// The cells of a context bar: they start at char `start` of the piece text, and each has the
+/// index of its part among `parts`, or `None` when empty.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BarColors {
+    pub start: usize,
+    pub cells: Vec<Option<usize>>,
+    pub parts: usize,
+}
+
+/// The piece text for a piece painted in `base` (`None`: the default color). Bar cells get a
+/// shade of `base` each, and the text after them returns to `base`.
+fn body(piece: &Piece, base: Option<Fg>) -> String {
+    let Some(bar) = &piece.bar else {
+        return piece.text.clone();
+    };
+    let rgb = base.unwrap_or(piece.fg).rgb();
+    let reopen = match base {
+        Some(Fg::Token(token)) => token.open(),
+        Some(Fg::Rgb(rgb)) => foreground(rgb),
+        None => "\x1b[39m".to_string(),
+    };
+    let mut chars = piece.text.chars();
+    let mut out: String = chars.by_ref().take(bar.start).collect();
+    for part in &bar.cells {
+        let Some(glyph) = chars.next() else { break };
+        if let Some(part) = part {
+            out.push_str(&foreground(shade(rgb, *part, bar.parts)));
+        }
+        out.push(glyph);
+    }
+    out.push_str(&reopen);
+    out.extend(chars);
+    out
 }
 
 /// Draws `pieces`; `right` mirrors the arrows of `powerline` and `slanted` for a right-aligned group.
@@ -82,36 +119,44 @@ pub fn join(chip: Chip, pieces: &[Piece], separator: &str, right: bool) -> Strin
         Fg::Token(token) => token.paint(text),
         Fg::Rgb(rgb) => format!("{}{text}{RESET}", fg(rgb)),
     };
-    let colored = |piece: &Piece, text: &str| paint(piece.ink.unwrap_or(piece.fg), text);
+    let colored = |piece: &Piece, wrap: &dyn Fn(String) -> String| {
+        let base = piece.ink.unwrap_or(piece.fg);
+        paint(base, &wrap(body(piece, Some(base))))
+    };
     let block = |piece: &Piece| match piece.ink {
         Some(ink) => format!(
             "{}{}",
             bg(piece.bg),
-            paint(ink, &format!(" {} ", piece.text))
+            paint(ink, &format!(" {} ", body(piece, Some(ink))))
         ),
-        None => format!("{}{} {} ", bg(piece.bg), fg(ink_for(piece.bg)), piece.text),
+        None => {
+            let ink = ink_for(piece.bg);
+            let text = body(piece, Some(Fg::Rgb(ink)));
+            format!("{}{} {text} ", bg(piece.bg), fg(ink))
+        }
     };
     let joined = |parts: Vec<String>| parts.join(&ThemeColor::Dim.paint(separator));
     match chip {
         Chip::Plain => joined(
             pieces
                 .iter()
-                .map(|piece| colored(piece, &piece.text))
+                .map(|piece| colored(piece, &|text| text))
                 .collect(),
         ),
         Chip::Brackets => joined(
             pieces
                 .iter()
-                .map(|piece| colored(piece, &format!("[{}]", piece.text)))
+                .map(|piece| colored(piece, &|text| format!("[{text}]")))
                 .collect(),
         ),
         Chip::Dot => joined(
             pieces
                 .iter()
                 .map(|piece| {
-                    let text = piece
-                        .ink
-                        .map_or_else(|| piece.text.clone(), |ink| paint(ink, &piece.text));
+                    let text = piece.ink.map_or_else(
+                        || body(piece, None),
+                        |ink| paint(ink, &body(piece, Some(ink))),
+                    );
                     format!("{} {text}", paint(piece.fg, "●"))
                 })
                 .collect(),

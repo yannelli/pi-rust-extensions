@@ -1,6 +1,6 @@
 # statusline
 
-Created 2026-10-30. Last updated 2026-11-02.
+Created 2026-10-30. Last updated 2026-11-03.
 
 A footer status line for pi-rust. It replaces the built-in `statusLine` setting and renders with `ui.setFooter` from the ctx snapshot, the footer data (`sessionStats`, `runState`, `gitBranch`), and events. It renders again when the footer width changes.
 
@@ -60,3 +60,9 @@ For example, this draws two model badges with different colors:
 - Color: the context roles, by the highest window: above 90% high, above 70% warn, else ok.
 - Hidden for other providers, for a provider without a login or with a fetch error, and under pi versions without `usage.get` (pi-rust 0.8.2 and older).
 - The extension asks pi only while a usage segment is in the status line: at once, every 90 seconds, and when a run ends. pi keeps each result for 60 seconds (5 minutes for `google-antigravity`).
+
+`contextBar` shows the context use as 10 braille cells that fill from left to right in steps of 5%, for example `⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀ 65%`. Each cell is blank (U+2800), half (`⡇`), or full (`⣿`).
+
+- Parts: under pi-rust hosts with `ctx.getContextBreakdown`, the cells are split by part of the context: system prompt, built-in tools, extension tools, MCP tools, context files, skills, user messages, assistant messages, and tool results. Each part has a mild shade of the segment color, and a cell has the shade of the part that fills its left half.
+- The extension asks pi for the breakdown only while a line shows `contextBar`: at the session start and after each turn, a compaction, a tree move, or a model change.
+- Other hosts draw the bar in one color.

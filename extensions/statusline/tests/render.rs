@@ -246,3 +246,39 @@ fn context_bar_fills_in_half_cells_of_five_percent() {
         );
     }
 }
+
+#[test]
+fn context_bar_cells_follow_the_parts_in_order() {
+    let parts = [100, 100, 0, 0, 0, 0, 0, 0, 200];
+    let mut expected = vec![Some(0), Some(0), Some(1), Some(8), Some(8)];
+    expected.extend([None; 5]);
+    assert_eq!(bar_cell_parts(50.0, &parts), expected);
+    assert_eq!(bar_cell_parts(5.0, &[1])[..2], [Some(0), None]);
+    assert!(bar_cell_parts(0.0, &parts).iter().all(Option::is_none));
+}
+
+#[test]
+fn context_bar_cells_take_a_shade_per_part() {
+    let mut single = snapshot();
+    single.context = Some(ContextUsage {
+        tokens: None,
+        context_window: 500_000,
+        percent: Some(50.0),
+    });
+    let mut parted = single.clone();
+    parted.context_parts = vec![100, 100, 0, 0, 0, 0, 0, 0, 200];
+    let draw = |state: &StatusSnapshot, chip: &str| {
+        let settings = json!({"chip": chip, "icons": "none", "segments": ["contextBar"]});
+        builtin(settings).render(state, 80).remove(0)
+    };
+    let colors = |line: &str| line.matches("\x1b[38;").count();
+    for chip in ["plain", "brackets", "dot", "block", "powerline"] {
+        let (one, many) = (draw(&single, chip), draw(&parted, chip));
+        assert_eq!(plain_line(&many), plain_line(&one), "{chip}");
+        assert!(colors(&many) >= colors(&one) + 5, "{chip}: {many:?}");
+    }
+    // The percent after the bar is back in the segment color.
+    let plain = draw(&parted, "plain");
+    let tail = plain.rsplit("\u{2800}").next().unwrap_or_default();
+    assert!(tail.starts_with("\x1b[32m 50%"), "{plain:?}");
+}

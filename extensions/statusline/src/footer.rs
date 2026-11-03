@@ -12,6 +12,7 @@ use crate::builtin::BuiltinStatusLine;
 use crate::command::{DEBOUNCE, fit_output, run_command};
 use crate::config::{StatusLineConfig, StatusLineSettings};
 use crate::model::{Extras, StatusSnapshot, cache_hit_rate, status_payload};
+use crate::segments::Segment;
 use crate::sources;
 
 pub const DEFAULT_WIDTH: usize = 80;
@@ -147,6 +148,25 @@ impl Footer {
             }
             _ => {}
         }
+    }
+
+    /// Reads the context breakdown again when a line shows `contextBar`; hosts without it leave
+    /// the bar in one color.
+    pub async fn refresh_breakdown(&self, host: &Host) {
+        let shown = |config: &Option<StatusLineConfig>| matches!(config, Some(StatusLineConfig::Builtin(builtin)) if builtin.shows(Segment::ContextBar));
+        let wanted = {
+            let state = self.lock();
+            shown(&state.config) || state.preview.as_ref().is_some_and(shown)
+        };
+        if !wanted {
+            self.lock().extras.context_parts.clear();
+            return;
+        }
+        let parts = match host.context_breakdown().await {
+            Ok(Some(breakdown)) => breakdown.parts.iter().map(|part| part.tokens).collect(),
+            _ => Vec::new(),
+        };
+        self.lock().extras.context_parts = parts;
     }
 
     /// New footer data from `footer.changed`, for example the run state after a run settles.
