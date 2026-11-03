@@ -2,6 +2,13 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.9] - 2026-11-03
+
+### Added
+
+- **deferred:** user-only skills, repo-scoped rules, and MCP off ([c8d1cbe](https://github.com/yannelli/pi-rust-extensions/commit/c8d1cbedd0210230a0253518b2c704714f921cde))
+- **statusline:** shade contextBar cells by part of the context ([e87dad4](https://github.com/yannelli/pi-rust-extensions/commit/e87dad4aff84af5c2d6006789127595a009039b6))
+
 ## [0.5.8] - 2026-11-03
 
 ### Added
