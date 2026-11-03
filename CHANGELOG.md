@@ -2,6 +2,12 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.8] - 2026-11-03
+
+### Added
+
+- **statusline:** draw contextBar as 10 braille cells in 5% steps ([05e1aff](https://github.com/yannelli/pi-rust-extensions/commit/05e1affca76774fc1976b16c2a1af0c4611d7651))
+
 ## [0.5.7] - 2026-11-02
 
 ### Added
