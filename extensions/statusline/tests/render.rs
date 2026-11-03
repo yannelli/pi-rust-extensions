@@ -189,7 +189,10 @@ fn segments_show_what_the_footer_shows() {
     assert_eq!(text(Segment::ContextUsed).as_deref(), Some("3% used"));
     assert_eq!(text(Segment::ContextRemaining).as_deref(), Some("97% left"));
     assert_eq!(text(Segment::ContextWindow).as_deref(), Some("500k window"));
-    assert_eq!(text(Segment::ContextBar).as_deref(), Some("⣤⣤⣤⣤⣤⣤⣤⣤ 3%"));
+    assert_eq!(
+        text(Segment::ContextBar).as_deref(),
+        Some("⡇\u{2800}\u{2800}\u{2800}\u{2800}\u{2800}\u{2800}\u{2800}\u{2800}\u{2800} 3%")
+    );
     assert_eq!(text(Segment::RunState).as_deref(), Some("● working"));
     assert_eq!(text(Segment::Logo).as_deref(), Some("π"));
     assert_eq!(text(Segment::Version).as_deref(), Some("v0.8.0"));
@@ -205,10 +208,41 @@ fn segments_show_what_the_footer_shows() {
     assert_eq!(segment_text(Segment::Thinking, &full), None);
     assert_eq!(
         segment_text(Segment::ContextBar, &full).as_deref(),
-        Some("⣿⣿⣿⣿⣿⣿⣿⣧ 95%")
+        Some("⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇ 95%")
     );
     assert_eq!(Segment::ContextBar.role(&full), Role::ContextHigh);
     for segment in Segment::ALL {
         assert_eq!(Segment::from_name(segment.name()), Some(*segment));
+    }
+}
+
+#[test]
+fn context_bar_fills_in_half_cells_of_five_percent() {
+    let expected = [
+        (0.0, "__________"),
+        (5.0, "⡇_________"),
+        (10.0, "⣿_________"),
+        (15.0, "⣿⡇________"),
+        (25.0, "⣿⣿⡇_______"),
+        (40.0, "⣿⣿⣿⣿______"),
+        (50.0, "⣿⣿⣿⣿⣿_____"),
+        (65.0, "⣿⣿⣿⣿⣿⣿⡇___"),
+        (75.0, "⣿⣿⣿⣿⣿⣿⣿⡇__"),
+        (90.0, "⣿⣿⣿⣿⣿⣿⣿⣿⣿_"),
+        (95.0, "⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇"),
+        (100.0, "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿"),
+    ];
+    for (percent, bar) in expected {
+        let mut state = snapshot();
+        state.context = Some(ContextUsage {
+            tokens: None,
+            context_window: 500_000,
+            percent: Some(percent),
+        });
+        let shown = segment_text(Segment::ContextBar, &state).expect("bar");
+        assert_eq!(
+            shown.replace('\u{2800}', "_"),
+            format!("{bar} {percent:.0}%")
+        );
     }
 }
