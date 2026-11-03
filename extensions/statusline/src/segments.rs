@@ -10,17 +10,18 @@ use crate::themes::Role;
 
 pub use crate::items::{Item, ItemKind};
 
-const BAR_CELLS: usize = 8;
+const BAR_CELLS: usize = 10;
 
-/// A braille bar with half-cell steps: `⣿` full, `⣧` half, `⣤` the empty track.
+/// A braille bar in half-cell steps: `⣿` full, `⡇` half, and the blank braille cell
+/// (U+2800) for empty, which keeps the bar width fixed.
 fn braille_bar(percent: f64) -> String {
     let halves = ((percent / 100.0) * (BAR_CELLS * 2) as f64).round() as usize;
     let (full, half) = (halves / 2, halves % 2);
     format!(
         "{}{}{}",
         "⣿".repeat(full),
-        "⣧".repeat(half),
-        "⣤".repeat(BAR_CELLS - full - half)
+        "⡇".repeat(half),
+        "\u{2800}".repeat(BAR_CELLS - full - half)
     )
 }
 
