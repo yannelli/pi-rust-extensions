@@ -189,7 +189,7 @@ fn segments_show_what_the_footer_shows() {
     assert_eq!(text(Segment::ContextUsed).as_deref(), Some("3% used"));
     assert_eq!(text(Segment::ContextRemaining).as_deref(), Some("97% left"));
     assert_eq!(text(Segment::ContextWindow).as_deref(), Some("500k window"));
-    assert_eq!(text(Segment::ContextBar).as_deref(), Some("▱▱▱▱▱▱▱▱ 3%"));
+    assert_eq!(text(Segment::ContextBar).as_deref(), Some("⣤⣤⣤⣤⣤⣤⣤⣤ 3%"));
     assert_eq!(text(Segment::RunState).as_deref(), Some("● working"));
     assert_eq!(text(Segment::Logo).as_deref(), Some("π"));
     assert_eq!(text(Segment::Version).as_deref(), Some("v0.8.0"));
@@ -205,7 +205,7 @@ fn segments_show_what_the_footer_shows() {
     assert_eq!(segment_text(Segment::Thinking, &full), None);
     assert_eq!(
         segment_text(Segment::ContextBar, &full).as_deref(),
-        Some("▰▰▰▰▰▰▰▰ 95%")
+        Some("⣿⣿⣿⣿⣿⣿⣿⣧ 95%")
     );
     assert_eq!(Segment::ContextBar.role(&full), Role::ContextHigh);
     for segment in Segment::ALL {

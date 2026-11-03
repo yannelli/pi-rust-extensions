@@ -12,6 +12,18 @@ pub use crate::items::{Item, ItemKind};
 
 const BAR_CELLS: usize = 8;
 
+/// A braille bar with half-cell steps: `⣿` full, `⣧` half, `⣤` the empty track.
+fn braille_bar(percent: f64) -> String {
+    let halves = ((percent / 100.0) * (BAR_CELLS * 2) as f64).round() as usize;
+    let (full, half) = (halves / 2, halves % 2);
+    format!(
+        "{}{}{}",
+        "⣿".repeat(full),
+        "⣧".repeat(half),
+        "⣤".repeat(BAR_CELLS - full - half)
+    )
+}
+
 macro_rules! segments {
     ($($variant:ident => $name:literal $(| $alias:literal)*),* $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,12 +252,7 @@ pub fn segment_text(segment: Segment, snapshot: &StatusSnapshot) -> Option<Strin
                 return Some("context ?".into());
             };
             let percent = percent.clamp(0.0, 100.0);
-            let filled = ((percent / 100.0) * BAR_CELLS as f64).round() as usize;
-            Some(format!(
-                "{}{} {percent:.0}%",
-                "▰".repeat(filled),
-                "▱".repeat(BAR_CELLS - filled)
-            ))
+            Some(format!("{} {percent:.0}%", braille_bar(percent)))
         }
         Segment::Usage => usage::segment_text(&snapshot.model.as_ref()?.provider, false),
         Segment::UsageReset => usage::segment_text(&snapshot.model.as_ref()?.provider, true),
