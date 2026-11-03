@@ -6,13 +6,13 @@ use std::collections::BTreeMap;
 use pi_ext_sdk::style::{truncate, visible_width};
 use serde_json::Value;
 
-use crate::chips::{Chip, Fg, Piece, join};
+use crate::chips::{BarColors, Chip, Fg, Piece, join};
 use crate::colors::ThemeColor;
 use crate::config::StatusLineSettings;
 use crate::icons::Icons;
 use crate::model::StatusSnapshot;
 use crate::presets::{PRESETS, Preset};
-use crate::segments::{Item, ItemKind, Segment, segment_text};
+use crate::segments::{Item, ItemKind, Segment, bar_cell_parts, segment_text};
 use crate::themes::{Palette, Role, parse_badge_hex, parse_hex};
 
 const MIN_RIGHT: usize = 8;
@@ -98,6 +98,12 @@ impl BuiltinStatusLine {
         }
     }
 
+    /// Whether a line shows `segment`.
+    pub fn shows(&self, segment: Segment) -> bool {
+        let is = |item: &Item| matches!(item.kind, ItemKind::Segment(shown) if shown == segment);
+        self.lines.iter().flatten().any(is)
+    }
+
     /// The status lines for `width` columns; empty when no segment has anything to show.
     pub fn render(&self, snapshot: &StatusSnapshot, width: usize) -> Vec<String> {
         if width <= self.padding {
@@ -181,7 +187,18 @@ impl BuiltinStatusLine {
             .as_deref()
             .or(icon)
             .filter(|icon| !icon.is_empty());
+        let start = icon.map_or(0, |icon| icon.chars().count() + 1);
         let text = icon.map_or(text.clone(), |icon| format!("{icon} {text}"));
+        let bar = match &item.kind {
+            ItemKind::Segment(Segment::ContextBar) if !snapshot.context_parts.is_empty() => {
+                snapshot.context_percent().map(|percent| BarColors {
+                    start,
+                    cells: bar_cell_parts(percent, &snapshot.context_parts),
+                    parts: snapshot.context_parts.len(),
+                })
+            }
+            _ => None,
+        };
         let custom = item.color.as_deref().or_else(|| {
             name.and_then(|name| self.colors.get(name))
                 .map(String::as_str)
@@ -203,7 +220,13 @@ impl BuiltinStatusLine {
         // Badge colors that do not parse are ignored, so the legacy colors above apply.
         let bg = item.background.as_deref().and_then(badge_rgb).unwrap_or(bg);
         let ink = item.foreground.as_deref().and_then(badge_fg);
-        Some(Piece { text, fg, bg, ink })
+        Some(Piece {
+            text,
+            fg,
+            bg,
+            ink,
+            bar,
+        })
     }
 }
 

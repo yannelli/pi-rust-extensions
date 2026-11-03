@@ -162,6 +162,14 @@ impl ThemeColor {
         }
     }
 
+    /// The escape that starts this color, as [`ThemeColor::paint`] writes it.
+    pub fn open(self) -> String {
+        match host_colors(|colors| colors.open[self.index()].clone()).flatten() {
+            Some(open) => open,
+            None => format!("\x1b[{}m", self.sgr()),
+        }
+    }
+
     pub fn paint(self, text: &str) -> String {
         match host_colors(|colors| colors.open[self.index()].clone()).flatten() {
             Some(open) if open.ends_with("\x1b[2m") => format!("{open}{text}\x1b[22m\x1b[39m"),
@@ -192,6 +200,57 @@ fn sgr(base: u8, rgb: [u8; 3]) -> String {
     }
 }
 
+/// A mild variation of `base` for part `index` of `count`: the hue turns 12 degrees and the
+/// lightness moves 3% per part from the middle part, which keeps `base`.
+pub fn shade(base: [u8; 3], index: usize, count: usize) -> [u8; 3] {
+    let offset = index as f64 - count.saturating_sub(1) as f64 / 2.0;
+    let [r, g, b] = base.map(|c| f64::from(c) / 255.0);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let lightness = (max + min) / 2.0;
+    let delta = max - min;
+    let saturation = if delta == 0.0 {
+        0.0
+    } else {
+        delta / (1.0 - (2.0 * lightness - 1.0).abs())
+    };
+    let hue = if delta == 0.0 {
+        0.0
+    } else if max == r {
+        60.0 * ((g - b) / delta).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / delta + 2.0)
+    } else {
+        60.0 * ((r - g) / delta + 4.0)
+    };
+    let step = offset * 0.03;
+    // Near white or black, the lightness moves the other way so the parts still differ.
+    let moved = if (0.05..=0.95).contains(&(lightness + step)) {
+        lightness + step
+    } else {
+        lightness - step
+    };
+    hsl_to_rgb(
+        (hue + offset * 12.0).rem_euclid(360.0),
+        saturation,
+        moved.clamp(0.0, 1.0),
+    )
+}
+
+fn hsl_to_rgb(hue: f64, saturation: f64, lightness: f64) -> [u8; 3] {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let x = chroma * (1.0 - ((hue / 60.0).rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = match hue as u32 / 60 {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = lightness - chroma / 2.0;
+    [r, g, b].map(|c| ((c + m) * 255.0).round().clamp(0.0, 255.0) as u8)
+}
+
 pub fn foreground(rgb: [u8; 3]) -> String {
     sgr(38, rgb)
 }
@@ -203,6 +262,20 @@ pub fn background(rgb: [u8; 3]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shades_keep_the_middle_and_vary_the_rest() {
+        let accent = [0x8a, 0xbe, 0xb7];
+        assert_eq!(shade(accent, 4, 9), accent);
+        let shades: Vec<_> = (0..9).map(|index| shade(accent, index, 9)).collect();
+        for pair in shades.windows(2) {
+            assert_ne!(pair[0], pair[1]);
+        }
+        // White has no hue, so only the lightness moves, downward.
+        let white = [255, 255, 255];
+        assert_eq!(shade(white, 4, 9), white);
+        assert!(shade(white, 8, 9)[0] < 255 && shade(white, 0, 9)[0] < 255);
+    }
 
     #[test]
     fn tokens_and_cube_colors() {

@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 use super::{Host, without_nulls};
 use crate::bus::Subscription;
 use crate::error::Result;
-use crate::snapshot::Model;
+use crate::snapshot::{ContextBreakdown, Model};
 
 /// Params of `llm.complete`. Build with `LlmRequest::prompt` or `LlmRequest::messages`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -185,6 +185,12 @@ impl Host {
 
     pub async fn context_usage(&self) -> Result<Option<Value>> {
         self.call_as("ctx.getContextUsage", json!({})).await
+    }
+
+    /// The estimated breakdown of the next request. Hosts without `ctx.getContextBreakdown`
+    /// (upstream pi and older pi-rust) answer with an error.
+    pub async fn context_breakdown(&self) -> Result<Option<ContextBreakdown>> {
+        self.call_as("ctx.getContextBreakdown", json!({})).await
     }
 
     pub async fn system_prompt(&self) -> Result<String> {

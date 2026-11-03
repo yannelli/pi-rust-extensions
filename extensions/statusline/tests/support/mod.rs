@@ -14,7 +14,7 @@ pub use pi_ext_statusline::external::{parse_codex_items, read_command};
 pub use pi_ext_statusline::icons::Icons;
 pub use pi_ext_statusline::model::*;
 pub use pi_ext_statusline::presets::preset_names;
-pub use pi_ext_statusline::segments::{Item, ItemKind, Segment, segment_text};
+pub use pi_ext_statusline::segments::{Item, ItemKind, Segment, bar_cell_parts, segment_text};
 pub use pi_ext_statusline::themes::{Palette, Role, ink_for, theme_names};
 pub use serde_json::json;
 
@@ -82,5 +82,6 @@ pub fn snapshot() -> StatusSnapshot {
         subscription: false,
         run_state: RunState::Working,
         version: "0.8.0".into(),
+        context_parts: Vec::new(),
     }
 }

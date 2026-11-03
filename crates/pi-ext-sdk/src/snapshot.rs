@@ -135,6 +135,24 @@ pub struct ContextUsage {
     pub percent: Option<f64>,
 }
 
+/// One part of `ctx.getContextBreakdown` (pi-rust only), such as `systemPrompt`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ContextPart {
+    pub id: String,
+    pub label: String,
+    pub tokens: u64,
+}
+
+/// `ctx.getContextBreakdown`: the estimated tokens of each part of the next request, in the
+/// order pi's `/context` shows them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ContextBreakdown {
+    pub parts: Vec<ContextPart>,
+    pub total: u64,
+}
+
 impl Snapshot {
     pub fn cwd_path(&self) -> PathBuf {
         PathBuf::from(&self.cwd)

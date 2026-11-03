@@ -50,6 +50,16 @@ const RENDER_EVENTS: &[&str] = &[
     "model_select",
 ];
 
+/// Events after which the parts of the context change enough to read the breakdown again.
+const BREAKDOWN_EVENTS: &[&str] = &[
+    "session_start",
+    "session_tree",
+    "session_compact",
+    "agent_end",
+    "turn_end",
+    "model_select",
+];
+
 /// Ticks the clock segment and `refreshInterval` of command status lines.
 async fn ticker(footer: Arc<Footer>, host: Host) {
     let mut seconds = 0u64;
@@ -75,10 +85,17 @@ pub fn extension(home: PathBuf) -> Extension {
             let footer = footer.clone();
             async move {
                 footer.observe(&ev);
+                let breakdown = BREAKDOWN_EVENTS.contains(&ev.name());
                 if ev.name() == "session_start" {
                     colors::load_theme(ev.host()).await;
                     footer.reload(ev.host()).await;
+                    // The reload decides whether a line shows the bar, so the breakdown comes after it.
+                    footer.refresh_breakdown(ev.host()).await;
+                    footer.render(ev.host()).await;
                 } else {
+                    if breakdown {
+                        footer.refresh_breakdown(ev.host()).await;
+                    }
                     footer.render(ev.host()).await;
                 }
                 Ok(())
