@@ -20,6 +20,7 @@ pub mod registry;
 pub mod render;
 pub mod runs;
 pub mod runs_panel;
+pub mod store;
 pub mod stream;
 pub mod tool;
 

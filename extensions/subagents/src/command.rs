@@ -32,6 +32,7 @@ pub struct ChildInput<'a> {
     pub agent: &'a AgentDef,
     pub task: &'a str,
     pub run_id: &'a str,
+    pub session_file: &'a Path,
     pub parent: &'a Inherit,
     pub overrides: &'a Overrides,
     pub program: &'a Path,
@@ -63,9 +64,10 @@ pub fn resolve_model(
 pub fn build(input: ChildInput<'_>) -> ChildSpec {
     let agent = input.agent;
     let (model, thinking) = resolve_model(agent, input.parent, input.overrides);
-    let mut args: Vec<String> = ["--mode", "json", "-p", "--no-session"]
+    let mut args: Vec<String> = ["--mode", "json", "-p", "--session"]
         .map(String::from)
         .to_vec();
+    args.push(input.session_file.display().to_string());
     if let Some(model) = &model {
         args.extend(["--model".into(), model.clone()]);
     }
