@@ -9,7 +9,7 @@ use crate::plugin::Resolved;
 use crate::settings::{ArgIndex, Settings};
 use crate::stage::{Target, Vars, stage_commands, stage_skills};
 use crate::state::{BinDir, PluginRecord};
-use crate::{agents, bin, hooks, mcp, options, styles};
+use crate::{agents, bin, hooks, lsp, mcp, options, styles};
 
 pub struct Staged {
     pub record: PluginRecord,
@@ -64,14 +64,8 @@ fn new_record(plan: &Plan, resolved: &Resolved, settings: &Settings) -> PluginRe
         arguments: arguments_text(settings),
         agent_models: Vec::new(),
         user_config: resolved.user_config.clone(),
-        lsp: resolved
-            .lsp
-            .iter()
-            .map(|(name, spec)| {
-                let command = spec.get("command").and_then(|c| c.as_str()).unwrap_or("?");
-                format!("{name}: {command}")
-            })
-            .collect(),
+        lsp: Vec::new(),
+        lsp_keys: Vec::new(),
         default_agent: resolved.default_agent.clone(),
     }
 }
@@ -179,6 +173,15 @@ pub fn stage_all(
         )?;
         notes.extend(mcp_notes);
         record.mcp_keys = keys;
+        let lens = dirs.lens_lsp_file();
+        let servers = lsp::write(&lens, id, &resolved.name, &resolved.lsp, &vars, &process)?;
+        notes.extend(servers.notes);
+        record.dropped.extend(servers.dropped);
+        record.lsp = servers.lines;
+        record.lsp_keys = servers.keys;
+        if !record.lsp_keys.is_empty() {
+            notes.push("The lens extension runs the LSP servers from its next scan".into());
+        }
         let mut counts = vec![
             format!("{commands} command(s)"),
             format!("{skills} skill(s)"),
@@ -188,6 +191,7 @@ pub fn stage_all(
         ];
         let bin_count: usize = record.bins.iter().map(|b| b.names.len()).sum();
         let extra = [
+            (record.lsp_keys.len(), "LSP server(s)"),
             (styles, "output style(s)"),
             (bin_count, "bin command(s)"),
             (opts.len(), "user config option(s)"),

@@ -7,7 +7,7 @@ use pi_ext_claude_marketplace::{Scope, cli, install, market};
 use serde_json::{Value, json};
 
 /// Fields the extension applies, from the Claude Code plugin reference.
-const APPLIED: [&str; 14] = [
+const APPLIED: [&str; 15] = [
     "name",
     "version",
     "description",
@@ -16,6 +16,7 @@ const APPLIED: [&str; 14] = [
     "skills",
     "hooks",
     "mcpServers",
+    "lspServers",
     "outputStyles",
     "userConfig",
     "dependencies",
@@ -133,6 +134,7 @@ fn every_known_field_is_applied_or_reported() {
     let dirs = Dirs::new(&fx.agent);
     let record = State::load(&dirs).unwrap().plugins["all@every"].clone();
     let whats: Vec<&str> = record.dropped.iter().map(|d| d.what.as_str()).collect();
+    assert_eq!(record.lsp_keys, ["plugin_all_go"]);
     for d in &record.dropped {
         assert!(!d.reason.is_empty(), "{d:?}");
         assert_ne!(
@@ -158,7 +160,6 @@ fn every_known_field_is_applied_or_reported() {
         [
             "mcpServers \"./bundle.mcpb\"",
             "dependency dep version ^1.0.0",
-            ".lsp.json",
             "monitors/monitors.json",
             "themes/",
             "workflows/",

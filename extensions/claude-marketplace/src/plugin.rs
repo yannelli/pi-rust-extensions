@@ -11,8 +11,7 @@ use crate::settings::Settings;
 use crate::source::contained;
 
 /// Components pi cannot run, with the default path and the manifest key that declare them.
-const UNSUPPORTED: [(&str, Option<&str>); 8] = [
-    ("lspServers", Some(".lsp.json")),
+const UNSUPPORTED: [(&str, Option<&str>); 7] = [
     ("monitors", Some("monitors/monitors.json")),
     ("themes", Some("themes")),
     ("channels", None),
@@ -75,7 +74,7 @@ pub struct Resolved {
     pub bins: Vec<PathBuf>,
     /// The `userConfig` option schema.
     pub user_config: Map<String, Value>,
-    /// LSP servers (not run by pi; shown by `info`).
+    /// LSP servers, staged in the lens server file.
     pub lsp: Map<String, Value>,
     /// `agent` of the plugin settings (not applied by pi; shown by `info`).
     pub default_agent: Option<String>,
@@ -270,6 +269,11 @@ fn extra_paths(root: &Path, settings: &Settings, out: &mut Resolved) -> Result<(
                 "bin" => &mut out.bins,
                 "hooks" => {
                     out.hooks.push(event_map(read_json(&path)?, &origin)?);
+                    continue;
+                }
+                "lspServers" => {
+                    out.lsp
+                        .extend(server_map(read_json(&path)?, "lspServers", &origin)?);
                     continue;
                 }
                 _ => {

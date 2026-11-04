@@ -26,6 +26,7 @@ pub mod import;
 pub mod install;
 mod jsonfile;
 pub mod listing;
+pub mod lsp;
 pub mod market;
 pub mod mcp;
 pub mod options;

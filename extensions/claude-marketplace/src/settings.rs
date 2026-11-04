@@ -9,12 +9,13 @@ use crate::env::{Env, Scope};
 use crate::state::split_id;
 
 /// Component kinds that `paths` and `extraPaths` accept.
-pub const PATH_KINDS: [&str; 7] = [
+pub const PATH_KINDS: [&str; 8] = [
     "commands",
     "agents",
     "skills",
     "hooks",
     "mcpServers",
+    "lspServers",
     "outputStyles",
     "bin",
 ];
