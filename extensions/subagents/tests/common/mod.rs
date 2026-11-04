@@ -115,10 +115,20 @@ impl TestHost {
     }
 
     pub async fn initialize(&mut self, agent_dir: &Path, cwd: &Path) -> Value {
+        self.initialize_with(agent_dir, cwd, &[]).await
+    }
+
+    /// `initialize` with the host `features` list, such as `contextEntries`.
+    pub async fn initialize_with(
+        &mut self,
+        agent_dir: &Path,
+        cwd: &Path,
+        features: &[&str],
+    ) -> Value {
         let params = json!({
             "protocolVersion": 1, "piVersion": "0.8.0", "cwd": cwd, "agentDir": agent_dir,
             "extensionPath": "native:test/subagents", "platform": "darwin", "mode": "tui",
-            "hasUI": true, "flags": {}
+            "hasUI": true, "flags": {}, "features": features
         });
         self.request(0, "initialize", params).await;
         let response = self.until_response(0).await;

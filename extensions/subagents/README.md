@@ -57,6 +57,7 @@ model: inherit            # or provider/id; inherit, sonnet, opus, haiku use the
 thinking: high            # pi only
 maxTurns: 20              # pi only
 systemPromptMode: append  # append (default) or replace
+exposure: deferred        # pi-rust only: direct or deferred, see Deferred agents
 ---
 You review code...
 ```
@@ -67,7 +68,15 @@ You review code...
 - `/agents runs`: a panel with running and recent runs. `↑`/`↓` select, `enter` shows the task, the tool calls, the output, and the stderr of a failed run, `c` cancels, `esc` goes back, `q` closes.
 - `/agents list`, or `/agents` without UI: shows each agent with its source, description, tools, and model as a notification.
 
-The system prompt section `subagents` lists each agent with the first sentence of its description when the `subagent` tool is active. `action: list` gives the full descriptions, tools, and models.
+The system prompt section `subagents` lists each agent with the first sentence of its description when the `subagent` tool is active. `action: list` gives the full descriptions, tools, and models. On a pi with context entries, the section lists only the agents that pi does not list (see below).
+
+## Deferred agents
+
+This needs a pi-rust with [yannelli/pi-rust#226](https://github.com/yannelli/pi-rust/pull/226). The extension detects it when `initialize` has `contextEntries` in `features`. Older hosts keep the agent list in the `subagents` section.
+
+On such a host, `resources_discover` returns one context entry per agent: `kind: "agent"`, the name, the description, the usage `Call the subagent tool with agent "<name>".`, and the `exposure` when the file sets it. Entries have no `path`, so the model calls the tool without reading the agent file. Set `contextExposure` in pi's settings, for example `{ "agent": "deferred" }`, to keep the agents out of the system prompt so that `tool_search` finds them. The `exposure` key of an agent file (`direct` or `deferred`) wins over the setting for that agent. Another value gives a warning on stderr and is ignored. With `advertise: false` the extension returns no entries.
+
+The `subagents` section then keeps its usage text and lists only agents that pi does not have as entries: agents without a description, and agents made in `/agents` after the discovery. pi discovers entries only at startup and on `/reload`, and an extension cannot start a discovery. Run `/reload` after you change a description or `exposure`, or delete an agent, so that pi lists the change.
 
 ## Compactor active work
 
