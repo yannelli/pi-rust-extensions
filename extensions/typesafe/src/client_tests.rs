@@ -160,14 +160,28 @@ async fn daily_cap_blocks_before_sending() {
 
 #[tokio::test]
 async fn lists_models_and_cancels() {
-    let models = json!({ "data": [{ "id": "typesafe/jev-1.13" }, { "id": "" }] });
-    let api = MockApi::start(vec![Reply::json(200, &models)]).await;
+    let decisions = json!(["/api/alpha/decisions"]);
+    let models = json!({ "data": [
+        { "id": "typesafe/jev-1.13", "endpoints": decisions },
+        { "id": "", "endpoints": decisions },
+        { "id": "vendor/extract", "endpoints": ["/api/alpha/extractions"] }
+    ] });
+    let api = MockApi::start(vec![Reply::json(200, &models), Reply::json(200, &models)]).await;
     let dir = TempDir::new();
     let client = client(&api, &dir, "openrouter");
     let names = client.list_models(&CancellationToken::new()).await.unwrap();
     assert_eq!(names, ["typesafe/jev-1.13"]);
-    assert_eq!(api.requests()[0].path, "/api/v1/models");
+    assert_eq!(
+        api.requests()[0].path,
+        "/api/v1/models?output_modalities=decisions"
+    );
     assert!(AuthState::new(dir.path()).read().verified_at.is_none());
+    let backend = from_values(Some("openrouter"), Some(&api.url)).unwrap();
+    let env = Env::fixed::<&str, &str>([]);
+    let anonymous = Client::anonymous(backend, dir.path(), &env, Arc::new(|| "d".into())).unwrap();
+    let listed = anonymous.list_model_info(&CancellationToken::new()).await;
+    assert_eq!(listed.unwrap()[0].id, "typesafe/jev-1.13");
+    assert_eq!(api.requests()[1].authorization, None);
     let cancel = CancellationToken::new();
     cancel.cancel();
     let error = client.evaluate(request(), &cancel).await.unwrap_err();
@@ -175,6 +189,30 @@ async fn lists_models_and_cancels() {
         error.message,
         "TypeSafe request cancelled before submission."
     );
+}
+
+#[tokio::test]
+async fn saved_price_costs_only_its_model() {
+    let api = MockApi::start(vec![
+        Reply::json(200, &answer()),
+        Reply::json(200, &answer()),
+    ])
+    .await;
+    let dir = TempDir::new();
+    let client = client(&api, &dir, "typesafe").with_price(Some(("jev-latest", 2.0)));
+    client
+        .evaluate(request(), &CancellationToken::new())
+        .await
+        .unwrap();
+    assert!((client.spend().session.usd - 0.002).abs() < 1e-12);
+    let mut other = request();
+    other["model"] = json!("jev-1.13");
+    client
+        .evaluate(other, &CancellationToken::new())
+        .await
+        .unwrap();
+    let expected = 0.002 + 1000.0 * DEFAULT_USD_PER_MTOK / 1e6;
+    assert!((client.spend().session.usd - expected).abs() < 1e-12);
 }
 
 #[test]

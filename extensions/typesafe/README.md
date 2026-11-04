@@ -1,6 +1,6 @@
 # pi-ext-typesafe
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-11-04.
 
 A native pi extension that sends structured questions to TypeSafe AI Jev and returns probabilities. It is a Rust port of the npm package `pi-typesafe` 0.13.1. The tool name, parameters, command, environment variables, and key file are the same as the package.
 
@@ -35,8 +35,26 @@ A native pi extension that sends structured questions to TypeSafe AI Jev and ret
 | `disable` | Disables the tool for this session. Requests that started continue. |
 | `test` | Sends the sample request after you confirm. |
 | `playground` | Opens the sample request in the editor, then sends your edited JSON after you confirm. |
+| `models` | Lists the models of the active backend and saves the one you pick as `model`. The next request sends it. |
+| `backend [name]` | Without a name, shows the active backend and the valid names, or a picker with a UI. With a name, saves it as `backend`. Run `/reload` to apply it. |
 
-Completions give the action names, and the backend names after `login ` and `logout `. Without a UI, the command writes a `typesafe-status` message. `login`, `setup`, `enable`, `test`, and `playground` need a UI. `test` and `playground` save each result as a `typesafe-result` session entry and show it in a notification.
+Completions give the action names, and the backend names after `login `, `logout `, and `backend `. Without a UI, the command writes a `typesafe-status` message. `login`, `setup`, `enable`, `test`, and `playground` need a UI.
+
+### Models
+
+`/typesafe models` shows one line for each model, aliases (`~vendor/model-latest`) first, then by id:
+
+```
+* typesafe/jev-1.13 · 262K ctx · $0.05/M in · expires 2026-11-20
+```
+
+The line gives the context length, the price for each million input tokens (`free` when it is 0), and the expiry date. The listing leaves out a value that it does not know. `*` marks the model that requests send now.
+
+- OpenRouter lists decision models at `GET /api/v1/models?output_modalities=decisions`. The extension keeps only the models that serve `/api/alpha/decisions`, and drops models that serve only `/api/alpha/extractions`.
+- When a backend's model list is public (OpenRouter, Command Code, SubQ), the extension gets the list without a key. TypeSafe and Liquid AI need the key.
+- Other backends give only model ids. The price comes from the backend price list when it names the model.
+- When you pick a model, the extension writes `model` and `priceUsdPerMtok` to the global config, keeps the other keys, and sends the model from the next request. This starts a new client, so the session counters go back to zero. When `PI_TYPESAFE_MODEL` is set, it overrides the saved model, and the command shows a warning.
+- Without a UI, the command writes the list as a `typesafe-status` message. `test` and `playground` save each result as a `typesafe-result` session entry and show it in a notification.
 
 ## Session gate
 
@@ -57,13 +75,14 @@ Environment variables take precedence over the config files.
 | `PI_TYPESAFE_ENABLED` | `enabled` | off | `1` enables the tool for each session. |
 | `PI_TYPESAFE_BACKEND` | `backend` | `typesafe` | `typesafe`, `openrouter`, `commandcode`, `liquid`, or `subq`. |
 | `PI_TYPESAFE_MODEL` | `model` | backend default | Model id. OpenRouter changes `jev-latest` and `jev-1.13` to its own ids. |
+| none | `priceUsdPerMtok` | none | USD for each million input tokens of the saved `model`. `/typesafe models` writes it. |
 | `PI_TYPESAFE_MAX_REQUESTS_PER_DAY` | `maxRequestsPerDay` | none | Daily request cap. |
 | `PI_TYPESAFE_MAX_INPUT_TOKENS_PER_DAY` | `maxInputTokensPerDay` | none | Daily input token cap. |
 | `PI_TYPESAFE_MAX_USD_PER_DAY` | `maxUsdPerDay` | none | Daily cost cap in USD. |
 | `PI_TYPESAFE_BASE_URL` | none | registry host | Replaces the backend host. Use an https origin, or http on localhost, 127.0.0.0/8, or [::1]. Tests and local gateways use it. |
 
 - Global config: `<agentDir>/ext/typesafe.json`. Project config: `<cwd>/.pi/ext/typesafe.json`.
-- The extension reads `backend` and `model` from the global file one time, when it starts. These values set the request host and the tool description.
+- The extension reads `backend` and `model` from the global file when it starts. `backend` sets the request host and the tool description, so a change applies after `/reload`. `/typesafe models` changes `model` for the running session too.
 - The project file sets `enabled` only when pi trusts the project. When pi does not trust the project, the extension ignores that key and shows one notice. Caps from the environment, the global file, and the project file all apply. The lowest cap wins.
 - API keys: `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`, `COMMANDCODE_API_KEY`, `LIQUID_API_KEY`, `SUBQ_API_KEY`. A key variable takes precedence over a stored key. `login` does not run when the variable is set.
 
@@ -78,16 +97,35 @@ All files are in `<agentDir>/pi-typesafe/`, the same directory that the npm pack
 | `usage.json` | Daily counters: requests started, succeeded, and failed; input and output tokens; cost. The day changes at local midnight. The extension keeps 31 days. |
 | `usage.json.lock` | The lock for `usage.json`. An update waits at most 200 ms for it, and takes over a lock that is older than 5 seconds. When the lock is busy, the update stays in memory until the next update. |
 
-Cost is input tokens multiplied by the backend price for the model sent: Liquid `d1` $0.04 and SubQ $0.05 for each million tokens. Other models use $0.042 for each million tokens.
+Cost is input tokens multiplied by the backend price for the model sent: Liquid `d1` $0.04 and SubQ $0.05 for each million tokens. Then the extension uses `priceUsdPerMtok` when the model sent is the saved `model`. Other models use $0.042 for each million tokens.
 
 Error messages do not include keys, response bodies, or the state that you send. A 429 message includes the `Retry-After` value only when it is a number of seconds.
+
+## Judgments for other extensions
+
+Other extensions can ask for a judgment on the `pi.events` bus. The extension subscribes to `typesafe:decision:request` when the session starts. Each message has this shape:
+
+```json
+{ "id": "r1", "request": { "state": "...", "questions": { "done": { "type": "noul", "instructions": "..." } } } }
+```
+
+`request` has the same shape as the tool parameters. The extension uses the same gate, key, validation, caps, and session limit as the tool, and sends exactly one reply with the same `id` on `typesafe:decision:reply`:
+
+```json
+{ "id": "r1", "ok": true, "result": { "model": "...", "usage": { }, "answers": { }, "elapsedMs": 412 } }
+{ "id": "r1", "ok": false, "code": "disabled", "error": "TypeSafe is disabled. Ask the operator to run /typesafe enable." }
+```
+
+- `code` is `disabled` when the tool is disabled. Otherwise it is the error code: `configuration`, `validation`, `budget`, `aborted`, `timeout`, `http`, `connection`, or `response`.
+- A message without a string `id` gets no reply.
+- Replies do not include keys. A rejected key or a configuration error shows the same warning as a tool call.
 
 ## Differences from the npm package
 
 - The native protocol does not support `prepareArguments`. Thus pi refuses a tool call that uses an alias. When the protocol adds `prepareArguments`, tool calls can use the aliases again.
 - The native protocol does not support `renderCall`, `renderResult`, or `registerEntryRenderer`. The tool sends one `tool.update` line (`TypeSafe · N questions · external request`). `test` and `playground` show the formatted result in a notification.
 - The hidden key input is a `ui.custom` panel. When pi cannot open the panel, the extension uses `ui.input`, which shows the key while you type.
-- The config files and `PI_TYPESAFE_BASE_URL` are new in this port.
+- The config files, `PI_TYPESAFE_BASE_URL`, `/typesafe models`, `/typesafe backend`, and the `pi.events` judgments are new in this port.
 
 ## Tests
 

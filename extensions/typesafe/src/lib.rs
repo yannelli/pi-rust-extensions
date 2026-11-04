@@ -8,6 +8,7 @@ use pi_ext_sdk::{NotifyType, paths};
 
 pub mod auth_state;
 pub mod backends;
+pub mod bus;
 pub mod caps;
 pub mod client;
 mod commands;
@@ -15,6 +16,7 @@ pub mod credentials;
 pub mod errors;
 #[doc(hidden)]
 pub mod mock_api;
+pub mod models;
 mod prompt;
 pub mod result;
 pub mod schema;
@@ -61,7 +63,7 @@ fn tool_spec(state: &State) -> ToolSpec {
         .guideline("Report typesafe_evaluate answers as the model's judgments with their probabilities; do not replace them with your own guesses, and say when an answer is uncertain.")
 }
 
-async fn call_out_auth(state: &State, host: &Host, error: &TsError) {
+pub(crate) async fn call_out_auth(state: &State, host: &Host, error: &TsError) {
     if error.is_rejected_key() || error.code == Code::Configuration {
         let key = format!(
             "run:{}:{}",
@@ -130,8 +132,13 @@ async fn session_start(state: Arc<State>, ev: EventCtx) -> Result<()> {
 
 /// The extension over a given state; tests pass a fixed environment and agent dir.
 pub fn extension_with(state: Arc<State>) -> Extension {
-    let (tool, start, command, complete) =
-        (state.clone(), state.clone(), state.clone(), state.clone());
+    let (tool, start, command, complete, responder) = (
+        state.clone(),
+        state.clone(),
+        state.clone(),
+        state.clone(),
+        state.clone(),
+    );
     Extension::new("typesafe")
         .tool(tool_spec(&state), move |args: Value, ctx: ToolCtx| {
             evaluate(tool.clone(), args, ctx)
@@ -140,6 +147,7 @@ pub fn extension_with(state: Arc<State>) -> Extension {
             let state = start.clone();
             async move { session_start(state, ev).await }
         })
+        .on_start(move |host: Host| bus::serve(responder.clone(), host))
         .command(
             "typesafe",
             "TypeSafe login, consent, usage, sample test, and JSON playground",

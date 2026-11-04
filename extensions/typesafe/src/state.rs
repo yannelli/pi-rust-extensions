@@ -1,17 +1,18 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use pi_ext_sdk::{CustomMessage, Host, NotifyType};
 use serde::Deserialize;
+use serde_json::{Map, Value};
 
 use crate::auth_state::{AuthState, Level, describe};
 use crate::backends::{
     BACKEND_ENV, BASE_URL_ENV, Backend, DEFAULT_BACKEND, MODEL_ENV, backend, from_values,
 };
 use crate::client::Client;
-use crate::credentials::{Env, KeyStore};
-use crate::errors::TsResult;
+use crate::credentials::{Env, KeyStore, write_private};
+use crate::errors::{TsError, TsResult};
 use crate::usage::{Caps, Clock, local_day};
 
 const FIXED_CONSENT: &str = "Submitted state and questions will be sent to api.typesafe.ai and may incur charges. Do not include secrets. The extension does not collect files or conversation history. Results are model judgments, not proof or authorization.";
@@ -23,14 +24,45 @@ pub struct Config {
     pub enabled: Option<bool>,
     pub backend: Option<String>,
     pub model: Option<String>,
+    /// The listed input price of `model`, saved by `/typesafe models`.
+    pub price_usd_per_mtok: Option<f64>,
     pub max_requests_per_day: Option<u64>,
     pub max_input_tokens_per_day: Option<u64>,
     pub max_usd_per_day: Option<f64>,
 }
 
 impl Config {
+    pub fn path(agent_dir: &Path) -> PathBuf {
+        agent_dir.join("ext").join("typesafe.json")
+    }
+
     pub fn load(agent_dir: &Path) -> Config {
-        Self::read(&agent_dir.join("ext").join("typesafe.json"))
+        Self::read(&Self::path(agent_dir))
+    }
+
+    /// Sets keys of the global file and keeps the others; a null value removes the key.
+    pub fn save(agent_dir: &Path, changes: &[(&str, Value)]) -> TsResult<PathBuf> {
+        let path = Self::path(agent_dir);
+        let refuse = || TsError::configuration(format!("Could not update {}.", path.display()));
+        let mut keys: Map<String, Value> = match std::fs::read_to_string(&path) {
+            Ok(text) => serde_json::from_str(&text).map_err(|_| {
+                TsError::configuration(format!(
+                    "{} is not a JSON object; fix it first, nothing was saved.",
+                    path.display()
+                ))
+            })?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Map::new(),
+            Err(_) => return Err(refuse()),
+        };
+        for (key, value) in changes {
+            match value {
+                Value::Null => keys.remove(*key),
+                value => keys.insert((*key).to_owned(), value.clone()),
+            };
+        }
+        let text = serde_json::to_string_pretty(&keys).map_err(|_| refuse())?;
+        write_private(&path, &format!("{text}\n")).map_err(|_| refuse())?;
+        Ok(path)
     }
 
     pub fn read(path: &Path) -> Config {
@@ -74,28 +106,38 @@ struct Session {
     called_out: Option<String>,
 }
 
+/// The model requests send, and a saved price with the model it was listed for.
+#[derive(Debug, Clone, Default)]
+struct Selection {
+    model: Option<String>,
+    price: Option<(String, f64)>,
+}
+
 /// Process-wide settings plus the per-session gate, client, and callout.
 pub struct State {
     pub agent_dir: PathBuf,
     pub dir: PathBuf,
     pub env: Env,
     pub backend: Backend,
-    pub model: Option<String>,
     pub backend_error: Option<String>,
     pub clock: Clock,
+    selection: RwLock<Selection>,
     session: Mutex<Session>,
     project_notice: AtomicBool,
 }
 
 impl State {
-    /// The backend and model are fixed for the process: they decide where requests go.
+    /// The backend is fixed for the process: it decides the request host and the tool description.
     pub fn new(env: Env, agent_dir: &Path) -> Arc<State> {
         let config = Config::load(agent_dir);
         let name = env.get(BACKEND_ENV).or(config.backend.clone());
-        let model = env
-            .get(MODEL_ENV)
-            .or(config.model.clone())
-            .filter(|m| !m.trim().is_empty());
+        let saved = config.model.filter(|m| !m.trim().is_empty());
+        let price = saved.clone().zip(
+            config
+                .price_usd_per_mtok
+                .filter(|p| p.is_finite() && *p >= 0.0),
+        );
+        let model = env.get(MODEL_ENV).or(saved);
         let (backend, backend_error) =
             match from_values(name.as_deref(), env.get(BASE_URL_ENV).as_deref()) {
                 Ok(backend) => (backend, None),
@@ -109,14 +151,31 @@ impl State {
             dir: agent_dir.join("pi-typesafe"),
             env,
             backend,
-            model,
             backend_error,
             clock: Arc::new(local_day),
+            selection: RwLock::new(Selection { model, price }),
             session: Mutex::new(Session::default()),
             project_notice: AtomicBool::new(false),
         };
         state.reset_session(&Project::default());
         Arc::new(state)
+    }
+
+    fn selection(&self) -> Selection {
+        self.selection.read().expect("selection lock").clone()
+    }
+
+    pub fn model(&self) -> Option<String> {
+        self.selection().model
+    }
+
+    /// Sends `model` from the next request on; `price` is its listed input price.
+    pub fn set_model(&self, model: &str, price: Option<f64>) {
+        *self.selection.write().expect("selection lock") = Selection {
+            model: Some(model.to_owned()),
+            price: price.map(|p| (model.to_owned(), p)),
+        };
+        self.drop_client();
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Session> {
@@ -167,16 +226,18 @@ impl State {
         if let Some(client) = &session.client {
             return Ok(client.clone());
         }
+        let selection = self.selection();
         let client = Client::new(
             self.backend.clone(),
             None,
-            self.model.as_deref(),
+            selection.model.as_deref(),
             &self.dir,
             &self.env,
             session.caps,
             self.clock.clone(),
         )?;
-        let client = Arc::new(client);
+        let priced = selection.price.as_ref().map(|(m, p)| (m.as_str(), *p));
+        let client = Arc::new(client.with_price(priced));
         session.client = Some(client.clone());
         Ok(client)
     }
@@ -196,10 +257,11 @@ impl State {
 
     /// The consent sentence and whether it names the model sent.
     pub fn consent(&self) -> (String, bool) {
-        if self.backend.name == DEFAULT_BACKEND && self.model.is_none() {
+        let model = self.model();
+        if self.backend.name == DEFAULT_BACKEND && model.is_none() {
             return (FIXED_CONSENT.to_owned(), false);
         }
-        let model = serde_json::Value::String(self.backend.sent_model(self.model.as_deref()));
+        let model = Value::String(self.backend.sent_model(model.as_deref()));
         let text = format!(
             "Submitted state and questions will be sent to {} ({}) as model {model} and may incur charges. Do not include secrets. The extension does not collect files or conversation history. Results are model judgments, not proof or authorization.",
             self.backend.host_name(),

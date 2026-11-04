@@ -38,6 +38,33 @@ fn gate_precedence() {
 }
 
 #[test]
+fn saving_config_keeps_other_keys_and_applies_the_saved_model() {
+    let dir = TempDir::new();
+    let path = dir.path().join("ext/typesafe.json");
+    write(
+        &path,
+        r#"{ "maxRequestsPerDay": 9, "model": "old", "priceUsdPerMtok": 1 }"#,
+    );
+    let changes = [
+        ("model", serde_json::json!("new")),
+        ("priceUsdPerMtok", Value::Null),
+    ];
+    assert_eq!(Config::save(dir.path(), &changes).unwrap(), path);
+    let saved = Config::load(dir.path());
+    assert_eq!(saved.model.as_deref(), Some("new"));
+    assert_eq!(saved.price_usd_per_mtok, None);
+    assert_eq!(saved.max_requests_per_day, Some(9));
+    write(&path, "not json");
+    assert!(Config::save(dir.path(), &changes).is_err());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "not json");
+
+    let state = State::new(Env::fixed::<&str, &str>([]), dir.path());
+    state.set_model("jev-1.14", Some(0.05));
+    assert_eq!(state.model().as_deref(), Some("jev-1.14"));
+    assert!(state.consent().0.contains("as model \"jev-1.14\""));
+}
+
+#[test]
 fn backend_and_consent() {
     let dir = TempDir::new();
     let state = State::new(Env::fixed::<&str, &str>([]), dir.path());
