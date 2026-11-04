@@ -976,6 +976,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-simple-goal"
+version = "0.5.9"
+dependencies = [
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-ssh"
 version = "0.5.9"
 dependencies = [
@@ -1024,6 +1034,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
+]
+
+[[package]]
+name = "pi-ext-timers"
+version = "0.5.9"
+dependencies = [
+ "chrono",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -1110,10 +1131,12 @@ dependencies = [
  "pi-ext-ollama",
  "pi-ext-permissions",
  "pi-ext-rewind",
+ "pi-ext-simple-goal",
  "pi-ext-ssh",
  "pi-ext-statusline",
  "pi-ext-subagents",
  "pi-ext-subscription-router",
+ "pi-ext-timers",
  "pi-ext-todo",
  "pi-ext-tool-results",
  "pi-ext-typesafe",

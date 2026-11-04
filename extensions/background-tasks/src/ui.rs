@@ -9,6 +9,8 @@ use crate::task::{self, Status, Task};
 
 pub const WIDGET: &str = "background-tasks";
 pub const NOTIFICATION: &str = "background-task-notification";
+/// Bus channel that ends a `sleep` early when a notification arrives.
+const WAKE_CHANNEL: &str = "agent:wake";
 const WIDGET_ROWS: usize = 3;
 const EXPANDED_ROWS: usize = 20;
 /// More running tasks than this collapse the widget to one line.
@@ -214,6 +216,11 @@ pub async fn notify_finished(host: &Host, registry: &Registry, task: &Task) -> R
         .trigger_turn(task.trigger_on_completion);
     host.send_message(message).await?;
     registry.mark_notified(&task.id);
+    if task.trigger_on_completion {
+        let wake =
+            json!({ "source": "background-tasks", "reason": format!("task {} finished", task.id) });
+        let _ = host.emit(WAKE_CHANNEL, wake).await;
+    }
     Ok(())
 }
 

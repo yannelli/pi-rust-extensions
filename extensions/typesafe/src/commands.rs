@@ -3,16 +3,17 @@ use std::sync::Arc;
 use pi_ext_sdk::prelude::*;
 use pi_ext_sdk::{CancellationToken, CompletionItem, NotifyType};
 
-use crate::backends::{BACKEND_ENV, NAMES, backend};
+use crate::backends::{BACKEND_ENV, MODEL_ENV, NAMES, backend};
 use crate::client::{Client, DEFAULT_MAX_REQUESTS};
 use crate::credentials::{KeySituation, normalize_key};
 use crate::errors::{TsError, TsResult};
+use crate::models::ModelInfo;
 use crate::result::format_result;
-use crate::state::State;
+use crate::state::{Config, State};
 use crate::status::status_text;
 use crate::{notify, prompt, sample, validate};
 
-const ACTIONS: [&str; 8] = [
+const ACTIONS: [&str; 10] = [
     "login",
     "logout",
     "setup",
@@ -21,6 +22,8 @@ const ACTIONS: [&str; 8] = [
     "disable",
     "test",
     "playground",
+    "models",
+    "backend",
 ];
 
 pub fn complete(prefix: &str) -> Option<Vec<CompletionItem>> {
@@ -33,7 +36,7 @@ pub fn complete(prefix: &str) -> Option<Vec<CompletionItem>> {
         label: Some(label.to_owned()),
         description: None,
     };
-    let backend_rest = rest.filter(|_| matches!(verb, "login" | "logout"));
+    let backend_rest = rest.filter(|_| matches!(verb, "login" | "logout" | "backend"));
     let items: Vec<CompletionItem> = if let Some(rest) = backend_rest {
         let typed = rest.join(" ");
         NAMES
@@ -112,6 +115,99 @@ async fn login(state: &State, host: &Host, spec: &crate::backends::Backend) -> R
     let text = format!(
         "{} key {proof} and saved to {} with owner-only permissions.{hint}",
         spec.label,
+        path.display()
+    );
+    notify(host, &text, NotifyType::Info).await;
+    Ok(())
+}
+
+/// The active backend's models; a public listing is fetched without a key.
+async fn list_models(state: &State) -> TsResult<Vec<ModelInfo>> {
+    let client = match state.backend.models_verify_key {
+        true => state.get_client()?,
+        false => Arc::new(Client::anonymous(
+            state.backend.clone(),
+            &state.dir,
+            &state.env,
+            state.clock.clone(),
+        )?),
+    };
+    client.list_model_info(&CancellationToken::new()).await
+}
+
+async fn models(state: &State, host: &Host) -> Result<()> {
+    if let Some(error) = &state.backend_error {
+        notify(host, error, NotifyType::Warning).await;
+        return Ok(());
+    }
+    let label = state.backend.label;
+    let models = list_models(state).await?;
+    if models.is_empty() {
+        let text = format!("{label} lists no decision models.");
+        notify(host, &text, NotifyType::Warning).await;
+        return Ok(());
+    }
+    let current = state.backend.sent_model(state.model().as_deref());
+    let lines: Vec<String> = models.iter().map(|m| m.line(m.id == current)).collect();
+    if !host.has_ui() {
+        let text = format!("{label} models (* current):\n{}", lines.join("\n"));
+        notify(host, &text, NotifyType::Info).await;
+        return Ok(());
+    }
+    let title = format!("{label} model");
+    let Some(chosen) = host.select(&title, &lines).await? else {
+        return Ok(());
+    };
+    let Some(model) = lines.iter().position(|l| *l == chosen).map(|i| &models[i]) else {
+        return Ok(());
+    };
+    let price = model.usd_per_mtok_input;
+    let changes = [
+        ("model", json!(model.id)),
+        ("priceUsdPerMtok", price.map_or(Value::Null, |p| json!(p))),
+    ];
+    let path = Config::save(&state.agent_dir, &changes)?;
+    if let Some(forced) = state.env.get(MODEL_ENV) {
+        let text = format!(
+            "Saved model {} to {}, but {MODEL_ENV} is set to {forced} and overrides it.",
+            model.id,
+            path.display()
+        );
+        notify(host, &text, NotifyType::Warning).await;
+        return Ok(());
+    }
+    state.set_model(&model.id, price);
+    let text = format!("TypeSafe model set to {}.", model.id);
+    notify(host, &text, NotifyType::Info).await;
+    Ok(())
+}
+
+async fn choose_backend(state: &State, host: &Host, name: Option<&str>) -> Result<()> {
+    let name = match name {
+        Some(name) => name.to_owned(),
+        None if host.has_ui() => match host.select("TypeSafe backend", &NAMES).await? {
+            Some(name) => name,
+            None => return Ok(()),
+        },
+        None => {
+            let text = format!(
+                "TypeSafe backend: {}. Valid backends: {}. Run /typesafe backend <name> to change it.",
+                state.backend.name,
+                NAMES.join(", ")
+            );
+            notify(host, &text, NotifyType::Info).await;
+            return Ok(());
+        }
+    };
+    let spec = backend(&name)?;
+    let path = Config::save(&state.agent_dir, &[("backend", json!(spec.name))])?;
+    let forced = match state.env.get(BACKEND_ENV) {
+        Some(value) => format!(" {BACKEND_ENV} is set to {value} and overrides it."),
+        None => String::new(),
+    };
+    let text = format!(
+        "Saved backend {} to {}. Run /reload to apply it.{forced}",
+        spec.name,
         path.display()
     );
     notify(host, &text, NotifyType::Info).await;
@@ -202,7 +298,7 @@ async fn act(state: &State, host: &Host, action: &str, backend_arg: Option<&str>
         }
         _ if !ACTIONS.contains(&action) => {
             let text = format!(
-                "Usage: /typesafe {}. login and logout take a backend name: {}.",
+                "Usage: /typesafe {}. login, logout, and backend take a backend name: {}.",
                 ACTIONS.join(" | "),
                 NAMES.join(", ")
             );
@@ -282,7 +378,12 @@ pub async fn run(state: Arc<State>, args: String, ctx: CommandCtx) -> Result<()>
         notify(&host, &text, NotifyType::Warning).await;
         return Ok(());
     }
-    if let Err(error) = act(&state, &host, action, backend_arg).await {
+    let outcome = match action {
+        "models" => models(&state, &host).await,
+        "backend" => choose_backend(&state, &host, backend_arg).await,
+        _ => act(&state, &host, action, backend_arg).await,
+    };
+    if let Err(error) = outcome {
         notify(&host, error.message(), NotifyType::Error).await;
     }
     Ok(())

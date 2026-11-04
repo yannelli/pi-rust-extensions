@@ -36,8 +36,187 @@ async fn start(dir: &TempDir, env: Env, has_ui: bool) -> (TestHost, Value) {
         json!({ "name": "session_start", "event": {}, "ctx": ctx(has_ui) }),
     )
     .await;
-    host.expect_response(1).await;
+    let (mut responded, mut subscribed) = (false, false);
+    while !(responded && subscribed) {
+        let message = host.recv().await;
+        if message["method"] == "events.subscribe" {
+            assert_eq!(message["params"]["channel"], "typesafe:decision:request");
+            host.answer(&message["id"], Value::Null).await;
+            subscribed = true;
+        } else {
+            assert_eq!(message["id"], 1, "unexpected message {message}");
+            responded = true;
+        }
+    }
     (host, init)
+}
+
+fn decision_listing() -> Value {
+    let decisions = json!(["/api/alpha/decisions"]);
+    json!({ "data": [
+        { "id": "typesafe/jev-1.13", "context_length": 262144, "pricing": { "prompt": "0.00000005" }, "endpoints": decisions },
+        { "id": "typesafe/jev-1.14", "context_length": 262144, "pricing": { "prompt": "0.000000042" }, "endpoints": decisions },
+        { "id": "~typesafe/jev-latest", "pricing": { "prompt": "0" }, "endpoints": decisions },
+        { "id": "vendor/extract", "endpoints": ["/api/alpha/extractions"] }
+    ]})
+}
+
+fn config(dir: &TempDir) -> Value {
+    let text = std::fs::read_to_string(dir.0.join("ext/typesafe.json")).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+#[tokio::test]
+async fn models_picker_saves_and_applies_the_model() {
+    let api = MockApi::start(vec![
+        Reply::json(200, &decision_listing()),
+        Reply::json(200, &answer()),
+    ])
+    .await;
+    let dir = TempDir::new("models");
+    std::fs::create_dir_all(dir.0.join("ext")).unwrap();
+    std::fs::write(
+        dir.0.join("ext/typesafe.json"),
+        r#"{ "maxRequestsPerDay": 5 }"#,
+    )
+    .unwrap();
+    let env = Env::fixed([
+        ("PI_TYPESAFE_ENABLED", "1"),
+        ("PI_TYPESAFE_BACKEND", "openrouter"),
+        ("OPENROUTER_API_KEY", KEY),
+        ("PI_TYPESAFE_BASE_URL", api.url.as_str()),
+    ]);
+    let (mut host, _) = start(&dir, env, true).await;
+    host.request(
+        2,
+        "command.run",
+        json!({ "name": "typesafe", "args": "models", "ctx": ctx(true) }),
+    )
+    .await;
+    let (id, params) = host.expect_request("ui.select").await;
+    assert_eq!(
+        params["options"],
+        json!([
+            "~typesafe/jev-latest · free",
+            "* typesafe/jev-1.13 · 262K ctx · $0.05/M in",
+            "typesafe/jev-1.14 · 262K ctx · $0.042/M in"
+        ])
+    );
+    host.answer(&id, params["options"][2].clone()).await;
+    let (id, params) = host.expect_request("ui.notify").await;
+    assert_eq!(
+        params["message"],
+        "TypeSafe model set to typesafe/jev-1.14."
+    );
+    host.answer(&id, Value::Null).await;
+    host.expect_response(2).await;
+    assert_eq!(
+        config(&dir),
+        json!({ "maxRequestsPerDay": 5, "model": "typesafe/jev-1.14", "priceUsdPerMtok": 0.042 })
+    );
+
+    let execute = json!({ "toolCallId": "c1", "name": "typesafe_evaluate", "params": sample_args(), "ctx": ctx(true) });
+    host.request(3, "tool.execute", execute).await;
+    let _ = host.expect_notification("tool.update").await;
+    assert!(host.expect_response(3).await["result"].is_object());
+    let requests = api.requests();
+    assert_eq!(
+        requests[0].path,
+        "/api/v1/models?output_modalities=decisions"
+    );
+    assert_eq!(requests[0].authorization, None);
+    let sent: Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert_eq!(sent["model"], "typesafe/jev-1.14");
+}
+
+/// Runs `/typesafe <args>` without a UI and returns the status message text.
+async fn run_headless(host: &mut TestHost, id: u64, args: &str) -> String {
+    let params = json!({ "name": "typesafe", "args": args, "ctx": ctx(false) });
+    host.request(id, "command.run", params).await;
+    let (message, params) = host.expect_request("session.sendMessage").await;
+    assert_eq!(params["customType"], "typesafe-status");
+    host.answer(&message, Value::Null).await;
+    host.expect_response(id).await;
+    params["content"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn models_list_headless_and_backend_saves_config() {
+    let api = MockApi::start(vec![Reply::json(200, &decision_listing())]).await;
+    let dir = TempDir::new("backend");
+    let env = Env::fixed([
+        ("PI_TYPESAFE_BACKEND", "openrouter"),
+        ("PI_TYPESAFE_BASE_URL", api.url.as_str()),
+    ]);
+    let (mut host, _) = start(&dir, env, false).await;
+    let host = &mut host;
+    let listed = run_headless(host, 2, "models").await;
+    assert_eq!(
+        listed,
+        "OpenRouter models (* current):\n~typesafe/jev-latest · free\n* typesafe/jev-1.13 · 262K ctx · $0.05/M in\ntypesafe/jev-1.14 · 262K ctx · $0.042/M in"
+    );
+    let shown = run_headless(host, 3, "backend").await;
+    assert!(
+        shown.starts_with("TypeSafe backend: openrouter. Valid backends: typesafe, openrouter"),
+        "{shown}"
+    );
+    let refused = run_headless(host, 4, "backend nope").await;
+    assert!(
+        refused.starts_with("Unknown judgment backend \"nope\""),
+        "{refused}"
+    );
+    let saved = run_headless(host, 5, "backend liquid").await;
+    assert!(saved.starts_with("Saved backend liquid to "), "{saved}");
+    assert!(
+        saved.ends_with(
+            "Run /reload to apply it. PI_TYPESAFE_BACKEND is set to openrouter and overrides it."
+        ),
+        "{saved}"
+    );
+    assert_eq!(config(&dir), json!({ "backend": "liquid" }));
+}
+
+#[tokio::test]
+async fn bus_replies_disabled_then_answers_once_enabled() {
+    let api = MockApi::start(vec![Reply::json(200, &answer())]).await;
+    let dir = TempDir::new("bus");
+    let env = Env::fixed([
+        ("TYPESAFE_API_KEY", KEY),
+        ("PI_TYPESAFE_BASE_URL", api.url.as_str()),
+    ]);
+    let (mut host, _) = start(&dir, env, true).await;
+    let message = |id: &str| json!({ "channel": "typesafe:decision:request", "data": { "id": id, "request": sample_args() } });
+    host.notify("events.message", message("r1")).await;
+    let (id, params) = host.expect_request("events.emit").await;
+    assert_eq!(params["channel"], "typesafe:decision:reply");
+    assert_eq!(
+        params["data"],
+        json!({ "id": "r1", "ok": false, "code": "disabled", "error": "TypeSafe is disabled. Ask the operator to run /typesafe enable." })
+    );
+    host.answer(&id, Value::Null).await;
+    assert!(api.requests().is_empty());
+
+    host.request(
+        2,
+        "command.run",
+        json!({ "name": "typesafe", "args": "enable", "ctx": ctx(true) }),
+    )
+    .await;
+    let (id, _) = host.expect_request("ui.confirm").await;
+    host.answer(&id, json!(true)).await;
+    let (id, _) = host.expect_request("ui.notify").await;
+    host.answer(&id, Value::Null).await;
+    host.expect_response(2).await;
+
+    host.notify("events.message", message("r2")).await;
+    let (id, params) = host.expect_request("events.emit").await;
+    let data = &params["data"];
+    assert_eq!((&data["id"], &data["ok"]), (&json!("r2"), &json!(true)));
+    assert_eq!(data["result"]["answers"]["urgent"]["noul"], 0.8);
+    assert!(data["result"]["elapsedMs"].is_u64());
+    assert!(!params.to_string().contains(KEY));
+    host.answer(&id, Value::Null).await;
+    assert_eq!(api.requests().len(), 1);
 }
 
 #[tokio::test]

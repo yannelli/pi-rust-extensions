@@ -32,6 +32,8 @@ pub struct Launch {
     pub program: PathBuf,
     pub parent: Inherit,
     pub extra_args: Vec<String>,
+    /// The parent's mailbox address when agent messaging is on.
+    pub parent_address: Option<String>,
     /// `<agentDir>/ext/subagents/runs`.
     pub runs_root: PathBuf,
     pub keep: usize,
@@ -74,6 +76,7 @@ pub fn start(
         program: &launch.program,
         cwd: &job.cwd,
         extra_args: &launch.extra_args,
+        parent_address: launch.parent_address.as_deref(),
     });
     let label = format!(
         "{}: {}",

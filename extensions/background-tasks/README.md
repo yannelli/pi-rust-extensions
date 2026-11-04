@@ -15,7 +15,7 @@ Tool and parameter names match upstream, so prompts written for it keep working.
 | `bg_logs` | `taskId`, `maxBytes?` (default and cap 50KB), `tail?` (default true) | Bounded output with the full output path when truncated |
 | `bg_kill` | `taskId` | Stops the process group: SIGTERM, then SIGKILL after 3 seconds |
 
-When a task completes, fails, times out or is lost, the extension sends a `background-task-notification` custom message (`deliverAs: followUp`). It starts a turn when `triggerOnCompletion` is true. Tasks stopped by `bg_kill`, `/kill`, `/tasks` or session shutdown do not send a notification.
+When a task completes, fails, times out or is lost, the extension sends a `background-task-notification` custom message (`deliverAs: followUp`). It starts a turn when `triggerOnCompletion` is true; then the extension also emits `agent:wake` on `pi.events`, which ends a running `sleep` of the `timers` extension. Tasks stopped by `bg_kill`, `/kill`, `/tasks` or session shutdown do not send a notification.
 
 `before_agent_start` adds the compact `pi_background_shell_policy` section: use `bg_run` for long commands, continue independent work or end the turn, and wait for notifications without sleeping or polling. Tool registrations omit duplicate snippets and guidelines; defaults and the log byte cap are in the schemas.
 
