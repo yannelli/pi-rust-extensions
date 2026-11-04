@@ -2,6 +2,7 @@
 //! for the UI, the widget, and reports.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -9,6 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::child;
 use crate::launch::Catalog;
 use crate::model::{Workflow, format_duration};
 use crate::store::write_atomic;
@@ -95,6 +97,9 @@ pub struct StepRun {
     /// The tool or text the agent works on now.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub activity: String,
+    /// The end of the message the agent writes now.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub writing: String,
 }
 
 /// A task that waits for the user's approval.
@@ -158,6 +163,11 @@ impl RunState {
             .or_else(|| self.steps.iter().position(|s| s.status != StepStatus::Done))
     }
 
+    /// The step whose agent runs now.
+    pub fn agent_step(&self) -> Option<usize> {
+        self.steps.iter().position(|s| !s.activity.is_empty())
+    }
+
     pub fn wait_left(&self) -> Option<Duration> {
         let until = self.wait_until_ms?;
         Some(Duration::from_millis(until.saturating_sub(now_ms())))
@@ -180,6 +190,7 @@ impl RunState {
         }
         for step in &mut self.steps {
             step.activity.clear();
+            step.writing.clear();
             if step.status == StepStatus::Running {
                 step.status = StepStatus::Pending;
             }
@@ -207,6 +218,55 @@ impl StepRun {
         let end = self.ended_ms.unwrap_or_else(now_ms);
         Some(Duration::from_millis(end.saturating_sub(start)))
     }
+}
+
+pub const WRITING_TAIL: usize = 4000;
+/// The newest output entries that the run view reads.
+const OUTPUT_ENTRIES: usize = 400;
+
+/// The output of all agent runs of step `index`, one JSON entry per line.
+pub fn output_file(run_dir: &Path, index: usize) -> PathBuf {
+    run_dir
+        .join("output")
+        .join(format!("{:02}.jsonl", index + 1))
+}
+
+/// Appends `entries`; returns how many it wrote.
+pub fn append_output(path: &Path, entries: &[child::Entry]) -> usize {
+    if entries.is_empty() {
+        return 0;
+    }
+    let mut text = String::new();
+    for entry in entries {
+        if let Ok(line) = serde_json::to_string(entry) {
+            text.push_str(&line);
+            text.push('\n');
+        }
+    }
+    let written = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?
+                .write_all(text.as_bytes())
+        });
+    if let Err(err) = written {
+        pi_ext_sdk::warn!("cannot write {}: {err}", path.display());
+    }
+    entries.len()
+}
+
+pub fn read_output(path: &Path) -> Vec<child::Entry> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let entries: Vec<child::Entry> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    let skip = entries.len().saturating_sub(OUTPUT_ENTRIES);
+    entries.into_iter().skip(skip).collect()
 }
 
 pub fn now_ms() -> u64 {

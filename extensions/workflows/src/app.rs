@@ -235,6 +235,15 @@ impl App {
         self.send(id, &Command::Stop)
     }
 
+    /// Passes `message` to the agent that runs now; it reads it after its current tool call.
+    pub fn steer(&self, id: &str, message: &str) -> std::result::Result<(), String> {
+        if self.active(id)?.agent_step().is_none() {
+            return Err(format!("No agent of run {id} works now."));
+        }
+        let dir = self.runs.dir(id).ok_or_else(|| format!("no run {id}"))?;
+        control::steer(&dir.join(control::INBOX_DIR), message.trim()).map_err(|e| e.to_string())
+    }
+
     /// Ends the current wait of a run at once.
     pub fn skip_wait(&self, id: &str) -> std::result::Result<(), String> {
         if self.active(id)?.wait_until_ms.is_none() {

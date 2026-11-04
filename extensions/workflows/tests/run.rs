@@ -454,6 +454,40 @@ fn pi_loads_the_tool_and_skills_and_saves_through_the_tool() {
     assert!(output.tool_names(0).contains(&"workflow".to_owned()));
 }
 
+#[test]
+fn a_message_in_the_inbox_steers_the_step_agent() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let root = TempDir::new().unwrap();
+    let inbox = root.path().join("inbox");
+    let writer = {
+        let inbox = inbox.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            let message = serde_json::to_string("Use the staging branch").unwrap();
+            std::fs::create_dir_all(&inbox).unwrap();
+            std::fs::write(inbox.join("0000000000001-1-0.json"), message).unwrap();
+        })
+    };
+    let output = pi_ext_e2e::Run::new(cargo_bin("pi-rust-ext", "pi-rust-ext"))
+        .args(["workflows"])
+        .env("PI_WORKFLOW_RUN", "r1")
+        .env("PI_WORKFLOW_INBOX", inbox.display().to_string())
+        .turns([
+            Turn::tool_call("bash", json!({ "command": "sleep 4" })),
+            Turn::text("Done on staging."),
+        ])
+        .prompt("Deploy")
+        .run()
+        .unwrap();
+    writer.join().unwrap();
+    assert!(output.status.success(), "{}", output.stderr);
+    let second = output.requests[1].to_string();
+    assert!(second.contains("Use the staging branch"), "{second}");
+    assert!(std::fs::read_dir(&inbox).unwrap().next().is_none());
+}
+
 struct Setup {
     root: TempDir,
     fake_dir: PathBuf,

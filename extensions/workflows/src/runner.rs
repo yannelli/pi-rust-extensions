@@ -18,8 +18,10 @@ use crate::control::{self, Command, Decision};
 use crate::launch::{self, Request};
 use crate::model::{ContextMode, Mode, Step, Task, fill, format_duration, slug};
 use crate::planner;
-use crate::policy::{RUN_ENV, STEP_ENV};
-use crate::runs::{Approval, RUN_FILE, RunState, RunStatus, Runs, StepRun, StepStatus, now_ms};
+use crate::policy::{INBOX_ENV, RUN_ENV, STEP_ENV};
+use crate::runs::{
+    self, Approval, RUN_FILE, RunState, RunStatus, Runs, StepRun, StepStatus, now_ms,
+};
 
 pub const FLAG: &str = "--runner";
 pub const SCHEMA_FILE: &str = "report.schema.json";
@@ -106,8 +108,9 @@ async fn serve(dir: PathBuf) -> ExitCode {
             }
         };
     ignore_hangup();
-    // Commands sent before this runner started belong to an earlier one.
+    // Commands and messages sent before this runner started belong to an earlier one.
     let _ = control::take(&dir);
+    let _ = control::take_steering(&dir.join(control::INBOX_DIR));
     let id = state.id.clone();
     let root = dir
         .parent()
@@ -400,6 +403,10 @@ async fn agent(ctx: &Ctx, id: &str, index: usize, prompt: &str) -> Outcome {
             (RUN_ENV.into(), id.to_owned()),
             (STEP_ENV.into(), step.name.clone()),
             ("PI_TODO_SCOPE".into(), format!("{id}-{}", index + 1)),
+            (
+                INBOX_ENV.into(),
+                ctx.dir.join(control::INBOX_DIR).display().to_string(),
+            ),
         ],
         prompt,
     };
@@ -414,18 +421,36 @@ async fn agent(ctx: &Ctx, id: &str, index: usize, prompt: &str) -> Outcome {
         s.model = launch.model.clone();
         s.activity = "starting".into();
     });
+    let output = runs::output_file(&ctx.dir, index);
+    let mut written = 0;
     let (outcome, fold) = child::run(&launch, &ctx.control.cancel, |fold| {
+        written += runs::append_output(&output, &fold.transcript[written..]);
         ctx.runs.update(id, |run| {
             let s = &mut run.steps[index];
             s.activity = fold.activity.clone();
+            s.writing = if fold.writing {
+                child::tail(&fold.text, runs::WRITING_TAIL).to_owned()
+            } else {
+                String::new()
+            };
             s.cost = base_cost + fold.cost;
             s.turns = base_turns + fold.turns;
         });
     })
     .await;
+    for message in control::take_steering(&ctx.dir.join(control::INBOX_DIR)) {
+        let message = crate::ui::one_line(&message, 60);
+        log(
+            ctx,
+            id,
+            index,
+            format!("not delivered, the agent had finished: {message}"),
+        );
+    }
     ctx.runs.update(id, |run| {
         let s = &mut run.steps[index];
         s.activity.clear();
+        s.writing.clear();
         s.cost = base_cost + fold.cost;
         s.turns = base_turns + fold.turns;
         if fold.model.is_some() {

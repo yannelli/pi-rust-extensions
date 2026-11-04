@@ -12,6 +12,8 @@ use crate::runs::now_ms;
 use crate::store::write_atomic;
 
 pub const COMMANDS_DIR: &str = "commands";
+/// Messages from the user to the agent that runs now; the agent reads them as steering.
+pub const INBOX_DIR: &str = "inbox";
 /// How often a pi refreshes its liveness file.
 pub const TOUCH_EVERY: Duration = Duration::from_secs(2);
 /// A liveness file older than this means that pi is gone.
@@ -57,14 +59,39 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 
 pub fn send(run_dir: &Path, command: &Command) -> std::io::Result<()> {
     let text = serde_json::to_string(command).map_err(std::io::Error::other)?;
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let name = format!("{:013}-{}-{n}.json", now_ms(), std::process::id());
-    write_atomic(&run_dir.join(COMMANDS_DIR).join(name), &text)
+    queue(&run_dir.join(COMMANDS_DIR), &text)
 }
 
 /// The waiting commands, oldest first; each file is removed as it is read.
 pub fn take(run_dir: &Path) -> Vec<Command> {
-    let Ok(entries) = std::fs::read_dir(run_dir.join(COMMANDS_DIR)) else {
+    take_queued(&run_dir.join(COMMANDS_DIR))
+        .iter()
+        .filter_map(|text| serde_json::from_str(text).ok())
+        .collect()
+}
+
+pub fn steer(inbox: &Path, message: &str) -> std::io::Result<()> {
+    queue(
+        inbox,
+        &serde_json::to_string(message).map_err(std::io::Error::other)?,
+    )
+}
+
+pub fn take_steering(inbox: &Path) -> Vec<String> {
+    take_queued(inbox)
+        .iter()
+        .filter_map(|text| serde_json::from_str(text).ok())
+        .collect()
+}
+
+fn queue(dir: &Path, text: &str) -> std::io::Result<()> {
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let name = format!("{:013}-{}-{n}.json", now_ms(), std::process::id());
+    write_atomic(&dir.join(name), text)
+}
+
+fn take_queued(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut paths: Vec<PathBuf> = entries
@@ -78,7 +105,7 @@ pub fn take(run_dir: &Path) -> Vec<Command> {
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok();
             let _ = std::fs::remove_file(&path);
-            serde_json::from_str(&text?).ok()
+            text
         })
         .collect()
 }
@@ -144,6 +171,13 @@ mod tests {
             ]
         );
         assert!(take(&dir).is_empty());
+        let inbox = dir.join(INBOX_DIR);
+        steer(&inbox, "use the staging branch").unwrap();
+        steer(&inbox, "then stop").unwrap();
+        assert_eq!(
+            take_steering(&inbox),
+            ["use the staging branch", "then stop"]
+        );
         touch(&dir, 7);
         assert!(alive(&dir, 7) && !alive(&dir, 8));
         std::fs::write(alive_file(&dir, 7), "1").unwrap();
