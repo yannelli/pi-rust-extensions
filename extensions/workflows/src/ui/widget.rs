@@ -23,17 +23,25 @@ pub fn lines(active: &[RunState], paint: &Paint, width: usize) -> Vec<String> {
             paint.run_glyph(run.status),
             pi_ext_sdk::style::bold(&run.workflow.name)
         );
-        let stats = paint.muted(&run.stats());
+        let mode = if run.background { "bg · " } else { "" };
+        let stats = paint.muted(&format!("{mode}{}", run.stats()));
         let room =
             width.saturating_sub(style::visible_width(&head) + style::visible_width(&stats) + 4);
         lines.push(style::truncate(
             &format!("{head}  {}  {stats}", pipeline(run, paint, room)),
             width,
         ));
-        lines.push(style::truncate(
-            &format!("  {}", paint.muted(&now_line(run))),
-            width,
-        ));
+        let now = match &run.approval {
+            Some(approval) => paint.fg(
+                "warning",
+                &format!(
+                    "? \"{}\" waits for your approval · /workflows runs",
+                    approval.task
+                ),
+            ),
+            None => paint.muted(&now_line(run)),
+        };
+        lines.push(style::truncate(&format!("  {now}"), width));
     }
     if active.len() > MAX_RUNS {
         lines.push(paint.dim(&format!(
@@ -157,6 +165,14 @@ pub fn report_card(details: &Value, paint: &Paint, width: usize) -> Option<Vec<S
     if let Some(error) = &report.error {
         lines.push(paint.fg("error", &format!("  {error}")));
     }
+    if matches!(
+        report.status,
+        RunStatus::Failed | RunStatus::Cancelled | RunStatus::Interrupted
+    ) {
+        lines.push(
+            paint.dim("  /workflows runs, then r, resumes it at the task that did not finish"),
+        );
+    }
     Some(
         lines
             .into_iter()
@@ -184,6 +200,7 @@ mod tests {
         assert_eq!(lines[0], "✗ ship  failed · 1m · $0.20 · wf-1");
         assert_eq!(lines[1], "  ✓ build   Built.");
         assert_eq!(lines[3], "  deploy is blocked");
+        assert!(lines[4].contains("then r, resumes it"), "{lines:?}");
         assert!(report_card(&json!({}), &Paint::default(), 80).is_none());
     }
 }

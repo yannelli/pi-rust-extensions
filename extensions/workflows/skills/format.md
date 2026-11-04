@@ -8,6 +8,7 @@ A workflow is one JSON object. The `workflow` tool saves it as `<name>.json` in 
   "description": "Implement a change, check it against current docs, fix gaps, ship it, and watch production.",
   "mode": "fixed",
   "context": "handoff",
+  "background": true,
   "agent": { "model": "anthropic/claude-sonnet-4-5", "thinking": "medium" },
   "steps": [
     {
@@ -35,6 +36,7 @@ A workflow is one JSON object. The `workflow` tool saves it as `<name>.json` in 
 | `name` | Required. Lowercase letters, digits, and dashes; it is the file name. |
 | `description` | What the workflow does. Every step agent sees it. |
 | `mode` | `fixed` (default) runs the steps as written. `dynamic` has a planner model write the remaining steps before each step, from the `goal` input, the reports so far, and the written steps as a starting plan. |
+| `background` | `true`: runs keep going after pi quits, and a later pi session shows them and reports their end. Default `false`: a run stops when the pi that started it quits, and can resume later. Runs that an agent starts in print mode always run in the background. |
 | `context` | What a step agent learns about earlier steps. `handoff` (default): the reports of the earlier steps. `memory`: the reports, plus a shared notes file that each agent reads and adds to with the `workflow_memory` tool. `session`: all steps continue one conversation, which pi compacts when it grows. `none`: only its own tasks. |
 | `agent` | Default agent settings for all steps (see below). |
 | `planner` | Dynamic mode only: `instructions` (rules for the plan), `model` (`provider/id`, default: the session model), `maxSteps` (default 12). |
@@ -74,7 +76,7 @@ A workflow is one JSON object. The `workflow` tool saves it as `<name>.json` in 
 | `repeat` | Number of runs (default 1). With `until`: the most runs (default 10). |
 | `every` | Wait between runs (default: none; with `until`: `1m`). |
 | `until` | A goal. The task runs again until the agent reports it met, for example `"CI passed and the PR is merged into dev"`. |
-| `confirm` | `true`: the user must approve the task before it runs. Use it before deploys, merges to main, and destructive commands. |
+| `confirm` | `true`: the task waits until the user approves it. Every pi session with a UI asks; `/workflows approve <run id>` answers from any pi, also `pi -p`. The run waits as long as it takes, and the wait survives pi restarts. Use it before deploys, merges to main, and destructive commands. |
 | `optional` | `true`: a failure skips the rest of the task, and the workflow continues. |
 
 Each agent run ends with a JSON report: `status` (`done`, `continue`, or `blocked`) and `summary`. `blocked`, an error, or a missed `until` goal stops the workflow unless the task is `optional`. A stopped or interrupted run can resume at the task that did not finish.

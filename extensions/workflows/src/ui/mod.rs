@@ -8,6 +8,7 @@ use pi_ext_sdk::prelude::*;
 use pi_ext_sdk::style;
 
 use crate::app::App;
+use crate::control::Decision;
 use crate::ui::theme::Paint;
 
 mod editor;
@@ -111,6 +112,13 @@ pub async fn command(app: App, args: String, ctx: CommandCtx) -> Result<()> {
     let (verb, rest) = args
         .split_once(' ')
         .map_or((args, ""), |(v, r)| (v, r.trim()));
+    app.refresh(&host);
+    if verb == "approve" {
+        return match approve(&app, rest) {
+            Ok(text) => host.notify_info(text).await,
+            Err(text) => host.notify_warning(text).await,
+        };
+    }
     if !host.has_ui() {
         let text = match verb {
             "runs" => crate::tool::runs_text(&app),
@@ -150,6 +158,42 @@ pub async fn command(app: App, args: String, ctx: CommandCtx) -> Result<()> {
         }
     }
     screen.close().await
+}
+
+/// `/workflows approve [<run id>] [run | skip | stop]`; without an id, the one run that waits.
+/// It works without a UI, for example `pi -p "/workflows approve wf-abc"`.
+fn approve(app: &App, args: &str) -> std::result::Result<String, String> {
+    let mut words = args.split_whitespace();
+    let first = words.next().unwrap_or("");
+    let (id, decision) = match Decision::parse(first) {
+        Some(decision) if !first.is_empty() => (None, decision),
+        _ if first.is_empty() => (None, Decision::Run),
+        _ => {
+            let decision = words.next().map_or(Some(Decision::Run), Decision::parse);
+            (
+                Some(first.to_owned()),
+                decision.ok_or("The decision is run, skip, or stop.")?,
+            )
+        }
+    };
+    let id = match id {
+        Some(id) => id,
+        None => {
+            let waiting: Vec<String> = app
+                .runs
+                .all()
+                .into_iter()
+                .filter(|r| r.status.active() && r.approval.is_some())
+                .map(|r| r.id)
+                .collect();
+            match waiting.as_slice() {
+                [id] => id.clone(),
+                [] => return Err("No workflow run waits for an approval.".into()),
+                ids => return Err(format!("Several runs wait; name one: {}", ids.join(", "))),
+            }
+        }
+    };
+    app.approve(&id, decision)
 }
 
 /// The rows of a list to show so that `selected` is visible.

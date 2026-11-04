@@ -3,6 +3,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::model::{ASK, Scope};
 
 /// The JSON Schema of every step agent's final answer.
@@ -23,8 +25,9 @@ work on your own and do not ask questions. Your final answer is the step report 
 yet and the workflow should check again later, and `blocked` when you cannot go on. `summary` \
 tells the next agent what you did, what changed (files, commands, links), and what is still open.";
 
-/// Skills, MCP servers, and the parent model that a launch resolves names against.
-#[derive(Debug, Clone, Default)]
+/// Skills and MCP servers that a launch resolves names against.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Catalog {
     /// Skill name to `SKILL.md` path.
     pub skills: BTreeMap<String, String>,

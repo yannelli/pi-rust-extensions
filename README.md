@@ -25,7 +25,7 @@ For example, `pi install marketplace:todo`. You can also open `/extensions` in t
 | [`subagents`](extensions/subagents/README.md) | Delegate tasks to child pi agents (explore, build, advisor, custom) in the foreground, background, or in parallel. |
 | [`todo`](extensions/todo/README.md) | Phased todo plans with dependencies, per-subagent scopes, a widget above the editor, and `/todos`. |
 | [`goal`](extensions/goal/README.md) | Persistent goals, task trees, autonomous continuation, and completion audits. |
-| [`workflows`](extensions/workflows/README.md) | Fixed and dynamic multi-agent workflows with per-step models, tools, skills, MCP servers, subagent rules, and env; waits, loops, goals, and approvals; a TUI editor (`/workflows`), the `workflow` tool, and authoring skills. |
+| [`workflows`](extensions/workflows/README.md) | Fixed and dynamic multi-agent workflows with per-step models, tools, skills, MCP servers, subagent rules, and env; waits, loops, goals, and approvals that wait for you; background runs that outlive pi; a TUI editor (`/workflows`), the `workflow` tool, and authoring skills. |
 | [`ask-user-question`](extensions/ask-user-question/README.md) | Tabbed questionnaire tool (`ask_user_question`) for structured answers from the user. |
 | [`background-tasks`](extensions/background-tasks/README.md) | Durable background shell jobs with output and task management. |
 | [`rewind`](extensions/rewind/README.md) | Per-turn shadow git checkpoints and conversation restoration. |

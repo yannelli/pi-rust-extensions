@@ -59,12 +59,20 @@ pub async fn run_dialog(
         }
         inputs.insert(input, value.trim().to_owned());
     }
-    match ui.app.start(&ui.host, workflow, inputs, Origin::User).await {
+    let background = workflow.background;
+    match ui
+        .app
+        .start(&ui.host, workflow, inputs, Origin::User, background)
+        .await
+    {
         Ok(id) => {
+            let mode = if background {
+                "in the background"
+            } else {
+                "in the foreground (b in the run view moves it to the background)"
+            };
             ui.host
-                .notify_info(format!(
-                    "Started {name} ({id}). The widget shows its progress."
-                ))
+                .notify_info(format!("Started {name} ({id}) {mode}."))
                 .await?;
             Ok(Some(id))
         }

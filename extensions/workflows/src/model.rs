@@ -20,6 +20,9 @@ pub struct Workflow {
     pub mode: Mode,
     #[serde(skip_serializing_if = "is_default")]
     pub context: ContextMode,
+    /// Runs keep going after pi quits.
+    #[serde(skip_serializing_if = "is_false")]
+    pub background: bool,
     /// Defaults for the agent of every step.
     #[serde(skip_serializing_if = "is_default")]
     pub agent: Scope,
