@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::env::{Dirs, Scope};
 use crate::jsonfile;
@@ -49,6 +50,20 @@ pub struct PluginRecord {
     pub mcp_keys: Vec<String>,
     #[serde(default)]
     pub unsupported: Vec<String>,
+    /// `<pluginRoot>/bin`, added to the bash `PATH` for commands that name its files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bin: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bin_names: Vec<String>,
+    /// The `userConfig` schema.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub user_config: Map<String, Value>,
+    /// `<name>: <command>` of each LSP server (not run by pi).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lsp: Vec<String>,
+    /// The plugin's default main agent (not applied by pi).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_agent: Option<String>,
 }
 
 impl State {

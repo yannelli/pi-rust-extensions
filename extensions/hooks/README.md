@@ -1,6 +1,6 @@
 # hooks
 
-Created 2026-10-29. Last updated 2026-11-02.
+Created 2026-10-29. Last updated 2026-11-04.
 
 Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both tools and a pi-native hooks file, maps pi events onto hook events, runs the matching handlers, and applies their decisions to pi. It follows the Claude Code hooks reference (code.claude.com/docs/en/hooks) and the Codex hooks docs (developers.openai.com/codex/hooks), read 2026-11-02.
 
@@ -58,7 +58,7 @@ The extension registers no tools.
 - Codex `[features] hooks = false` (or `codex_hooks = false`) turns off the Codex source. The most specific layer that sets it wins.
 - Codex `[hooks.state."<file>:<snake_event>:<group>:<handler>"] enabled = false` in the user `config.toml` turns off one Codex hook, as Codex `/hooks` does. `trusted_hash` is not read; pi uses its own trust list.
 - Codex inline hooks in `config.toml` (`[[hooks.<Event>]]` with `[[hooks.<Event>.hooks]]`) merge with `hooks.json` of the same layer, with a log warning.
-- pi-native files use the Claude settings shape and Claude semantics. Matcher groups can carry `plugin`, `pluginRoot`, and `pluginData` (written by `claude-marketplace`). The hook gets `CLAUDE_PLUGIN_ROOT`, `PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and `PLUGIN_DATA` from them, and `/hooks` shows the plugin id.
+- pi-native files use the Claude settings shape and Claude semantics. Matcher groups can carry `plugin`, `pluginRoot`, `pluginData`, and `pluginEnv` (written by `claude-marketplace`). The hook gets `CLAUDE_PLUGIN_ROOT`, `PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and `PLUGIN_DATA` from them, and the string values of `pluginEnv` whose names start with `CLAUDE_PLUGIN_OPTION_` (other names are ignored). `/hooks` shows the plugin id.
 
 ## Options
 

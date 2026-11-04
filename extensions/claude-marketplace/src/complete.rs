@@ -1,7 +1,7 @@
 use crate::env::Env;
 use crate::listing::{self, Status};
 
-const SUBCOMMANDS: [&str; 12] = [
+const SUBCOMMANDS: [&str; 14] = [
     "marketplace",
     "list",
     "info",
@@ -12,6 +12,8 @@ const SUBCOMMANDS: [&str; 12] = [
     "enable",
     "disable",
     "import",
+    "config",
+    "style",
     "browse",
     "help",
 ];
@@ -70,7 +72,12 @@ pub fn complete(env: &Env, prefix: &str) -> Vec<String> {
         ["list"] => marketplace_names(env),
         ["install"] => plugin_ids(env, Some(false)),
         ["info"] => plugin_ids(env, None),
-        ["uninstall" | "update" | "enable" | "disable" | "reinstall"] => {
+        ["style"] => {
+            let mut names = crate::styles::style_names(env);
+            names.push("off".into());
+            names
+        }
+        ["uninstall" | "update" | "enable" | "disable" | "reinstall" | "config"] => {
             plugin_ids(env, Some(true))
         }
         [_, ..] if current.starts_with('-') => vec!["--scope".into()],

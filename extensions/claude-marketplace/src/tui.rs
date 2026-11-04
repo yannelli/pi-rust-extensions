@@ -1,8 +1,9 @@
+use pi_ext_sdk::InputOptions;
 use pi_ext_sdk::prelude::*;
 
 use crate::env::{Env, Scope};
 use crate::listing::{self, MarketplaceRow, PluginRow, Status};
-use crate::{blocking, install, market, reconcile};
+use crate::{blocking, install, market, options, reconcile};
 
 enum Row {
     Marketplace(MarketplaceRow),
@@ -206,6 +207,9 @@ async fn plugin_menu(host: &Host, env: &Env, p: &PluginRow) -> anyhow::Result<Op
             options.push(if enabled { "Disable" } else { "Enable" });
         }
     }
+    if p.enabled.is_some() {
+        options.push("Configure");
+    }
     options.push("Info");
     let Some(choice) = host
         .select(&id, &options)
@@ -215,7 +219,13 @@ async fn plugin_menu(host: &Host, env: &Env, p: &PluginRow) -> anyhow::Result<Op
         return Ok(None);
     };
     let scope = p.scope;
-    run(env, move |env| match choice.as_str() {
+    if choice == "Configure" {
+        let text = prompt_options(host, env, &id, true).await?;
+        return Ok(text.or_else(|| Some(format!("{id} has no user config."))));
+    }
+    let installs = choice.starts_with("Install") || choice == "Enable";
+    let (env2, id2) = (env.clone(), id.clone());
+    let text = run(env, move |env| match choice.as_str() {
         "Install (user)" => install::install(&env, &id, Scope::User),
         "Install (project)" => install::install(&env, &id, Scope::Project),
         "Update" => install::update_one(&env, &id, Some(scope)),
@@ -224,5 +234,64 @@ async fn plugin_menu(host: &Host, env: &Env, p: &PluginRow) -> anyhow::Result<Op
         "Disable" => install::set_enabled(&env, &id, false, Some(scope)),
         _ => crate::cli::info(&env, &id),
     })
-    .await
+    .await?;
+    if installs {
+        if let Some(configured) = prompt_options(host, &env2, &id2, false).await? {
+            return Ok(Some(configured));
+        }
+    }
+    Ok(text)
+}
+
+/// Asks for the user config of an installed plugin: every option with `all`, else the ones
+/// without a stored value. Saves the answers and reinstalls; `None` when nothing was asked.
+pub async fn prompt_options(
+    host: &Host,
+    env: &Env,
+    id: &str,
+    all: bool,
+) -> anyhow::Result<Option<String>> {
+    let key = id.to_owned();
+    let (scope, opts, stored) = blocking(env.clone(), move |env| {
+        install::user_options(&env, &key, None)
+    })
+    .await?;
+    let asked: Vec<&options::Opt> = opts
+        .iter()
+        .filter(|opt| all || !stored.contains_key(&opt.key))
+        .collect();
+    if asked.is_empty() {
+        return Ok(None);
+    }
+    let mut updates = Vec::new();
+    for opt in asked {
+        let current = stored.get(&opt.key).or(opt.default.as_ref());
+        let prefill = current.filter(|_| !opt.sensitive).map(options::to_text);
+        let mut title = format!("{id}: {}", opt.title);
+        if opt.required {
+            title.push_str(" (required)");
+        }
+        let input = InputOptions {
+            placeholder: Some(opt.description.clone()).filter(|d| !d.is_empty()),
+            prefill,
+            secret: opt.sensitive,
+        };
+        let answer = host
+            .input_with(&title, input)
+            .await
+            .map_err(Error::into_anyhow)?;
+        let Some(answer) = answer else { break };
+        if !answer.trim().is_empty() {
+            updates.push((opt.key.clone(), Some(answer)));
+        }
+    }
+    if updates.is_empty() {
+        return Ok(None);
+    }
+    let key = id.to_owned();
+    let text = blocking(env.clone(), move |env| {
+        install::configure(&env, &key, Some(scope), &updates)
+    })
+    .await?;
+    Ok(Some(text))
 }

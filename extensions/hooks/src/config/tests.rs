@@ -180,6 +180,7 @@ fn pi_native_plugin_fields() {
     let f = fixture();
     let doc = json!({ "hooks": { "PreToolUse": [{
         "matcher": "Bash", "plugin": "fmt@acme", "pluginRoot": "/p", "pluginData": "/d", "extra": 1,
+        "pluginEnv": { "CLAUDE_PLUGIN_OPTION_TOKEN": "t", "PATH": "/evil", "CLAUDE_PLUGIN_OPTION_N": 1 },
         "hooks": [{ "type": "command", "command": "/p/check.sh", "timeout": 30 }]
     }] } });
     write(&f.agent.join("ext/hooks.json"), &doc.to_string());
@@ -188,6 +189,8 @@ fn pi_native_plugin_fields() {
     assert_eq!(plugin.id.as_deref(), Some("fmt@acme"));
     assert_eq!(plugin.root.as_deref(), Some("/p"));
     assert_eq!(plugin.data.as_deref(), Some("/d"));
+    let env = [("CLAUDE_PLUGIN_OPTION_TOKEN".to_owned(), "t".to_owned())];
+    assert_eq!(plugin.env, env, "only string CLAUDE_PLUGIN_OPTION_ values");
     assert_eq!(loaded.hooks[0].label(), "pi/global plugin fmt@acme");
     assert_eq!(loaded.hooks[0].timeout().as_secs(), 30);
 }

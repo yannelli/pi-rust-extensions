@@ -45,7 +45,7 @@
     {
       "name": "claude-marketplace",
       "displayName": "Claude Marketplace",
-      "description": "Add Claude Code plugin marketplaces and install their commands, skills, agents, hooks, and MCP servers into pi.",
+      "description": "Add Claude Code plugin marketplaces and install their commands, skills, agents, hooks, MCP servers, output styles, bin executables, and user config into pi.",
       "version": "0.5.9",
       "args": [
         "claude-marketplace"

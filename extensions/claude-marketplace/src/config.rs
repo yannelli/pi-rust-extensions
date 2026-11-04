@@ -23,6 +23,18 @@ impl Config {
         jsonfile::write(&self.dirs.config_file(), &Value::Object(self.data.clone()))
     }
 
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.data.get(key)
+    }
+
+    /// Sets (`Some`) or removes (`None`) a top-level key.
+    pub fn set(&mut self, key: &str, value: Option<Value>) {
+        match value {
+            Some(value) => self.data.insert(key.to_owned(), value),
+            None => self.data.shift_remove(key),
+        };
+    }
+
     pub fn marketplaces(&self) -> Vec<(String, String, bool)> {
         let section = self.data.get("marketplaces").and_then(Value::as_object);
         section

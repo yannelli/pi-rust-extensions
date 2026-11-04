@@ -37,6 +37,7 @@ fn rows() -> Vec<Row> {
         id: Some("formatter@acme".into()),
         root: None,
         data: None,
+        env: Vec::new(),
     });
     let mut rows = vec![
         Row::new(

@@ -5,11 +5,33 @@ use serde_json::{Map, Value, json};
 
 use crate::frontmatter::substitute;
 use crate::jsonfile;
+use crate::stage::Vars;
+
+/// Variables a stdio server process gets, as in Claude Code.
+const SERVER_ENV: [&str; 3] = [
+    "CLAUDE_PLUGIN_ROOT",
+    "CLAUDE_PLUGIN_DATA",
+    "CLAUDE_PROJECT_DIR",
+];
+
+/// Adds [`SERVER_ENV`] to the `env` of a stdio server; values the plugin sets stay.
+fn add_env(config: &mut Map<String, Value>, vars: &Vars) {
+    if !config.contains_key("command") {
+        return;
+    }
+    let env = config.entry("env").or_insert_with(|| json!({}));
+    let Value::Object(env) = env else { return };
+    for (key, value) in vars {
+        if SERVER_ENV.contains(&key.as_str()) && !env.contains_key(key) {
+            env.insert(key.clone(), json!(value));
+        }
+    }
+}
 
 /// Field that marks an `mcpServers` entry as written for a plugin.
 pub const TAG: &str = "claudePlugin";
 
-fn substitute_all(value: &mut Value, vars: &[(&str, String)]) {
+fn substitute_all(value: &mut Value, vars: &Vars) {
     match value {
         Value::String(text) => *text = substitute(text, vars),
         Value::Array(items) => items.iter_mut().for_each(|v| substitute_all(v, vars)),
@@ -33,7 +55,7 @@ pub fn write(
     plugin_id: &str,
     plugin: &str,
     servers: &Map<String, Value>,
-    vars: &[(&str, String)],
+    vars: &Vars,
 ) -> Result<(Vec<String>, Vec<String>)> {
     let mut data = jsonfile::read_object(file)?;
     let section = jsonfile::object_entry(&mut data, "mcpServers")?;
@@ -51,12 +73,15 @@ pub fn write(
             ));
             continue;
         }
-        let Value::Object(_) = config else {
+        let Value::Object(config) = config else {
             notes.push(format!("MCP server {name} is not an object; skipped"));
             continue;
         };
-        let mut config = config.clone();
+        let mut config = Value::Object(config.clone());
         substitute_all(&mut config, vars);
+        if let Value::Object(map) = &mut config {
+            add_env(map, vars);
+        }
         config[TAG] = json!(plugin_id);
         section.insert(key.clone(), config);
         keys.push(key);
@@ -68,5 +93,5 @@ pub fn write(
 }
 
 pub fn remove(file: &Path, plugin_id: &str) -> Result<()> {
-    write(file, plugin_id, "", &Map::new(), &[]).map(|_| ())
+    write(file, plugin_id, "", &Map::new(), &Vars::new()).map(|_| ())
 }

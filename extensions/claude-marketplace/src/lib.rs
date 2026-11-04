@@ -4,10 +4,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use pi_ext_sdk::CompletionItem;
+use pi_ext_sdk::event_types::ToolCallEvent;
 use pi_ext_sdk::prelude::*;
 use serde::Deserialize;
 
 pub mod agents;
+pub mod bin;
 pub mod catalog;
 pub mod cli;
 pub mod complete;
@@ -22,11 +24,13 @@ mod jsonfile;
 pub mod listing;
 pub mod market;
 pub mod mcp;
+pub mod options;
 pub mod plugin;
 pub mod reconcile;
 pub mod source;
 pub mod stage;
 pub mod state;
+pub mod styles;
 mod tui;
 
 pub use env::{Env, Paths, Scope};
@@ -149,6 +153,17 @@ fn discover(env: &Env) -> Value {
     json!({ "skillPaths": skills, "promptPaths": prompts })
 }
 
+/// The plugin id of an `install`, `reinstall`, or `enable` subcommand.
+fn installed_id(args: &str) -> Option<String> {
+    let parsed = cli::parse(args).ok()?;
+    match parsed.words.as_slice() {
+        [verb, id, ..] if matches!(verb.as_str(), "install" | "reinstall" | "enable") => {
+            Some(id.clone())
+        }
+        _ => None,
+    }
+}
+
 fn untrusted_project_files(env: &Env) -> bool {
     let dirs = env.dirs(Scope::Project);
     !env.trusted && (dirs.config_file().is_file() || dirs.state_file().is_file())
@@ -187,7 +202,18 @@ pub fn extension(paths: Paths) -> Extension {
                 if args.trim().is_empty() && host.has_ui() {
                     return tui::browse(host, env).await;
                 }
-                match blocking(env, move |env| cli::run(&env, &args)).await {
+                let installs = installed_id(&args);
+                let result = blocking(env.clone(), move |env| cli::run(&env, &args)).await;
+                let text = match (result, installs) {
+                    (Ok(text), Some(id)) if host.has_ui() => {
+                        match tui::prompt_options(&host, &env, &id, false).await {
+                            Ok(configured) => Ok(configured.unwrap_or(text)),
+                            Err(err) => Ok(format!("{text}\n{err:#}")),
+                        }
+                    }
+                    (result, _) => result,
+                };
+                match text {
                     Ok(text) => host.notify_info(text).await,
                     Err(err) => host.notify_error(format!("{err:#}")).await,
                 }
@@ -219,6 +245,33 @@ pub fn extension(paths: Paths) -> Extension {
                 });
             }
             Ok(EventReply::result(discover(&env)))
+        }
+    });
+    let p = paths.clone();
+    ext = ext.on("before_agent_start", move |ev: EventCtx| {
+        let env = env_of(&p, ev.host(), Some(ev.snapshot()));
+        async move {
+            let section = blocking(env, |env| Ok(styles::section(&env))).await?;
+            Ok(EventReply::none().with_section(styles::SECTION, section))
+        }
+    });
+    let p = paths.clone();
+    ext = ext.on("tool_call", move |ev: EventCtx| {
+        let env = env_of(&p, ev.host(), Some(ev.snapshot()));
+        let call: Option<ToolCallEvent> = ev.event_as().ok();
+        async move {
+            let Some(call) = call.filter(|c| c.tool_name == "bash") else {
+                return Ok(EventReply::none());
+            };
+            let Some(command) = call.input.get("command").and_then(Value::as_str) else {
+                return Ok(EventReply::none());
+            };
+            let command = command.to_owned();
+            let rewritten = blocking(env, move |env| Ok(bin::rewrite(&env, &command))).await?;
+            Ok(match rewritten {
+                Some(command) => EventReply::patch(json!({ "input": { "command": command } })),
+                None => EventReply::none(),
+            })
         }
     });
     let p = paths.clone();

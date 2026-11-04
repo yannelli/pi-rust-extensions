@@ -51,7 +51,11 @@ fn install_and_uninstall_user_scope() {
     let root = fx.repo.join("plugins/fmt");
     assert_eq!(names(&dirs.prompts()), ["fmt:build:web.md", "fmt:hello.md"]);
     let web = read(&dirs.prompts().join("fmt:build:web.md"));
-    assert_eq!(web, format!("Build with {}/web\n", root.display()));
+    let appended = "\nARGUMENTS: $ARGUMENTS\n";
+    assert_eq!(
+        web,
+        format!("Build with {}/web\n{appended}", root.display())
+    );
     assert_eq!(names(&dirs.skills()), ["fmt-check", "fmt-style"]);
     let skill = read(&dirs.skills().join("fmt-check/SKILL.md"));
     let skill_dir = dirs.skills().join("fmt-check");
@@ -69,7 +73,7 @@ fn install_and_uninstall_user_scope() {
     let agent = read(&fx.agent.join("ext/subagents/agents/fmt-reviewer.md"));
     assert!(agent.contains("name: fmt-reviewer\n"), "{agent}");
     assert!(
-        agent.contains("tools: bash, read, find, WebFetch\n"),
+        agent.contains("tools: bash, read, find, url_context\n"),
         "{agent}"
     );
     assert!(
@@ -183,8 +187,15 @@ fn update_after_new_commit_reinstalls() {
     let text = cli::run(&env, "update").unwrap();
     assert!(text.contains("Updated marketplace acme [user]"), "{text}");
     assert!(text.contains("Installed fmt@acme"), "{text}");
-    assert_eq!(read(&dirs.prompts().join("fmt:hello.md")), "Hi again\n");
-    assert_eq!(read(&dirs.prompts().join("fmt:bye.md")), "Bye\n");
+    let appended = "\nARGUMENTS: $ARGUMENTS\n";
+    assert_eq!(
+        read(&dirs.prompts().join("fmt:hello.md")),
+        format!("Hi again\n{appended}")
+    );
+    assert_eq!(
+        read(&dirs.prompts().join("fmt:bye.md")),
+        format!("Bye\n{appended}")
+    );
     let hooks = read_json(&dirs.hooks_file());
     assert_eq!(hooks["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
     assert_eq!(

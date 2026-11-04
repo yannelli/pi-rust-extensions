@@ -147,6 +147,12 @@ impl Dirs {
         self.plugin_dir("data", marketplace, plugin)
     }
 
+    /// The `userConfig` values of a plugin.
+    pub fn plugin_options(&self, marketplace: &str, plugin: &str) -> Result<PathBuf> {
+        let dir = self.plugin_dir("options", marketplace, plugin)?;
+        Ok(dir.with_file_name(format!("{plugin}.json")))
+    }
+
     fn plugin_dir(&self, kind: &str, marketplace: &str, plugin: &str) -> Result<PathBuf> {
         check_name("marketplace", marketplace)?;
         check_name("plugin", plugin)?;
@@ -162,6 +168,10 @@ impl Dirs {
 
     pub fn skills(&self) -> PathBuf {
         self.state_dir.join("resources").join("skills")
+    }
+
+    pub fn output_styles(&self) -> PathBuf {
+        self.state_dir.join("resources").join("output-styles")
     }
 
     pub fn agents(&self) -> PathBuf {
