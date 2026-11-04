@@ -8,6 +8,45 @@ fn code(questions: Vec<serde_json::Value>) -> Option<E> {
 }
 
 #[test]
+fn compact_guidance_keeps_question_constraints() {
+    let tool = crate::guidance::tool_spec(&crate::config::Guidance::default());
+    let questions = &tool.parameters["properties"]["questions"];
+    assert_eq!(questions["minItems"], 1);
+    assert_eq!(questions["maxItems"], crate::schema::MAX_QUESTIONS);
+    let fields = &questions["items"]["properties"];
+    assert_eq!(
+        fields["header"]["maxLength"],
+        crate::schema::MAX_HEADER_LENGTH
+    );
+    assert_eq!(fields["options"]["minItems"], crate::schema::MIN_OPTIONS);
+    assert_eq!(fields["options"]["maxItems"], crate::schema::MAX_OPTIONS);
+    let option = &fields["options"]["items"];
+    assert_eq!(option["required"], json!(["label", "description"]));
+    assert_eq!(
+        option["properties"]["label"]["maxLength"],
+        crate::schema::MAX_LABEL_LENGTH
+    );
+    let label = option["properties"]["label"]["description"]
+        .as_str()
+        .unwrap();
+    for reserved in crate::schema::RESERVED_LABELS {
+        assert!(label.contains(reserved));
+    }
+    let cost = tool.description.chars().count()
+        + tool.parameters.to_string().chars().count()
+        + tool.prompt_snippet.unwrap().chars().count()
+        + tool
+            .prompt_guidelines
+            .iter()
+            .map(|line| line.chars().count())
+            .sum::<usize>();
+    assert!(
+        cost <= 2_494,
+        "prompt grew beyond half the baseline: {cost}"
+    );
+}
+
+#[test]
 fn validation_codes() {
     let q = |text: &str, labels: &[&str]| question(text, "H", labels, false);
     assert_eq!(code(vec![]), Some(E::NoQuestions));

@@ -175,13 +175,13 @@ fn create_item_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "subject": { "type": "string", "description": "Task subject line" },
-            "description": { "type": "string", "description": "Long-form task description" },
-            "activeForm": { "type": "string", "description": "Present-continuous spinner label shown while status is in_progress (e.g. 'writing tests')" },
-            "blockedBy": ids("Existing task ids this item waits on. Cannot name another item in this same batch; create the prerequisite first, then the dependent with blockedBy."),
-            "owner": { "type": "string", "description": "Agent/owner assigned to this task" },
-            "metadata": { "type": "object", "additionalProperties": true, "description": "Arbitrary metadata" },
-            "phase": { "type": "number", "description": "Phase id this task belongs to" }
+            "subject": { "type": "string", "description": "Short imperative task" },
+            "description": { "type": "string" },
+            "activeForm": { "type": "string", "description": "Present-continuous spinner label" },
+            "blockedBy": ids("Existing prerequisite ids"),
+            "owner": { "type": "string" },
+            "metadata": { "type": "object", "additionalProperties": true },
+            "phase": { "type": "number" }
         },
         "required": ["subject"]
     })
@@ -193,24 +193,24 @@ pub fn schema() -> Value {
         "type": "object",
         "properties": {
             "action": { "type": "string", "enum": actions },
-            "subject": { "type": "string", "description": "Task subject line (required for create unless tasks[] is set)" },
-            "description": { "type": "string", "description": "Long-form task description" },
-            "activeForm": { "type": "string", "description": "Present-continuous spinner label shown while status is in_progress (e.g. 'writing tests')" },
+            "subject": { "type": "string", "description": "Short imperative task; create requires this or tasks" },
+            "description": { "type": "string" },
+            "activeForm": { "type": "string", "description": "Present-continuous spinner label" },
             "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "deleted"],
-                "description": "Set this task's status (update): one of pending, in_progress, completed, deleted. When action is list, filters returned tasks by this status. For update_phase: pending, in_progress, or completed." },
-            "blockedBy": ids("Initial blockedBy ids (create only)"),
-            "addBlockedBy": ids("Task ids to add to blockedBy (update only, additive merge)"),
-            "removeBlockedBy": ids("Task ids to remove from blockedBy (update only, additive merge)"),
-            "owner": { "type": "string", "description": "Agent/owner assigned to this task" },
-            "metadata": { "type": "object", "additionalProperties": true, "description": "Arbitrary metadata; pass null value for a key to delete that key on update" },
-            "id": { "type": "number", "description": "Task id (required for update, get, delete, move)" },
-            "includeDeleted": { "type": "boolean", "description": "If true, list action returns deleted (tombstoned) tasks as well. Default: false." },
+                "description": "update sets; list filters; update_phase excludes deleted" },
+            "blockedBy": ids("create: prerequisite ids"),
+            "addBlockedBy": ids("update: add dependencies"),
+            "removeBlockedBy": ids("update: remove dependencies"),
+            "owner": { "type": "string" },
+            "metadata": { "type": "object", "additionalProperties": true, "description": "Null values delete keys on update" },
+            "id": { "type": "number", "description": "Required: update/get/delete/move" },
+            "includeDeleted": { "type": "boolean", "default": false },
             "tasks": { "type": "array", "items": create_item_schema(),
-                "description": "Batch create: independent tasks in one call, one-of with subject. The whole list is validated then committed together. Items cannot blockedBy each other; create the prerequisite first, then the dependent with blockedBy." },
-            "phase": { "type": "number", "description": "Phase id: the phase of a created task (create, also the default for tasks[] items), the new phase of a task (update), or the phase to change (update_phase, set_goal, delete_phase)" },
-            "title": { "type": "string", "description": "Phase title (add_phase, update_phase)" },
-            "goal": { "type": "string", "description": "Phase goal (add_phase, update_phase, set_goal); an empty string clears it" },
-            "position": { "type": "number", "description": "1-based position to move the task (move) or phase (update_phase) to" }
+                "description": "Atomic create batch; omit subject; existing dependencies only" },
+            "phase": { "type": "number", "description": "Phase id; create batch default; update: 0 unassigns" },
+            "title": { "type": "string", "description": "add_phase/update_phase title" },
+            "goal": { "type": "string", "description": "add_phase/update_phase/set_goal; empty clears" },
+            "position": { "type": "number", "description": "1-based task/phase order" }
         },
         "required": ["action"]
     })

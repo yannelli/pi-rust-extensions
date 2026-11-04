@@ -1,6 +1,6 @@
 # background-tasks
 
-Created 2026-10-30. Last updated 2026-10-31.
+Created 2026-10-30. Last updated 2026-11-04.
 
 Durable background shell jobs for pi, ported from the core of `pi-background-tasks` (v2.6.10). The agent starts long-running commands (tests, builds, dev servers, watchers) without blocking a turn. A notification reports the end state. Jobs keep running across `/reload`. Fusion, delegated agents, attested runs and Anthropic attribution are not ported.
 
@@ -17,7 +17,7 @@ Tool and parameter names match upstream, so prompts written for it keep working.
 
 When a task completes, fails, times out or is lost, the extension sends a `background-task-notification` custom message (`deliverAs: followUp`). It starts a turn when `triggerOnCompletion` is true. Tasks stopped by `bg_kill`, `/kill`, `/tasks` or session shutdown do not send a notification.
 
-`before_agent_start` adds the system prompt section `pi_background_shell_policy`.
+`before_agent_start` adds the compact `pi_background_shell_policy` section: use `bg_run` for long commands, continue independent work or end the turn, and wait for notifications without sleeping or polling. Tool registrations omit duplicate snippets and guidelines; defaults and the log byte cap are in the schemas.
 
 ## Commands
 

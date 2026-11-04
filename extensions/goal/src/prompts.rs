@@ -198,15 +198,14 @@ fn policy_block(settings: &Settings) -> String {
     let autonomous = settings.max_autonomous_runs != Some(0);
     let mut lines = vec!["[OUTCOMES]".to_owned()];
     if autonomous {
-        lines.push("- Continue pursuing the goal automatically after each execution; no scheduling declaration is required. New waits require user opt-in to strictExecutionContract; do not enable it merely to continue.".into());
+        lines.push("Continue automatically. New waits require user opt-in to strictExecutionContract; do not enable it just to continue.".into());
     }
     lines.extend([
-        "- update_goal({status: \"complete\"}) only when every requirement is satisfied; the independent completion auditor checks actual evidence. Approval archives; rejection requires rework.",
-        "- update_goal({status: \"blocked\"}) only after the SAME blocker recurs on three consecutive goal turns; keep trying concrete steps before then.",
-        "- update_goal({status: \"paused\", reason: \"…\"}) pauses immediately. User controls: /goal-pause, /goal-resume, /goal-clear.",
-        "- The objective is immutable: never edit it yourself; ask the user to run /goal-tweak.",
-        "- Use work tools directly. Do not call get_goal repeatedly when the needed state is already visible.",
-        "- Full objective/contracts: get_goal(section=\"objective\"); tasks: get_goal(section=\"tasks\").",
+        "- update_goal: complete after all requirements pass; auditor checks evidence, archives on approval, requires rework on rejection.",
+        "- blocked: same blocker for three consecutive goal turns; try concrete steps first. paused: stop immediately.",
+        "- Wait: future ISO deadline; reuse wait_id/deadline on recheck without polling.",
+        "- Objective edits require the user's /goal-tweak. Controls: /goal-pause, /goal-resume, /goal-clear.",
+        "- Use work tools directly; get_goal sections objective/tasks retrieve full contracts/tasks.",
     ].map(str::to_owned));
     lines.join("\n")
 }
@@ -217,10 +216,7 @@ fn sisyphus_block(goal: &Goal) -> String {
     }
     [
         format!("[SISYPHUS STYLE goalId={}]", goal.id),
-        "Sisyphus: complete every ordered step before completion.".into(),
-        "- Follow the user's ordered plan faithfully. Do not add reconnaissance, preflight, or verification steps the user did not ask for.".into(),
-        "- Work patiently and sequentially. Verify each meaningful action against the objective's own success criteria before moving on.".into(),
-        "- If a step is unclear, blocked, fails, or seems wrong: report it; do not invent a workaround. Do not mark complete until the full objective is satisfied.".into(),
+        "Complete every step in user order, verifying each against its success criteria. Add no unrequested steps. Report unclear, blocked, failing, or incorrect steps without workarounds; complete only when the full objective is satisfied.".into(),
     ]
     .join("\n")
 }
@@ -284,9 +280,7 @@ pub fn unfocused_prompt(open: usize) -> String {
     [
         "[PI GOAL UNFOCUSED]".to_owned(),
         format!("{open} open pi {noun}, but this session has no focused goal."),
-        "Do not choose or switch focus autonomously. Focus is human-owned intent.".into(),
-        "Ask the user to run /goal-focus, /goal-list, or /goal-resume before doing goal work."
-            .into(),
+        "Before goal work, ask the user to /goal-focus, /goal-list, or /goal-resume; do not select focus yourself.".into(),
     ]
     .join("\n")
 }

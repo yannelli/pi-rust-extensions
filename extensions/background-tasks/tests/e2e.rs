@@ -30,6 +30,10 @@ fn bg_run_and_status_through_pi() {
     for tool in ["bg_run", "bg_status", "bg_logs", "bg_kill"] {
         assert!(output.tool_names(0).contains(&tool.to_string()), "{tool}");
     }
-    assert!(output.system_prompt(0).contains("Background shell policy"));
+    assert!(
+        output
+            .system_prompt(0)
+            .contains("Use bg_run for long commands")
+    );
     assert_eq!(output.final_text(), "Started.");
 }

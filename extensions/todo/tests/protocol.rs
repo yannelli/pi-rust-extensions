@@ -36,6 +36,48 @@ async fn started(agent: &pi_ext_e2e::TempDir) -> TestHost {
 }
 
 #[tokio::test]
+async fn tool_guidance_is_compact_and_keeps_progress_rules() {
+    let mut host = TestHost::start(pi_ext_todo::extension(Config::default(), None));
+    let init = host.initialize().await;
+    let tool = &init["tools"][0];
+    let guidelines = tool["promptGuidelines"].as_array().unwrap();
+    let guidance = guidelines
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for rule in [
+        "pending → in_progress",
+        "completed immediately",
+        "exactly one in_progress",
+        "activeForm",
+        "acyclic",
+    ] {
+        assert!(guidance.contains(rule), "{rule}: {guidance}");
+    }
+    let cost = tool["description"].as_str().unwrap().chars().count()
+        + tool["parameters"].to_string().chars().count()
+        + tool["promptSnippet"].as_str().unwrap().chars().count()
+        + guidance.chars().count();
+    assert!(
+        cost <= 3_044,
+        "prompt grew beyond half the baseline: {cost}"
+    );
+    assert_eq!(
+        tool["parameters"]["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap()
+            .len(),
+        11
+    );
+    assert_eq!(
+        tool["parameters"]["properties"]["tasks"]["items"]["required"],
+        json!(["subject"])
+    );
+    host.finish().await;
+}
+
+#[tokio::test]
 async fn tool_call_persists_state_and_scope_event_updates_widget() {
     let agent = pi_ext_e2e::TempDir::new().unwrap();
     let mut host = started(&agent).await;
