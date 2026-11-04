@@ -4,6 +4,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use pi_ext_sdk::CancellationToken;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -40,6 +41,29 @@ pub struct Fold {
     pub model: Option<String>,
     /// The running tool, or the start of the text being written.
     pub activity: String,
+    /// What the agent got and did, in order.
+    pub transcript: Vec<Entry>,
+    /// Whether `text` is a message the agent still writes.
+    pub writing: bool,
+}
+
+/// One item of an agent's output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Entry {
+    pub kind: EntryKind,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryKind {
+    /// The task prompt.
+    Prompt,
+    /// A later user-role message: the user's steering, or a follow-up from pi itself.
+    User,
+    Assistant,
+    Tool,
+    Error,
 }
 
 impl Fold {
@@ -47,7 +71,19 @@ impl Fold {
     pub fn apply(&mut self, event: &Value) -> bool {
         match event["type"].as_str().unwrap_or("") {
             "turn_start" => self.turns += 1,
-            "message_start" if event["message"]["role"] == "assistant" => self.text.clear(),
+            "message_start" if event["message"]["role"] == "assistant" => {
+                self.text.clear();
+                self.writing = true;
+            }
+            "message_start" if event["message"]["role"] == "user" => {
+                let started = self.transcript.iter().any(|e| e.kind == EntryKind::Prompt);
+                let kind = if started {
+                    EntryKind::User
+                } else {
+                    EntryKind::Prompt
+                };
+                self.push(kind, message_text(&event["message"]));
+            }
             "message_update" => {
                 let update = &event["assistantMessageEvent"];
                 if update["type"] != "text_delta" {
@@ -59,9 +95,15 @@ impl Fold {
             "message_end" if event["message"]["role"] == "assistant" => {
                 self.end_message(&event["message"])
             }
-            "tool_execution_start" => {
+            "tool_execution_start" if event["parentToolCallId"].is_null() => {
                 let name = event["toolName"].as_str().unwrap_or("tool");
                 self.activity = format!("{name} {}", summarize(&event["args"]));
+                self.push(EntryKind::Tool, self.activity.trim_end().to_owned());
+            }
+            "tool_execution_end"
+                if event["isError"] == true && event["parentToolCallId"].is_null() =>
+            {
+                self.push(EntryKind::Error, message_text(&event["result"]));
             }
             "output" => self.output = Some(event["value"].clone()),
             "run_limit" => self.limit = event["message"].as_str().map(str::to_owned),
@@ -70,10 +112,18 @@ impl Fold {
         true
     }
 
+    fn push(&mut self, kind: EntryKind, text: String) {
+        if !text.trim().is_empty() {
+            self.transcript.push(Entry { kind, text });
+        }
+    }
+
     fn end_message(&mut self, message: &Value) {
+        self.writing = false;
         let text = message_text(message);
         if !text.is_empty() {
-            self.final_text = text;
+            self.final_text = text.clone();
+            self.push(EntryKind::Assistant, text);
         }
         let stop = message["stopReason"].as_str().unwrap_or("");
         self.error = matches!(stop, "error" | "aborted")
@@ -258,7 +308,7 @@ fn last_line(text: &str) -> String {
     }
 }
 
-fn tail(text: &str, max: usize) -> &str {
+pub fn tail(text: &str, max: usize) -> &str {
     let mut start = text.len().saturating_sub(max);
     while !text.is_char_boundary(start) {
         start += 1;
@@ -301,6 +351,40 @@ mod tests {
                 summary: "CI is still running".into()
             }
         );
+    }
+
+    #[test]
+    fn transcript_records_prompt_steering_text_tools_and_errors() {
+        let f = fold(&[
+            json!({"type": "message_start", "message": {"role": "user", "content": "Deploy"}}),
+            json!({"type": "message_start", "message": {"role": "assistant"}}),
+            json!({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "Checking"}}),
+        ]);
+        assert!(f.writing && f.text == "Checking");
+        let f = fold(&[
+            json!({"type": "message_start", "message": {"role": "user", "content": "Deploy"}}),
+            json!({"type": "tool_execution_start", "toolName": "bash", "args": {"command": "make"}}),
+            json!({"type": "tool_execution_start", "toolName": "read", "args": {"path": "x"}, "parentToolCallId": "t1"}),
+            json!({"type": "tool_execution_end", "toolName": "bash", "isError": true, "result": {"content": [{"type": "text", "text": "exit 2"}]}}),
+            json!({"type": "message_start", "message": {"role": "user", "content": [{"type": "text", "text": "Use staging"}]}}),
+            json!({"type": "message_end", "message": {"role": "assistant", "content": "Done"}}),
+        ]);
+        let kinds: Vec<(EntryKind, &str)> = f
+            .transcript
+            .iter()
+            .map(|e| (e.kind, e.text.as_str()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (EntryKind::Prompt, "Deploy"),
+                (EntryKind::Tool, "bash make"),
+                (EntryKind::Error, "exit 2"),
+                (EntryKind::User, "Use staging"),
+                (EntryKind::Assistant, "Done"),
+            ]
+        );
+        assert!(!f.writing);
     }
 
     #[test]

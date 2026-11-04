@@ -1,5 +1,8 @@
-//! The extension inside a step agent: it enforces the step's subagent rules on `subagent` calls
-//! and adds the `workflow_memory` tool in memory context.
+//! The extension inside a step agent: it enforces the step's subagent rules on `subagent` calls,
+//! adds the `workflow_memory` tool in memory context, and passes the user's messages to the agent.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use pi_ext_sdk::prelude::*;
 use serde::Deserialize;
@@ -11,6 +14,9 @@ pub const STEP_ENV: &str = "PI_WORKFLOW_STEP";
 pub const SUBAGENTS_ENV: &str = "PI_WORKFLOW_SUBAGENTS";
 pub const MEMORY_ENV: &str = "PI_WORKFLOW_MEMORY";
 pub const MEMORY_TOOL: &str = "workflow_memory";
+/// The inbox of user messages for the step agent.
+pub const INBOX_ENV: &str = "PI_WORKFLOW_INBOX";
+const INBOX_POLL: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Checks a `subagent` call against the rules. `Ok(Some(input))` fills in default models and
 /// thinking levels; `Err` names what the step allows.
@@ -133,6 +139,37 @@ facts they need: decisions, commands that worked, gotchas, where things are. Do 
                 std::fs::write(&path, text)?;
                 Ok("Saved to the workflow memory.")
             }
+        });
+    }
+    if let Ok(inbox) = std::env::var(INBOX_ENV) {
+        // A message sent before the agent starts would start a prompt of its own.
+        let working = Arc::new(AtomicBool::new(false));
+        for (event, value) in [("agent_start", true), ("agent_end", false)] {
+            let working = working.clone();
+            ext = ext.on(event, move |_ev: EventCtx| {
+                working.store(value, Ordering::SeqCst);
+                async { Ok(EventReply::none()) }
+            });
+        }
+        ext = ext.on_start(move |host: Host| {
+            let (inbox, working) = (std::path::PathBuf::from(&inbox), working.clone());
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(INBOX_POLL).await;
+                    if !working.load(Ordering::SeqCst) {
+                        continue;
+                    }
+                    for message in crate::control::take_steering(&inbox) {
+                        let sent = host
+                            .send_user_message(message, Some(DeliverAs::Steer))
+                            .await;
+                        if let Err(err) = sent {
+                            pi_ext_sdk::warn!("cannot pass a message to the agent: {err}");
+                        }
+                    }
+                }
+            });
+            async { Ok(()) }
         });
     }
     ext
