@@ -11,9 +11,7 @@ pub fn index(items: &[Item]) -> Option<String> {
         return None;
     }
     let mut lines = vec![format!(
-        "Some tools, skills, and instructions are deferred to save context. Call `{TOOL}` to load them: \
-         `select:<name>[,<name>]` loads exact names, and keywords search names and descriptions \
-         (`+word` requires a word). A deferred tool cannot be called until it is loaded."
+        "Load these with `{TOOL}`. A deferred tool cannot be called until it is loaded."
     )];
     for kind in Kind::ALL {
         let names: Vec<&str> = items

@@ -113,20 +113,16 @@ pub async fn help_command(ctx: CommandCtx) -> Result<()> {
 }
 
 pub fn recall_spec() -> ToolSpec {
-    let description = "Search session history using keyword or regex search. Find previous goals, files, commits, decisions, and context — \
-including anything dropped by compaction. Reach for this before telling the user you no longer have the context. \
-Plain keywords work best; a regex pattern is also accepted. Results are paged (page); pass expand with entry indices \
-to read full untruncated content. Use mode:'touched' to list files worked on in this session with their entry indices, \
-and #N:path to drill into a file's content from an entry (#N:path:full for all lines). Only the current session is \
-searchable — earlier sessions are not.";
+    let description = "Search this session's history, including context dropped by compaction. Use it before \
+telling the user you lack context.";
     ToolSpec::new("session_recall", description).label("Session Recall").parameters(json!({
         "type": "object",
         "properties": {
-            "query": { "type": "string", "description": "What to recall, in plain keywords (e.g. 'redis cache decision'). Multi-word queries are ranked by relevance. A regex pattern also works. #N:path drills into a file's content from an entry." },
-            "expand": { "type": "array", "items": { "type": "number" }, "description": "Entry indices to return full untruncated content for" },
-            "page": { "type": "number", "minimum": 1, "description": "Page number (1-based) for paginated search results. Default: 1." },
-            "scope": { "type": "string", "enum": ["lineage", "all"], "description": "Default 'lineage' covers the active conversation path. Use 'all' to also reach messages from other branches, such as turns that were edited or retried." },
-            "mode": { "type": "string", "enum": ["hybrid", "touched"], "description": "What to show. hybrid (default) = normal search; touched = aggregated files-by-path with entry indices." }
+            "query": { "type": "string", "description": "Keywords or a regex. #N:path shows a file from entry N (#N:path:full for all lines)." },
+            "expand": { "type": "array", "items": { "type": "number" }, "description": "Entry indices to show in full" },
+            "page": { "type": "number", "minimum": 1 },
+            "scope": { "type": "string", "enum": ["lineage", "all"], "description": "lineage (default): active branch; all: also edited or retried turns" },
+            "mode": { "type": "string", "enum": ["hybrid", "touched"], "description": "hybrid (default): search; touched: files worked on, with entry indices" }
         }
     }))
 }
@@ -139,7 +135,7 @@ pub async fn recall_tool(input: RecallInput, ctx: ToolCtx, shared: Shared) -> Re
 }
 
 pub fn budget_spec() -> ToolSpec {
-    let description = "Estimate how full the context window is (% full, tokens left). Compaction is automatic; this never needs to be acted on.";
+    let description = "Show context window use. Compaction is automatic.";
     ToolSpec::new("context_budget", description).label("Context Budget")
 }
 

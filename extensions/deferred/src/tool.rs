@@ -18,27 +18,23 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn spec() -> ToolSpec {
-    let description = "Search for and load deferred tools, skills, project instructions, and prompt \
-        sections. A loaded tool is callable from your next call; skills, instructions, and sections \
-        come back as text in the result.";
+    let description = "Load deferred items. Loaded tools are callable from your next call.";
     ToolSpec::new(TOOL, description)
         .label("Deferred search")
-        .prompt_snippet("Search and load deferred tools, skills, and instructions")
+        .prompt_snippet("Load deferred items")
         .parameters(json!({
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "`select:<name>[,<name>]` loads exact names. Otherwise keywords; prefix a word with + to require it. An empty query lists deferred items."
+                    "description": "`select:a,b` for exact names, else keywords (`+word` required)"
                 },
                 "kind": {
                     "type": "string",
-                    "enum": ["any", "tool", "skill", "context", "section"],
-                    "description": "Only search this kind of item. Default any."
+                    "enum": ["any", "tool", "skill", "context", "section"]
                 },
                 "max_results": {
-                    "type": "integer", "minimum": 1, "maximum": 50,
-                    "description": "Most items to load for a keyword search. Default 5."
+                    "type": "integer", "minimum": 1, "maximum": 50
                 }
             },
             "required": ["query"]

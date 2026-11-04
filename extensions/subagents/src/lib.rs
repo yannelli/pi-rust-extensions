@@ -97,7 +97,11 @@ async fn agents_command(app: App, args: String, ctx: CommandCtx) -> Result<()> {
                 render::progress_text(&runs)
             }
         } else {
-            render::prompt_section(&app.agents(&host))
+            let listing = actions::list_agents(&app.agents(&host));
+            listing.content[0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
         };
         return host.notify_info(text).await;
     }

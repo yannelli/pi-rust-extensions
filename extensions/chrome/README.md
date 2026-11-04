@@ -1,6 +1,6 @@
 # pi-ext-chrome
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-11-04.
 
 Controls Google Chrome from pi through the Chrome DevTools Protocol (CDP) over a WebSocket. The extension connects to a Chrome that listens on a remote debugging port. If no Chrome answers, it can start Chrome with a managed profile. The tools work only after the user authorizes them for the session.
 
@@ -14,7 +14,7 @@ Tool and parameter names follow the upstream `pi-chrome` package. The upstream p
 - A tool call in a locked session returns an error and opens no connection.
 - Without an interactive UI, `/chrome authorize` fails and the tools stay locked.
 - Each change writes a `pi-chrome-tool-change` session entry. After `/reload`, a grant that is still valid comes back only in the session that wrote it.
-- While authorized, `before_agent_start` adds the system prompt section `chrome-profile-bridge`.
+- While authorized, `before_agent_start` adds the system prompt section `chrome-profile-bridge`. It states the rules the tool schemas share: the default tab, the `targetId`, `urlIncludes`, and `titleIncludes` selectors, element targets (`uid`, `selector`, `x`/`y`), and `background`.
 - The status bar shows `● Chrome · <time> left`.
 
 ## Tools

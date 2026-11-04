@@ -65,9 +65,9 @@ You review code...
 
 - `/agents`: a menu with each agent. For an agent you can edit the prompt (in the editor), the description, model (session model, available models, or typed), thinking level, tools, and max turns. You can reset a built-in to its default (removes the override files) and delete a custom agent. The menu asks for the scope (global or project) when an agent has no file yet.
 - `/agents runs`: a panel with running and recent runs. `↑`/`↓` select, `enter` shows the task, the tool calls, the output, and the stderr of a failed run, `c` cancels, `esc` goes back, `q` closes.
-- `/agents list`, or `/agents` without UI: shows the agent list as a notification.
+- `/agents list`, or `/agents` without UI: shows each agent with its source, description, tools, and model as a notification.
 
-The system prompt section `subagents` lists the agents when the `subagent` tool is active.
+The system prompt section `subagents` lists each agent with the first sentence of its description when the `subagent` tool is active. `action: list` gives the full descriptions, tools, and models.
 
 ## Compactor active work
 

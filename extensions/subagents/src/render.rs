@@ -161,21 +161,25 @@ pub fn detail_lines(run: &Run) -> Vec<String> {
     lines
 }
 
-/// The `subagents` system prompt section.
+/// The `subagents` system prompt section: each agent with the first sentence of its description.
 pub fn prompt_section(agents: &[AgentDef]) -> String {
     let mut text = String::from(
-        "## Subagents\n\nThe `subagent` tool runs a task in a separate pi process with its own context. \
-Use it for broad searches, independent work items, and second opinions. Give each task the context it needs: \
-the subagent does not see this conversation. Pass `tasks` to run independent tasks in parallel and `async: true` \
-for background runs that report when they finish.\n\nAvailable agents:\n",
+        "## Subagents\n\nAgents for the `subagent` tool (`action: list` shows their tools and models):\n",
     );
     for agent in agents {
         text.push_str(&format!(
-            "- `{}`: {} (tools: {})\n",
+            "- `{}`: {}\n",
             agent.name,
-            agent.description.trim(),
-            agent.tools_label()
+            first_sentence(&agent.description)
         ));
     }
     text
+}
+
+fn first_sentence(text: &str) -> String {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    match text.find(". ") {
+        Some(end) => text[..=end].to_owned(),
+        None => text,
+    }
 }
