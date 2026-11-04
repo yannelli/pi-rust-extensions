@@ -7,6 +7,10 @@ pub mod render;
 pub mod rows;
 pub(crate) mod run;
 
+use std::time::Instant;
+
+use pi_ext_sdk::list::{ListOverflow, ListScroll};
+
 use crate::config::{Kind, Mode};
 use rows::{Inventory, Row, RuleRow, Scope};
 
@@ -87,6 +91,8 @@ pub struct View {
     pub trusted: bool,
     /// `owner/name` of the cwd's repo, offered as a scope for new rules.
     pub repo: Option<String>,
+    pub overflow: ListOverflow,
+    pub scroll: ListScroll,
 }
 
 impl View {
@@ -99,6 +105,8 @@ impl View {
             status: None,
             trusted,
             repo: None,
+            overflow: ListOverflow::default(),
+            scroll: ListScroll::new(Instant::now()),
         }
     }
 

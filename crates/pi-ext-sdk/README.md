@@ -135,6 +135,8 @@ pi asks a renderer for the lines of one row at one width, and draws the row when
 - For key hints, read `host.keybindings(&["app.tools.expand"])` once and keep the map (upstream `keyHint`).
 - pi-rust 0.8.5 and older ignore renderers and `prepare_arguments`. They draw the default rows and validate the raw arguments.
 
+`ChatStyle` also accepts `editor_border_color: Option<String>` (a theme token or `#rrggbb`) and `prompt_layout: Option<PromptLayout>` (`Frame`, `Caret`, `Harbor`). Absent fields are omitted from `ui.setChatStyle`. These fields need the next pi-rust release; older hosts ignore them.
+
 ## Panels
 
 ```rust,no_run
@@ -181,6 +183,7 @@ fn ext() -> Extension {
 ## Helpers
 
 - `style`: `bold`, `dim`, `italic`, `underline`, `inverse`, `fg(Color, s)`, `bg(Color, s)`, `strip`, `visible_width`, `truncate(s, width)`, `fit(s, width)`. Width counts wide CJK and emoji as 2 columns and skips ANSI codes.
+- `list`: `ListOverflow::read(&host).await` reads the top-level `listOverflow` setting (`truncate`, `wrap`, `scroll`; absent or invalid means truncate). `.row(prefix, text, width, selected, offset)` returns fitted lines with a fixed prefix and hanging indent. Wrap-mode callers budget by rendered lines and keep the selected row visible. For scroll mode, use `ListScroll::TICK` with a panel timer, call `tick(now, max_offset)`, and redraw when it returns `true`. Reset the clock on selection, text, or width changes. Scrolling pauses for 1 second, advances one column per 100 ms tick, and returns to the start. `PI_REDUCED_MOTION=1` makes `read` fall back to truncate. The `/deferred` panel uses this setting for its item and rule lists.
 - `paths`: `agent_dir()` (`$PI_CODING_AGENT_DIR` or `~/.pi/agent`), `project_dir(cwd)` (`<cwd>/.pi`), `extension_dir(base, name)` (`<base>/extensions-data/<name>`). Use `host.agent_dir()` after `initialize`.
 - `json`: `merge_patch`, `merge_patch_compose`, `merge_patch_diff`.
 - Logging: `pi_ext_sdk::info!`, `warn!`, `error!`, `debug!` write to stderr. Warnings and errors always print. Set `PI_EXT_LOG=info` or `PI_EXT_LOG=debug` for more. Do not write to stdout: stdout carries only protocol lines.

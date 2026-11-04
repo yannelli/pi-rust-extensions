@@ -1,5 +1,6 @@
 //! Lines of the `/deferred` panel.
 
+use pi_ext_sdk::list::ListOverflow;
 use pi_ext_sdk::style::{self, Color};
 
 use super::rows::{Inventory, Row, RuleRow, Scope, Why};
@@ -90,11 +91,6 @@ fn scope_word(scope: Option<&Scope>) -> &'static str {
 }
 
 fn item_line(row: &Row, selected: bool, cols: Option<usize>) -> String {
-    let pointer = if selected {
-        accent("→ ")
-    } else {
-        "  ".to_owned()
-    };
     let paint = |text: &str| {
         if selected {
             accent(text)
@@ -123,18 +119,12 @@ fn item_line(row: &Row, selected: bool, cols: Option<usize>) -> String {
         style::dim(&format!("  {summary}"))
     };
     format!(
-        "{pointer}{} {name} {mode} {tokens}{loaded}{}{description}",
-        glyph(row.mode),
+        "{name} {mode} {tokens}{loaded}{}{description}",
         why_marker(row)
     )
 }
 
 fn rule_line(rule: &RuleRow, selected: bool, cols: Option<usize>) -> String {
-    let pointer = if selected {
-        accent("→ ")
-    } else {
-        "  ".to_owned()
-    };
     let paint = |text: &str| {
         if selected {
             accent(text)
@@ -162,11 +152,23 @@ fn rule_line(rule: &RuleRow, selected: bool, cols: Option<usize>) -> String {
     let plural = if rule.matches == 1 { "" } else { "es" };
     let matches = muted(&format!(" {} match{plural}", rule.matches));
     format!(
-        "{pointer}{} {} {pattern} {mode}{matches}{}",
-        glyph(rule.mode),
+        "{} {pattern} {mode}{matches}{}",
         style::dim(&kind),
         style::dim(&format!("  {place}"))
     )
+}
+
+fn entry_line(entry: &Entry<'_>, selected: bool, cols: Option<usize>) -> (String, String) {
+    let pointer = if selected {
+        accent("→ ")
+    } else {
+        "  ".to_owned()
+    };
+    let (mode, text) = match entry {
+        Entry::Item(row) => (row.mode, item_line(row, selected, cols)),
+        Entry::Rule(rule) => (rule.mode, rule_line(rule, selected, cols)),
+    };
+    (format!("{pointer}{} ", glyph(mode)), text)
 }
 
 impl View {
@@ -197,7 +199,13 @@ impl View {
             false => format!(" › {}▏", self.query),
         });
         lines.push(String::new());
-        let budget = height.map_or(MAX_VISIBLE, |h| h.saturating_sub(CHROME).clamp(3, 30));
+        let status_lines = self
+            .status
+            .as_ref()
+            .map_or(0, |(_, text)| wrap(text, width.saturating_sub(3)).len());
+        let budget = height.map_or(MAX_VISIBLE, |h| {
+            h.saturating_sub(CHROME + status_lines).clamp(1, 30)
+        });
         match &self.screen {
             Screen::List => lines.extend(self.list(inv, budget, width)),
             Screen::Menu { choice } => lines.extend(self.menu(inv, *choice, width)),
@@ -241,6 +249,19 @@ impl View {
             .collect()
     }
 
+    pub(super) fn scroll_limit(&self, inv: &Inventory, width: usize) -> usize {
+        if self.overflow != ListOverflow::Scroll || self.screen != Screen::List {
+            return 0;
+        }
+        let entries = self.entries(inv);
+        let Some(entry) = entries.get(self.selected) else {
+            return 0;
+        };
+        let (prefix, text) = entry_line(entry, true, None);
+        style::visible_width(&text)
+            .saturating_sub(width.saturating_sub(style::visible_width(&prefix)))
+    }
+
     fn list(&self, inv: &Inventory, budget: usize, width: usize) -> Vec<String> {
         let entries = self.entries(inv);
         if entries.is_empty() {
@@ -254,8 +275,8 @@ impl View {
             return vec![muted(&text)];
         }
         let visible = budget.min(entries.len());
-        let start = self
-            .selected
+        let selected = self.selected.min(entries.len() - 1);
+        let start = selected
             .saturating_sub(visible / 2)
             .min(entries.len() - visible);
         let shown = &entries[start..start + visible];
@@ -267,16 +288,55 @@ impl View {
             })
             .max()
             .unwrap_or(0);
-        let cols = (width >= WIDE).then(|| longest.clamp(8, width / 3));
-        let mut lines: Vec<String> = shown
-            .iter()
-            .enumerate()
-            .map(|(i, entry)| match entry {
-                Entry::Item(row) => item_line(row, start + i == self.selected, cols),
-                Entry::Rule(rule) => rule_line(rule, start + i == self.selected, cols),
-            })
-            .collect();
-        if entries.len() > visible {
+        let cols = (width >= WIDE && self.overflow == ListOverflow::Truncate)
+            .then(|| longest.clamp(8, width / 3));
+        let draw = |i: usize, entry: &Entry<'_>| {
+            let (prefix, text) = entry_line(entry, i == selected, cols);
+            self.overflow
+                .row(&prefix, &text, width, i == selected, self.scroll.offset)
+        };
+        let (mut lines, hidden): (Vec<String>, bool) = if self.overflow == ListOverflow::Wrap {
+            let rows: Vec<Vec<String>> = entries
+                .iter()
+                .enumerate()
+                .map(|(i, e)| draw(i, e))
+                .collect();
+            let mut start = selected;
+            let mut used = rows[selected].len();
+            let mut before = 0;
+            while start > 0
+                && before + rows[start - 1].len() <= budget / 2
+                && used + rows[start - 1].len() <= budget
+            {
+                start -= 1;
+                before += rows[start].len();
+                used += rows[start].len();
+            }
+            let mut end = selected + 1;
+            while end < rows.len() && used + rows[end].len() <= budget {
+                used += rows[end].len();
+                end += 1;
+            }
+            while start > 0 && used + rows[start - 1].len() <= budget {
+                start -= 1;
+                used += rows[start].len();
+            }
+            let lines = rows[start..end]
+                .iter()
+                .flatten()
+                .take(budget)
+                .cloned()
+                .collect();
+            (lines, start > 0 || end < rows.len())
+        } else {
+            let lines = shown
+                .iter()
+                .enumerate()
+                .flat_map(|(i, entry)| draw(start + i, entry))
+                .collect();
+            (lines, entries.len() > visible)
+        };
+        if hidden {
             lines.push(muted(&format!(
                 "  ({}/{})",
                 self.selected + 1,

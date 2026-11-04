@@ -1,6 +1,6 @@
 # compact-tui
 
-Created 2026-11-02. Last updated 2026-11-02.
+Created 2026-11-02. Last updated 2026-11-04.
 
 A compact, animated TUI for pi-rust. It needs pi-rust 0.12.3 or later; older versions keep pi's own rows.
 
@@ -14,7 +14,7 @@ The rows and the colors use pi's theme and follow theme changes. The extension d
 
 ## Config
 
-`~/.pi/agent/ext/compact-tui.json` (or `$PI_CODING_AGENT_DIR/ext/compact-tui.json`). Each key is `true` by default. Changes apply when pi starts the extension again (`/reload`).
+`~/.pi/agent/ext/compact-tui.json` (or `$PI_CODING_AGENT_DIR/ext/compact-tui.json`). The boolean keys below are `true` by default. Changes apply when pi starts the extension again (`/reload`).
 
 | Key | Turns off when `false` |
 | --- | --- |
@@ -25,8 +25,18 @@ The rows and the colors use pi's theme and follow theme changes. The extension d
 | `motion` | Spinners and the moving band; `PI_REDUCED_MOTION=1` does the same |
 | `markers` | The `›` and `●` message markers |
 | `thinking` | Folding finished thinking blocks |
-| `editor` | The rounded editor |
+| `editor` | Editor styling, including the border color and prompt layout |
 
 ```json
-{ "summary": false, "motion": false }
+{ "summary": false, "motion": false, "borderColor": "accent", "promptLayout": "caret" }
 ```
+
+`borderColor` defaults to `"thinking"`, which sends no border override, so pi follows the thinking level and bash mode. Set it to a theme color token such as `"accent"`, `"border"`, or `"borderMuted"`, or a `"#rrggbb"` hex color. Invalid values log a warning and fall back to `"thinking"`. Tokens are checked against the host's theme.
+
+`promptLayout` defaults to `"frame"`:
+
+- `frame`: rounded editor corners with side bars in the editor padding.
+- `caret`: a full rounded box with inner padding, an accent `›` gutter, and an empty-draft placeholder.
+- `harbor`: the caret box with a blank line above, a plain border, and scroll position in the gutter.
+
+Caret and harbor follow the `@oxbit/agent` prompt box and need a pi-rust version with `promptLayout` support, available in the next pi-rust release. The border override also needs the next pi-rust release. Older hosts ignore these fields. `"editor": false` turns off editor styling for every layout.

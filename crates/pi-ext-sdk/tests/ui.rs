@@ -53,6 +53,54 @@ async fn dropped_dialog_sends_cancel_request() {
     host.finish().await.unwrap();
 }
 
+#[tokio::test]
+async fn list_overflow_reads_the_top_level_setting_and_defaults_on_invalid_values() {
+    use pi_ext_sdk::list::ListOverflow;
+
+    let ext = Extension::new("overflow").command("mode", "", |_, ctx: CommandCtx| async move {
+        let mode = ListOverflow::read(ctx.host()).await;
+        ctx.host().notify_info(format!("{mode:?}")).await
+    });
+    let mut host = TestHost::start(ext);
+    host.initialize().await;
+    for (i, (setting, expected)) in [
+        (Value::Null, ListOverflow::Truncate),
+        (json!("invalid"), ListOverflow::Truncate),
+        (json!(123), ListOverflow::Truncate),
+        (json!("truncate"), ListOverflow::Truncate),
+        (json!("wrap"), ListOverflow::Wrap),
+        (json!("scroll"), ListOverflow::Scroll),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut seen = false;
+        let expected = expected.with_reduced_motion(
+            std::env::var("PI_REDUCED_MOTION").is_ok_and(|value| value == "1"),
+        );
+        host.drive(
+            10 + i as u64,
+            "command.run",
+            json!({ "name": "mode", "args": "", "ctx": ctx() }),
+            |method, params| match method {
+                "settings.get" => {
+                    assert_eq!(params, &json!({ "namespace": "listOverflow" }));
+                    setting.clone()
+                }
+                "ui.notify" => {
+                    seen = true;
+                    assert_eq!(params["message"], format!("{expected:?}"));
+                    Value::Null
+                }
+                _ => panic!("unexpected request {method}"),
+            },
+        )
+        .await;
+        assert!(seen);
+    }
+    host.finish().await.unwrap();
+}
+
 fn panel_extension() -> Extension {
     Extension::new("panel").command("panel", "", |_, ctx: CommandCtx| async move {
         let mut panel = ctx.host().panel(["Panel", "q closes"]).open().await?;

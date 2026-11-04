@@ -10,6 +10,7 @@ mod handler;
 mod host;
 pub mod json;
 pub mod keys;
+pub mod list;
 #[doc(hidden)]
 pub mod log;
 mod panel;
@@ -34,7 +35,8 @@ pub use error::{Error, Result, code};
 pub use extension::Extension;
 pub use host::{
     ChatStyle, CustomMessage, DeliverAs, ExecOutput, ExecRequest, Host, InputOptions, LlmRequest,
-    LlmResponse, NotifyType, Placement, ProviderAuth, ProviderUsage, UsageCredits, UsageWindow,
+    LlmResponse, NotifyType, Placement, PromptLayout, ProviderAuth, ProviderUsage, UsageCredits,
+    UsageWindow,
 };
 pub use keys::Key;
 pub use panel::{KeyInput, Panel, PanelBuilder, PanelEvent};
