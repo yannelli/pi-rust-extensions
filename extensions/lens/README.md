@@ -32,7 +32,8 @@ Config paths, in precedence order:
 
 Project fields override global fields. Objects merge by key. Arrays replace previous arrays.
 Untrusted project config cannot override `commands` or `lsp`.
-In an untrusted project, Lens does not auto-detect tools and does not add `node_modules/.bin` to `PATH`. Commands and LSP servers from global config still run. Lens shows one notice.
+In an untrusted project, Lens does not auto-detect tools and does not add `node_modules/.bin` to `PATH`. Lens also does not read `<cwd>/.pi/ext/lens-lsp.json`. Commands and LSP servers from global config still run. Lens shows one notice.
+Unknown fields do not make the config invalid. Lens ignores them and shows one notice that names them. `/lens` Status lists the notices again.
 
 | Key | Default | Use |
 | --- | --- | --- |
@@ -45,7 +46,7 @@ In an untrusted project, Lens does not auto-detect tools and does not add `node_
 | `languages.<name>.enabled` | `true` | Enables `rust`, `javascript`, `python` or `go`. |
 | `tools.<name>.enabled` | `true` | Enables a detected or configured tool. |
 | `commands` | `[]` | Adds commands or overrides detected commands by name. |
-| `lsp.servers` | `[]` | Configures stdio LSP servers. |
+| `lsp.servers` | `[]` | Configures stdio LSP servers. See [LSP servers](#lsp-servers). |
 
 ```json
 {
@@ -66,6 +67,56 @@ In an untrusted project, Lens does not auto-detect tools and does not add `node_
   }] }
 }
 ```
+
+## LSP servers
+
+Each server in `lsp.servers` and in a server file takes these fields. A server needs `command`, and `languages` or `extensionToLanguage`.
+
+| Field | Default | Use |
+| --- | --- | --- |
+| `command` | none | The server binary. |
+| `args` | `[]` | Arguments, without a shell. |
+| `languages` | `[]` | Lens languages (`rust`, `javascript`, `python`, `go`) that the server checks. |
+| `extensionToLanguage` | `{}` | Maps a file extension, such as `".zig"`, to an LSP language ID. Files with that extension go to the server, in any language. The ID is the `languageId` that Lens sends and the language for `languages.<id>.enabled` and for `commands`. |
+| `env` | `{}` | Environment variables for the server, added to the pi environment. |
+| `initializationOptions` | none | Sent in `initialize`. |
+| `settings` | none | Sent in `workspace/didChangeConfiguration` after `initialized`. Lens answers `workspace/configuration` with the value at each `section`. |
+| `workspaceFolder` | the project root | The server root and working directory. A relative path starts at the current directory. |
+| `startupTimeout` | none | Milliseconds to wait for the `initialize` response. |
+| `requestTimeout` | none | Milliseconds to wait for each other response. |
+| `shutdownTimeout` | 500 | Milliseconds to wait after `shutdown` and `exit`, at most 5000. |
+| `diagnostics` | `true` | With `false`, the server does not run after a write or an edit. `lens_diagnostics` with `source: "lsp"` still runs it. |
+| `transport` | `stdio` | `stdio` or `socket`. Lens runs both over stdio, as Claude Code does. |
+| `restartOnCrash`, `maxRestarts` | none | Read, not applied, with a notice. Lens starts a new server for each request, so a crash affects only that request. |
+| `enabled` | `true` | Runs the server. |
+| `name`, `plugin` | none | The name and owner of the entry. |
+
+`timeoutMs` and `pipelineTimeoutMs` still limit each server. When more than one server matches a file, each one runs.
+
+### Server files
+
+Other extensions add servers in `<agentDir>/ext/lens-lsp.json` and `<cwd>/.pi/ext/lens-lsp.json`. `claude-marketplace` writes the LSP servers of Claude Code plugins there. Each file holds one `servers` object of name to server. The project file needs a trusted project. A project entry replaces a user entry of the same name. The servers come after `lsp.servers`. `plugin` names the owner, so the owner can remove its own entries.
+
+```json
+{
+  "servers": {
+    "plugin_zig-lsp_zls": {
+      "plugin": "zig-lsp@acme",
+      "command": "zls",
+      "extensionToLanguage": { ".zig": "zig", ".zon": "zig" },
+      "env": { "ZLS_LOG": "warn" },
+      "initializationOptions": { "enable_snippets": false },
+      "settings": { "zls": { "warn_style": true } }
+    }
+  }
+}
+```
+
+An entry that is not valid, such as one without `command`, is skipped with a notice. The other entries still load. A server file that is not valid JSON is skipped with a notice.
+
+Lens checks the modification time of the server files before each scan and before each `lens_diagnostics` LSP request. After a change, Lens loads the config again, so a new or removed server applies without `/reload`.
+
+## How Lens runs tools
 
 Stages run in this order: `format`, `lint`, `types`.
 Arguments expand `{path}` and `{root}` without a shell.
@@ -94,7 +145,7 @@ Lens returns from every hook and tool within a fixed time. A failure becomes a w
 | `tool_result` hook | `pipelineTimeoutMs` + 6 s | `pipelineTimeoutMs` |
 | `tool_call` read guard: file read and state lock | 2 s each | Fixed |
 | Each call from a hook to pi (session entries, widget, notice, trust query) | 2 s | Fixed |
-| LSP server after `shutdown` and `exit` | 0.5 s | Fixed |
+| LSP server after `shutdown` and `exit` | 0.5 s | `shutdownTimeout`, at most 5 s |
 | Output kept from each command stream | 1 MiB | Fixed |
 | Wait for output pipes after a command exits | 0.5 s | Fixed |
 | LSP header line | 8 KiB | Fixed |

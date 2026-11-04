@@ -36,6 +36,7 @@ fn command(name: &str, language: &str, stage: Stage, binary: &str, args: &[&str]
         command: binary.to_owned(),
         args: args.iter().map(|s| (*s).to_owned()).collect(),
         enabled: true,
+        unknown: Default::default(),
     }
 }
 

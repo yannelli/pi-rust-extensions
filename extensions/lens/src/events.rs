@@ -42,7 +42,28 @@ async fn file_text(path: &Path) -> Option<String> {
     tokio::time::timeout(HOST_LIMIT, read).await.ok()?.ok()?
 }
 
+async fn notice(host: &Host, text: &str) {
+    if host.has_ui() {
+        bounded_call("Lens notice", host.notify_warning(text)).await;
+    } else {
+        pi_ext_sdk::warn!("{text}");
+    }
+}
+
+/// Reloads the config when an LSP server file changed since the last refresh, so
+/// servers that another extension adds or removes apply to the next scan.
+pub(crate) async fn refresh_if_changed(host: &Host, state: &Arc<Mutex<State>>) {
+    let stamp = crate::servers::stamp(&host.agent_dir(), &host.cwd());
+    if state.lock().await.server_stamp == stamp {
+        return;
+    }
+    if let Err(error) = refresh(host, state).await {
+        pi_ext_sdk::warn!("lens: config reload failed: {error}");
+    }
+}
+
 pub(crate) async fn refresh(host: &Host, state: &Arc<Mutex<State>>) -> Result<()> {
+    let stamp = crate::servers::stamp(&host.agent_dir(), &host.cwd());
     let (mut config, ignored) =
         config::load(&host.agent_dir(), &host.cwd(), config::trusted(host).await)?;
     if let Some(snapshot) = host.snapshot() {
@@ -56,17 +77,25 @@ pub(crate) async fn refresh(host: &Host, state: &Arc<Mutex<State>>) -> Result<()
         != Some("1");
     let untrusted = !config.trusted && config.enabled && config.auto_detect;
     let mut state = state.lock().await;
+    let fresh: Vec<String> = config
+        .warnings
+        .iter()
+        .filter(|item| !state.warned_config.contains(item))
+        .cloned()
+        .collect();
+    state.warned_config.clone_from(&config.warnings);
     state.config = config;
+    state.server_stamp = stamp;
     state.runner.reset();
-    if (ignored || untrusted) && !state.warned_trust {
-        state.warned_trust = true;
-        drop(state);
+    let trust = (ignored || untrusted) && !state.warned_trust;
+    state.warned_trust |= trust;
+    drop(state);
+    if trust {
         let text = "Lens does not auto-detect tools or use executable project settings because the project is untrusted.";
-        if host.has_ui() {
-            bounded_call("trust notice", host.notify_warning(text)).await;
-        } else {
-            pi_ext_sdk::warn!("{text}");
-        }
+        notice(host, text).await;
+    }
+    if !fresh.is_empty() {
+        notice(host, &fresh.join("\n")).await;
     }
     Ok(())
 }
@@ -123,6 +152,12 @@ pub(crate) async fn handle(ctx: EventCtx, state: Arc<Mutex<State>>) -> Result<Ev
                 return Ok(EventReply::none());
             };
             let path = diagnostics::normalize_path(&host.cwd(), path);
+            if tool != "read" {
+                let reload = refresh_if_changed(host, &state);
+                if tokio::time::timeout(HOST_LIMIT, reload).await.is_err() {
+                    pi_ext_sdk::warn!("lens: config reload skipped; it took too long");
+                }
+            }
             let Ok(locked) = tokio::time::timeout(HOST_LIMIT, state.lock()).await else {
                 pi_ext_sdk::warn!("lens: scan skipped; state is busy");
                 return Ok(EventReply::none());

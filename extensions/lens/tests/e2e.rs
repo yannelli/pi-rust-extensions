@@ -126,3 +126,76 @@ fn stalled_lsp_does_not_block_writes_beyond_the_limit() {
     assert!(pids.is_empty(), "{ps:?}\n{}", output.stderr);
     assert_eq!(output.final_text(), "done");
 }
+
+/// Answers `initialize`, then publishes one finding for each opened file.
+#[cfg(unix)]
+const PUBLISH_SERVER: &str = r#"
+import json, os, sys
+def read():
+    length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            sys.exit(0)
+        if not line.strip():
+            break
+        name, value = line.decode().split(":", 1)
+        if name.lower() == "content-length":
+            length = int(value)
+    return json.loads(sys.stdin.buffer.read(length))
+def send(message):
+    message["jsonrpc"] = "2.0"
+    body = json.dumps(message).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    sys.stdout.buffer.flush()
+while True:
+    msg = read()
+    method = msg.get("method")
+    if method in ("initialize", "shutdown"):
+        send({"id": msg["id"], "result": {"capabilities": {}}})
+    elif method == "textDocument/didOpen":
+        doc = msg["params"]["textDocument"]
+        text = "zz-e2e %s %s" % (doc["languageId"], os.environ.get("ZZ_MODE"))
+        diag = {"range": {"start": {"line": 0, "character": 0}}, "message": text}
+        send({"method": "textDocument/publishDiagnostics", "params": {"uri": doc["uri"], "diagnostics": [diag]}})
+    elif method == "exit":
+        sys.exit(0)
+"#;
+
+#[cfg(unix)]
+#[test]
+fn server_file_adds_a_language_server_for_a_new_extension_in_pi() {
+    if pi_bin_or_skip().is_none() {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let script = dir.path().join("server.py");
+    std::fs::write(&script, PUBLISH_SERVER).unwrap();
+    let servers = json!({ "servers": { "zz": {
+        "plugin": "zz@fixtures", "command": "python3", "args": [script],
+        "extensionToLanguage": { ".zz": "zzlang" }, "env": { "ZZ_MODE": "strict" }
+    } } });
+    let output = Run::new(cargo_bin("pi-rust-ext", "pi-rust-ext"))
+        .args(["lens"])
+        .file(
+            "agent/ext/lens.json",
+            json!({"autoDetect":false}).to_string(),
+        )
+        .file("agent/ext/lens-lsp.json", servers.to_string())
+        .turns([
+            Turn::tool_call("write", json!({"path":"a.zz","content":"zz\n"})),
+            Turn::tool_call("lens_diagnostics", json!({"source":"session"})),
+            Turn::text("done"),
+        ])
+        .prompt("Write a.zz and show Lens diagnostics.")
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{}", output.stderr);
+    let diagnostics = output.tool_result_text("lens_diagnostics").unwrap();
+    assert!(
+        diagnostics.contains("zz-e2e zzlang strict"),
+        "{diagnostics}\n{}",
+        output.stderr
+    );
+    assert_eq!(output.final_text(), "done");
+}

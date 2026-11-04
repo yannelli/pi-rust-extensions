@@ -16,7 +16,6 @@ mod wire;
 use wire::{command_name, convert, file_uri, language_id, read_message, uri_path, write_message};
 
 const EMPTY_PUBLISH_GRACE: Duration = Duration::from_millis(500);
-pub const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Opens `path` in a fresh `server` process rooted at `root` and returns the
@@ -44,6 +43,7 @@ pub async fn diagnostics(
     let mut command = Command::new(&server.command);
     command
         .args(&server.args)
+        .envs(&server.env)
         .current_dir(&abs_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -66,17 +66,18 @@ pub async fn diagnostics(
         next_id: 0,
         root_uri: file_uri(&abs_root),
         target,
+        settings: server.settings.clone(),
     };
     let limit = Duration::from_millis(timeout_ms);
     let result = match timeout(limit, session.run(server, &text)).await {
         Ok(result) => result,
         Err(_) => Err(format!(
             "{} timed out after {timeout_ms} ms",
-            server.command
+            server.label()
         )),
     };
     if result.is_ok() {
-        session.shutdown().await;
+        session.shutdown(server.shutdown_grace()).await;
     }
     group.stop().await;
     stop(&mut child).await;
@@ -108,14 +109,37 @@ struct Session {
     next_id: i64,
     root_uri: String,
     target: PathBuf,
+    settings: Option<Value>,
+}
+
+/// The value at the dotted `section` of `settings`, or all of them without a section.
+fn section(settings: &Value, section: Option<&str>) -> Value {
+    let Some(section) = section.filter(|s| !s.is_empty()) else {
+        return settings.clone();
+    };
+    section
+        .split('.')
+        .try_fold(settings, |value, key| value.get(key))
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 impl Session {
     async fn run(&mut self, server: &LspServer, text: &str) -> Result<Vec<Value>, String> {
-        let init = self.request("initialize", self.initialize_params()).await?;
-        let capabilities = self.await_response(init).await?;
+        let mut params = self.initialize_params();
+        if let Some(options) = &server.initialization_options {
+            params["initializationOptions"] = options.clone();
+        }
+        let init = self.request("initialize", params).await?;
+        let startup = server.startup_timeout.or(server.request_timeout);
+        let capabilities = self.await_within(init, startup, server).await?;
         let pull = !capabilities["capabilities"]["diagnosticProvider"].is_null();
         self.notify("initialized", json!({})).await?;
+        if let Some(settings) = &server.settings {
+            let params = json!({ "settings": settings });
+            self.notify("workspace/didChangeConfiguration", params)
+                .await?;
+        }
         let uri = file_uri(&self.target);
         let document = json!({
             "uri": uri,
@@ -128,7 +152,7 @@ impl Session {
         if pull {
             let params = json!({ "textDocument": { "uri": uri } });
             let id = self.request("textDocument/diagnostic", params).await?;
-            if let Ok(report) = self.await_response(id).await
+            if let Ok(report) = self.await_within(id, server.request_timeout, server).await
                 && report["kind"] == "full"
             {
                 return Ok(report["items"].as_array().cloned().unwrap_or_default());
@@ -157,6 +181,22 @@ impl Session {
                 },
             },
         })
+    }
+
+    /// [`Self::await_response`] within `limit_ms` when it is set.
+    async fn await_within(
+        &mut self,
+        id: i64,
+        limit_ms: Option<u64>,
+        server: &LspServer,
+    ) -> Result<Value, String> {
+        let Some(ms) = limit_ms else {
+            return self.await_response(id).await;
+        };
+        match timeout(Duration::from_millis(ms), self.await_response(id)).await {
+            Ok(result) => result,
+            Err(_) => Err(format!("{} did not answer within {ms} ms", server.label())),
+        }
     }
 
     async fn await_response(&mut self, id: i64) -> Result<Value, String> {
@@ -225,8 +265,14 @@ impl Session {
     fn answer(&self, method: &str, params: &Value) -> Result<Value, Value> {
         match method {
             "workspace/configuration" => {
-                let count = params["items"].as_array().map_or(0, Vec::len);
-                Ok(Value::Array(vec![Value::Null; count]))
+                let items = params["items"].as_array().cloned().unwrap_or_default();
+                Ok(items
+                    .iter()
+                    .map(|item| match &self.settings {
+                        Some(settings) => section(settings, item["section"].as_str()),
+                        None => Value::Null,
+                    })
+                    .collect())
             }
             "workspace/workspaceFolders" => Ok(self.workspace_folders()),
             "client/registerCapability"
@@ -253,7 +299,7 @@ impl Session {
 
     /// Asks the server to exit and reads its output until it closes. The caller
     /// then kills the group before it reaps the leader, so the group ID stays valid.
-    async fn shutdown(&mut self) {
+    async fn shutdown(&mut self, grace: Duration) {
         let polite = async {
             let id = self.request("shutdown", Value::Null).await?;
             self.await_response(id).await?;
@@ -262,7 +308,7 @@ impl Session {
                 self.next_event().await?;
             }
         };
-        let _: Result<Result<(), String>, _> = timeout(SHUTDOWN_GRACE, polite).await;
+        let _: Result<Result<(), String>, _> = timeout(grace, polite).await;
     }
 }
 

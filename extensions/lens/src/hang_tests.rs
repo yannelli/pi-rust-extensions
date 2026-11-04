@@ -20,6 +20,7 @@ fn shell(name: &str, script: &str) -> ToolCommand {
         command: "/bin/sh".into(),
         args: vec!["-c".into(), script.into()],
         enabled: true,
+        unknown: Default::default(),
     }
 }
 
@@ -39,6 +40,7 @@ fn stalled_server() -> LspServer {
         args: vec!["-c".into(), "exec sleep 30".into()],
         languages: vec!["python".into()],
         enabled: true,
+        ..Default::default()
     }
 }
 

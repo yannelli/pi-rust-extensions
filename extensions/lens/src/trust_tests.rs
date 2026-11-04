@@ -141,6 +141,7 @@ async fn timeout_kills_grandchildren_and_the_pipeline_has_a_total_cap() {
             pids.to_string_lossy().into_owned(),
         ],
         enabled: true,
+        unknown: Default::default(),
     };
     let config = config::Config {
         auto_detect: false,

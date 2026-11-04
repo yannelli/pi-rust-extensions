@@ -16,6 +16,10 @@ pub struct State {
     pub guard: Guard,
     pub warned_trust: bool,
     pub runner: Runner,
+    /// Config warnings already shown, so a refresh shows only new ones.
+    pub warned_config: Vec<String>,
+    /// Modification times of the LSP server files at the last refresh.
+    pub server_stamp: Vec<Option<std::time::SystemTime>>,
 }
 
 /// Text of a regular file of at most [`MAX_GUARD_BYTES`]. Lens does not open

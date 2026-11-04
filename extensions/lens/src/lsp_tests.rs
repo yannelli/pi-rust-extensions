@@ -107,6 +107,7 @@ impl Fixture {
             ],
             languages: vec!["python".into()],
             enabled: true,
+            ..Default::default()
         }
     }
 

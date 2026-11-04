@@ -5,6 +5,8 @@ use pi_ext_sdk::{Error, Host, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+pub use crate::servers::LspServer;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
@@ -20,6 +22,11 @@ pub struct Config {
     pub lsp: LspConfig,
     #[serde(skip)]
     pub trusted: bool,
+    /// Unknown fields and server entries that Lens skipped or cannot fully apply.
+    #[serde(skip)]
+    pub warnings: Vec<String>,
+    #[serde(flatten, skip_serializing)]
+    pub unknown: BTreeMap<String, Value>,
 }
 
 impl Default for Config {
@@ -36,6 +43,8 @@ impl Default for Config {
             commands: Vec::new(),
             lsp: LspConfig::default(),
             trusted: false,
+            warnings: Vec::new(),
+            unknown: BTreeMap::new(),
         }
     }
 }
@@ -53,7 +62,7 @@ impl Default for Toggle {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolCommand {
     pub name: String,
     pub language: String,
@@ -63,6 +72,8 @@ pub struct ToolCommand {
     pub args: Vec<String>,
     #[serde(default = "yes")]
     pub enabled: bool,
+    #[serde(flatten, skip_serializing)]
+    pub unknown: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -77,17 +88,8 @@ pub enum Stage {
 #[serde(default)]
 pub struct LspConfig {
     pub servers: Vec<LspServer>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct LspServer {
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    pub languages: Vec<String>,
-    #[serde(default = "yes")]
-    pub enabled: bool,
+    #[serde(flatten, skip_serializing)]
+    pub unknown: BTreeMap<String, Value>,
 }
 
 fn yes() -> bool {
@@ -139,7 +141,13 @@ pub fn load(agent_dir: &Path, cwd: &Path, trusted: bool) -> Result<(Config, bool
     let mut config: Config = serde_json::from_value(value)?;
     config.validate()?;
     config.trusted = trusted;
-    Ok((config, ignored))
+    config.warnings = config.unknown_fields();
+    let (servers, hidden) = crate::servers::load(agent_dir, cwd, trusted, &mut config.warnings);
+    for server in &servers {
+        config.warnings.extend(server.warnings());
+    }
+    config.lsp.servers.extend(servers);
+    Ok((config, ignored || hidden))
 }
 
 impl Config {
@@ -158,15 +166,44 @@ impl Config {
                 return Err(Error::msg("Lens commands need name, language and command"));
             }
         }
-        if self
-            .lsp
-            .servers
-            .iter()
-            .any(|server| server.command.is_empty() || server.languages.is_empty())
-        {
-            return Err(Error::msg("Lens LSP servers need command and languages"));
+        if let Some(problem) = self.lsp.servers.iter().find_map(LspServer::problem) {
+            return Err(Error::msg(format!("A Lens LSP server {problem}")));
         }
         Ok(())
+    }
+
+    /// Warnings for unknown fields and for server fields that Lens does not apply.
+    fn unknown_fields(&self) -> Vec<String> {
+        let keys = |prefix: &str, map: &BTreeMap<String, Value>| {
+            map.keys()
+                .map(|key| format!("Lens config: unknown field \"{prefix}{key}\" ignored"))
+                .collect::<Vec<_>>()
+        };
+        let mut out = keys("", &self.unknown);
+        out.extend(keys("lsp.", &self.lsp.unknown));
+        for command in &self.commands {
+            out.extend(keys(
+                &format!("commands.{}.", command.name),
+                &command.unknown,
+            ));
+        }
+        for server in &self.lsp.servers {
+            out.extend(server.warnings());
+        }
+        out
+    }
+
+    /// The Lens language of `path`: the built-in one, else one that a server maps it to.
+    pub fn file_language(&self, path: &Path) -> Option<String> {
+        if let Some(language) = crate::detection::language(path) {
+            return Some(language.to_owned());
+        }
+        self.lsp
+            .servers
+            .iter()
+            .filter(|server| server.enabled)
+            .find_map(|server| server.mapped_language(path))
+            .map(str::to_owned)
     }
 
     pub fn tool_enabled(&self, name: &str) -> bool {
