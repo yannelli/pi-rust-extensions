@@ -2,6 +2,7 @@
 //! `<cwd>/.pi/ext/subagents/agents/*.md`. Later layers override earlier ones per field.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::agent::{AgentDef, AgentPatch, PromptMode, Source};
 use crate::defaults::builtin_agents;
@@ -56,6 +57,9 @@ pub fn merge_dir(agents: &mut Vec<AgentDef>, dir: &Path, source: Source) {
 pub fn merge_file(agents: &mut Vec<AgentDef>, path: &Path, content: &str, source: Source) {
     let fm = Frontmatter::parse(content);
     let patch = AgentPatch::from_frontmatter(&fm);
+    if let Some(raw) = &patch.bad_exposure {
+        warn_bad_exposure(path, raw);
+    }
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     let name = patch.name.clone().unwrap_or_else(|| stem.to_owned());
     let name = sanitize_name(&name);
@@ -76,6 +80,7 @@ pub fn merge_file(agents: &mut Vec<AgentDef>, path: &Path, content: &str, source
                 thinking: None,
                 max_turns: None,
                 prompt_mode: PromptMode::Append,
+                exposure: None,
                 source,
                 builtin: false,
                 files: Vec::new(),
@@ -86,6 +91,20 @@ pub fn merge_file(agents: &mut Vec<AgentDef>, path: &Path, content: &str, source
     patch.apply(agent);
     agent.source = source;
     agent.files.push(path.to_owned());
+}
+
+/// Warns once per file and value; agent files load again for each prompt.
+fn warn_bad_exposure(path: &Path, raw: &str) {
+    static WARNED: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
+    let key = (path.to_owned(), raw.to_owned());
+    let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+    if !warned.contains(&key) {
+        pi_ext_sdk::warn!(
+            "subagents: {}: exposure must be direct or deferred, not {raw:?}; ignoring it",
+            path.display()
+        );
+        warned.push(key);
+    }
 }
 
 /// Lowercase letters, digits, `-` and `_`; other characters become `-`.

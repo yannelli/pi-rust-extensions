@@ -161,11 +161,20 @@ pub fn detail_lines(run: &Run) -> Vec<String> {
     lines
 }
 
+/// The heading of the `subagents` system prompt section.
+pub const PROMPT_HEADING: &str = "## Subagents";
+
 /// The `subagents` system prompt section: each agent with the first sentence of its description.
 pub fn prompt_section(agents: &[AgentDef]) -> String {
-    let mut text = String::from(
-        "## Subagents\n\nAgents for the `subagent` tool (`action: list` shows their tools and models):\n",
-    );
+    format!(
+        "{PROMPT_HEADING}\n\nAgents for the `subagent` tool (`action: list` shows their tools and models):\n{}",
+        agent_lines(agents)
+    )
+}
+
+/// One list line per agent: name and the first sentence of its description.
+pub fn agent_lines(agents: &[AgentDef]) -> String {
+    let mut text = String::new();
     for agent in agents {
         text.push_str(&format!(
             "- `{}`: {}\n",

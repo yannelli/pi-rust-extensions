@@ -12,6 +12,7 @@ mod agents_menu;
 pub mod app;
 pub mod command;
 pub mod config;
+pub mod context;
 pub mod defaults;
 pub mod exec;
 pub mod frontmatter;
@@ -31,6 +32,7 @@ pub fn extension() -> Extension {
     let tool_app = app.clone();
     let command_app = app.clone();
     let prompt_app = app.clone();
+    let discover_app = app.clone();
     let surface_app = app.clone();
     let sync_app = app.clone();
     let shutdown_app = app;
@@ -54,6 +56,10 @@ pub fn extension() -> Extension {
         .on("before_agent_start", move |ev: EventCtx| {
             let app = prompt_app.clone();
             async move { Ok(advertise(&app, &ev)) }
+        })
+        .on("resources_discover", move |ev: EventCtx| {
+            let app = discover_app.clone();
+            async move { Ok(context::discover(&app, ev.host())) }
         })
         .on_surface(move |event: SurfaceEvent, host: Host| {
             let app = surface_app.clone();
@@ -122,5 +128,10 @@ fn advertise(app: &App, ev: &EventCtx) -> EventReply {
     if !active {
         return EventReply::none().with_section("subagents", None);
     }
-    EventReply::section("subagents", render::prompt_section(&app.agents(host)))
+    let agents = app.agents(host);
+    let offered = app.offered.names().filter(|_| context::host_supports(host));
+    EventReply::section(
+        "subagents",
+        context::prompt_section(&agents, offered.as_ref()),
+    )
 }

@@ -66,6 +66,7 @@ fn builtin(name: &str, description: &str, prompt: &str, tools: Option<Vec<String
         thinking: None,
         max_turns: None,
         prompt_mode: PromptMode::Append,
+        exposure: None,
         source: Source::Builtin,
         builtin: true,
         files: Vec::new(),

@@ -30,6 +30,31 @@ pub enum PromptMode {
     Replace,
 }
 
+/// The `exposure` frontmatter key: how pi offers the agent as a context entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Exposure {
+    Direct,
+    Deferred,
+}
+
+impl Exposure {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "direct" => Some(Self::Direct),
+            "deferred" => Some(Self::Deferred),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Deferred => "deferred",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentDef {
@@ -45,6 +70,8 @@ pub struct AgentDef {
     pub thinking: Option<String>,
     pub max_turns: Option<u32>,
     pub prompt_mode: PromptMode,
+    /// `None` leaves the choice to pi's `contextExposure` setting.
+    pub exposure: Option<Exposure>,
     pub source: Source,
     pub builtin: bool,
     /// Override files that changed this agent, lowest precedence first.
@@ -86,6 +113,9 @@ pub struct AgentPatch {
     pub thinking: Option<Option<String>>,
     pub max_turns: Option<u32>,
     pub prompt_mode: Option<PromptMode>,
+    pub exposure: Option<Exposure>,
+    /// An `exposure` value that is not `direct` or `deferred`.
+    pub bad_exposure: Option<String>,
 }
 
 impl AgentPatch {
@@ -95,6 +125,8 @@ impl AgentPatch {
             let all = names.iter().any(|name| name == "*" || name == "all");
             (!all).then(|| map_tools(&names))
         });
+        let exposure = fm.text("exposure");
+        let exposure = exposure.as_deref();
         Self {
             name: fm.text("name"),
             description: fm.text("description"),
@@ -118,6 +150,10 @@ impl AgentPatch {
                     PromptMode::Append
                 }
             }),
+            exposure: exposure.and_then(Exposure::parse),
+            bad_exposure: exposure
+                .filter(|raw| Exposure::parse(raw).is_none())
+                .map(str::to_owned),
         }
     }
 
@@ -145,6 +181,9 @@ impl AgentPatch {
         }
         if let Some(mode) = self.prompt_mode {
             agent.prompt_mode = mode;
+        }
+        if let Some(exposure) = self.exposure {
+            agent.exposure = Some(exposure);
         }
     }
 }
