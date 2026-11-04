@@ -2,6 +2,12 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.11] - 2026-11-04
+
+### Added
+
+- **workflows:** background runs and approvals that wait for the user ([2e6257b](https://github.com/yannelli/pi-rust-extensions/commit/2e6257b2011b402caed3df5b2f97ff0c525071f8))
+
 ## [0.5.10] - 2026-11-04
 
 ### Added
