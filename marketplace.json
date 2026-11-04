@@ -260,6 +260,20 @@
       ]
     },
     {
+      "name": "tool-results",
+      "displayName": "Tool Results",
+      "description": "Shrinks tool results before the model reads them: terminal cleanup, JSON to TOON or tables, and large results stored behind tool_result_get, with per-tool rules and /tool-results.",
+      "version": "0.5.9",
+      "args": [
+        "tool-results"
+      ],
+      "tags": [
+        "context",
+        "tool",
+        "tui"
+      ]
+    },
+    {
       "name": "typesafe",
       "displayName": "TypeSafe",
       "description": "Structured TypeSafe judgments with session controls and usage limits.",

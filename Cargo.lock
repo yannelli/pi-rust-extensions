@@ -1039,6 +1039,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-tool-results"
+version = "0.5.9"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-typesafe"
 version = "0.5.9"
 dependencies = [
@@ -1090,6 +1103,7 @@ dependencies = [
  "pi-ext-subagents",
  "pi-ext-subscription-router",
  "pi-ext-todo",
+ "pi-ext-tool-results",
  "pi-ext-typesafe",
  "pi-ext-web-search",
 ]
