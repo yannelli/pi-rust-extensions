@@ -14,6 +14,8 @@ pub struct Config {
     pub advertise: bool,
     pub pi_bin: Option<String>,
     pub extra_args: Vec<String>,
+    /// The `agent_message` tool and mailbox delivery between agents.
+    pub messaging: bool,
 }
 
 impl Default for Config {
@@ -27,6 +29,7 @@ impl Default for Config {
             advertise: true,
             pi_bin: None,
             extra_args: Vec::new(),
+            messaging: true,
         }
     }
 }
@@ -85,6 +88,7 @@ pub fn from_map(map: &Map<String, Value>) -> Config {
         max_recent_runs: num_of("maxRecentRuns", d.max_recent_runs),
         widget: bool_of("widget", d.widget),
         advertise: bool_of("advertise", d.advertise),
+        messaging: bool_of("messaging", d.messaging),
         pi_bin: map.get("piBin").and_then(Value::as_str).map(str::to_owned),
         extra_args: map
             .get("extraArgs")

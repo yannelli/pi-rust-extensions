@@ -1,6 +1,7 @@
 //! The `list`, `status`, and `stop` actions, run details, and background completion messages.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use pi_ext_sdk::DeliverAs;
 use pi_ext_sdk::prelude::*;
@@ -15,6 +16,7 @@ use crate::store;
 
 /// The custom message type of a finished `async` call, as pi-subagents names it.
 pub const NOTIFY_TYPE: &str = "subagent-notify";
+const DELIVERY_ATTEMPTS: u32 = 6;
 
 pub fn list_agents(agents: &[AgentDef]) -> ToolResult {
     let lines: Vec<String> = agents
@@ -84,8 +86,28 @@ pub async fn report_when_done(
         .details(call_details(&runs, mode))
         .deliver_as(DeliverAs::FollowUp)
         .trigger_turn(true);
-    if let Err(err) = host.send_message(message).await {
-        pi_ext_sdk::warn!("cannot deliver the subagent result: {}", err.message());
+    deliver_with_retry(&host, message, "subagents").await;
+}
+
+/// Sends `message`, retrying with backoff while pi does not accept it (for example during
+/// `/reload`), then emits `agent:wake` so a sleeping agent sees it at once.
+pub async fn deliver_with_retry(host: &Host, message: CustomMessage, source: &str) {
+    let mut delay = Duration::from_millis(500);
+    for attempt in 1..=DELIVERY_ATTEMPTS {
+        match host.send_message(message.clone()).await {
+            Ok(()) => {
+                let wake = json!({ "source": source, "reason": "background results arrived" });
+                let _ = host.emit(crate::messaging::WAKE_CHANNEL, wake).await;
+                return;
+            }
+            Err(err) if attempt == DELIVERY_ATTEMPTS => {
+                pi_ext_sdk::warn!("cannot deliver the subagent result: {}", err.message());
+            }
+            Err(_) => {
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+            }
+        }
     }
 }
 

@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::agent::{AgentDef, PromptMode};
+use crate::messaging;
 
 /// The parent session's model (`provider/id`) and thinking level.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -38,6 +39,8 @@ pub struct ChildInput<'a> {
     pub program: &'a Path,
     pub cwd: &'a Path,
     pub extra_args: &'a [String],
+    /// The parent's mailbox address when agent messaging is on.
+    pub parent_address: Option<&'a str>,
 }
 
 /// Model: call override, else agent model, else the parent model. Thinking follows the same
@@ -78,11 +81,17 @@ pub fn build(input: ChildInput<'_>) -> ChildSpec {
     denied.extend(agent.disallowed_tools.iter().map(String::as_str));
     match &agent.tools {
         Some(tools) => {
-            let tools: Vec<&str> = tools
+            let mut tools: Vec<&str> = tools
                 .iter()
                 .map(String::as_str)
                 .filter(|t| !denied.contains(t))
                 .collect();
+            if !tools.is_empty()
+                && input.parent_address.is_some()
+                && !tools.contains(&messaging::TOOL)
+            {
+                tools.push(messaging::TOOL);
+            }
             if tools.is_empty() {
                 args.push("--no-tools".into());
             } else {
@@ -104,11 +113,14 @@ pub fn build(input: ChildInput<'_>) -> ChildSpec {
     args.extend(input.extra_args.iter().cloned());
     args.push("--".into());
     args.push(task_arg(input.task));
-    let env = vec![
+    let mut env = vec![
         ("PI_TODO_SCOPE".into(), input.run_id.to_owned()),
-        ("PI_SUBAGENT_RUN_ID".into(), input.run_id.to_owned()),
-        ("PI_SUBAGENT_AGENT".into(), agent.name.clone()),
+        (messaging::RUN_ENV.into(), input.run_id.to_owned()),
+        (messaging::AGENT_ENV.into(), agent.name.clone()),
     ];
+    if let Some(parent) = input.parent_address {
+        env.push((messaging::PARENT_ENV.into(), parent.to_owned()));
+    }
     ChildSpec {
         program: input.program.to_owned(),
         args,
