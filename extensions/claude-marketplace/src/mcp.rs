@@ -7,23 +7,19 @@ use crate::frontmatter::substitute;
 use crate::jsonfile;
 use crate::stage::Vars;
 
-/// Variables a stdio server process gets, as in Claude Code.
-const SERVER_ENV: [&str; 3] = [
-    "CLAUDE_PLUGIN_ROOT",
-    "CLAUDE_PLUGIN_DATA",
-    "CLAUDE_PROJECT_DIR",
-];
-
-/// Adds [`SERVER_ENV`] to the `env` of a stdio server; values the plugin sets stay.
-fn add_env(config: &mut Map<String, Value>, vars: &Vars) {
+/// Adds `env` (the plugin env) to the `env` of a stdio server; values the plugin sets stay.
+/// http and sse servers get the same values through `${NAME}` in their url and headers.
+fn add_env(config: &mut Map<String, Value>, env: &Vars) {
     if !config.contains_key("command") {
         return;
     }
-    let env = config.entry("env").or_insert_with(|| json!({}));
-    let Value::Object(env) = env else { return };
-    for (key, value) in vars {
-        if SERVER_ENV.contains(&key.as_str()) && !env.contains_key(key) {
-            env.insert(key.clone(), json!(value));
+    let target = config.entry("env").or_insert_with(|| json!({}));
+    let Value::Object(target) = target else {
+        return;
+    };
+    for (key, value) in env {
+        if !target.contains_key(key) {
+            target.insert(key.clone(), json!(value));
         }
     }
 }
@@ -56,6 +52,7 @@ pub fn write(
     plugin: &str,
     servers: &Map<String, Value>,
     vars: &Vars,
+    env: &Vars,
 ) -> Result<(Vec<String>, Vec<String>)> {
     let mut data = jsonfile::read_object(file)?;
     let section = jsonfile::object_entry(&mut data, "mcpServers")?;
@@ -80,7 +77,7 @@ pub fn write(
         let mut config = Value::Object(config.clone());
         substitute_all(&mut config, vars);
         if let Value::Object(map) = &mut config {
-            add_env(map, vars);
+            add_env(map, env);
         }
         config[TAG] = json!(plugin_id);
         section.insert(key.clone(), config);
@@ -93,5 +90,5 @@ pub fn write(
 }
 
 pub fn remove(file: &Path, plugin_id: &str) -> Result<()> {
-    write(file, plugin_id, "", &Map::new(), &Vars::new()).map(|_| ())
+    write(file, plugin_id, "", &Map::new(), &Vars::new(), &Vars::new()).map(|_| ())
 }

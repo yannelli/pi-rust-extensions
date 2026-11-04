@@ -2,9 +2,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use crate::args;
 use crate::env::Dirs;
+use crate::fields::{self, FrontDrops};
 use crate::frontmatter::{Doc, substitute};
 use crate::plugin::InlineCommand;
+use crate::settings::{ArgIndex, Rule};
 use crate::source::ensure_inside;
 
 pub const COMMAND_SEPARATOR: &str = if cfg!(windows) { "." } else { ":" };
@@ -21,10 +24,15 @@ pub struct Target<'a> {
     pub data_dir: PathBuf,
     /// `Some(cwd)` for project scope; user scope keeps `${CLAUDE_PROJECT_DIR}`.
     pub project_dir: Option<PathBuf>,
-    /// `user_config.<KEY>` values for Markdown content: no sensitive values.
-    pub content_options: Vars,
-    /// Every `user_config.<KEY>` value, for MCP servers and hook args.
-    pub config_options: Vars,
+    /// Markdown substitutions after the path variables: non-sensitive user config (as
+    /// `user_config.<KEY>` and `CLAUDE_PLUGIN_OPTION_<KEY>`) and the config env.
+    pub content_extra: Vars,
+    /// MCP server and hook arg substitutions after the path variables: all of them.
+    pub config_extra: Vars,
+    /// Process env after the path variables: `CLAUDE_PLUGIN_OPTION_<KEY>` and the config env.
+    pub env_extra: Vars,
+    pub arg_index: ArgIndex,
+    pub rules: Vec<Rule>,
 }
 
 impl Target<'_> {
@@ -45,17 +53,24 @@ impl Target<'_> {
         vars
     }
 
-    /// Path variables and non-sensitive user config, for prompts, skills, agents, and styles.
+    /// Substitutions for prompts, skills, agents, and output styles.
     pub fn vars(&self, skill_dir: Option<&Path>) -> Vars {
         let mut vars = self.path_vars(skill_dir);
-        vars.extend(self.content_options.iter().cloned());
+        vars.extend(self.content_extra.iter().cloned());
         vars
     }
 
-    /// Path variables and all user config, for MCP servers and hook args.
+    /// Substitutions for MCP servers and hook args.
     pub fn config_vars(&self) -> Vars {
         let mut vars = self.path_vars(None);
-        vars.extend(self.config_options.iter().cloned());
+        vars.extend(self.config_extra.iter().cloned());
+        vars
+    }
+
+    /// The env of stdio MCP servers and of bash commands that name a plugin bin file.
+    pub fn process_env(&self) -> Vars {
+        let mut vars = self.path_vars(None);
+        vars.extend(self.env_extra.iter().cloned());
         vars
     }
 
@@ -121,67 +136,19 @@ pub fn markdown_files(path: &Path) -> Vec<(Vec<String>, PathBuf)> {
     out
 }
 
-/// `$ARGUMENTS[N]` (0-based) and the named `$<arg>` of `arguments` become pi's `$<N+1>`.
-fn map_arguments(body: &str, names: &[String]) -> String {
-    let mut out = String::with_capacity(body.len());
-    let mut rest = body;
-    while let Some(start) = rest.find('$') {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 1..];
-        let word_end = after
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .unwrap_or(after.len());
-        let word = &after[..word_end];
-        let indexed = (word == "ARGUMENTS")
-            .then(|| after[word_end..].strip_prefix('['))
-            .flatten()
-            .and_then(|inner| {
-                let close = inner.find(']')?;
-                let n: usize = inner[..close].parse().ok()?;
-                Some((n, word_end + 2 + close))
-            });
-        if let Some((n, used)) = indexed {
-            out.push_str(&format!("${}", n + 1));
-            rest = &after[used..];
-        } else if let Some(index) = names.iter().position(|name| name == word) {
-            out.push_str(&format!("${}", index + 1));
-            rest = &after[word_end..];
-        } else {
-            out.push('$');
-            rest = after;
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn has_placeholder(body: &str) -> bool {
-    body.match_indices('$').any(|(i, _)| {
-        let after = &body[i + 1..];
-        after.starts_with("ARGUMENTS")
-            || after.starts_with('@')
-            || after.starts_with("{@")
-            || after.starts_with("{ARGUMENTS")
-            || after.starts_with(|c: char| c.is_ascii_digit())
-            || after
-                .strip_prefix('{')
-                .is_some_and(|a| a.starts_with(|c: char| c.is_ascii_digit()))
-    })
-}
-
-/// A Claude command as a pi prompt template. Like Claude Code, a body without placeholders
-/// gets the arguments appended.
-pub fn convert_command(text: &str, vars: &Vars) -> String {
+/// A Claude command as a pi prompt template; reports what pi does not apply.
+pub fn convert_command(target: &Target, name: &str, text: &str, drops: &mut FrontDrops) -> String {
     let mut doc = Doc::parse(text);
-    let names = doc.get_list("arguments").unwrap_or_default();
-    doc.body = map_arguments(&doc.body, &names);
-    if !has_placeholder(&doc.body) {
-        if !doc.body.is_empty() && !doc.body.ends_with('\n') {
-            doc.body.push('\n');
-        }
-        doc.body.push_str("\nARGUMENTS: $ARGUMENTS\n");
+    drops.add("command", name, &doc.keys());
+    if fields::has_shell(&doc.body) {
+        drops.feature("command", "shell", name);
     }
-    substitute(&doc.render(), vars)
+    if fields::has_file_ref(&doc.body) {
+        drops.feature("command", "file", name);
+    }
+    let names = doc.get_list("arguments").unwrap_or_default();
+    doc.body = args::convert(&doc.body, &names, target.arg_index);
+    substitute(&doc.render(), &target.vars(None))
 }
 
 fn write_command(
@@ -189,14 +156,16 @@ fn write_command(
     name: &str,
     text: &str,
     files: &mut Vec<PathBuf>,
+    drops: &mut FrontDrops,
 ) -> Result<bool> {
     let dir = target.dirs.prompts();
-    let dest = dir.join(format!("{}{COMMAND_SEPARATOR}{name}.md", target.plugin));
+    let staged = format!("{}{COMMAND_SEPARATOR}{name}", target.plugin);
+    let dest = dir.join(format!("{staged}.md"));
     ensure_inside(&dir, &dest)?;
     if files.contains(&dest) {
         return Ok(false);
     }
-    std::fs::write(&dest, convert_command(text, &target.vars(None)))?;
+    std::fs::write(&dest, convert_command(target, &staged, text, drops))?;
     files.push(dest);
     Ok(true)
 }
@@ -206,6 +175,7 @@ pub fn stage_commands(
     paths: &[PathBuf],
     inline: &[InlineCommand],
     files: &mut Vec<PathBuf>,
+    drops: &mut FrontDrops,
 ) -> Result<usize> {
     std::fs::create_dir_all(target.dirs.prompts())?;
     let mut count = 0;
@@ -214,7 +184,7 @@ pub fn stage_commands(
             let text = std::fs::read_to_string(&file)
                 .with_context(|| format!("cannot read {}", file.display()))?;
             let name = parts.join(COMMAND_SEPARATOR);
-            count += usize::from(write_command(target, &name, &text, files)?);
+            count += usize::from(write_command(target, &name, &text, files, drops)?);
         }
     }
     for command in inline {
@@ -237,7 +207,7 @@ pub fn stage_commands(
             }
         }
         let name = command.name.replace(['/', '\\'], COMMAND_SEPARATOR);
-        count += usize::from(write_command(target, &name, &doc.render(), files)?);
+        count += usize::from(write_command(target, &name, &doc.render(), files, drops)?);
     }
     Ok(count)
 }
@@ -280,7 +250,12 @@ fn skill_name(name: &str) -> String {
     name.trim_matches('-').to_owned()
 }
 
-pub fn stage_skills(target: &Target, paths: &[PathBuf], files: &mut Vec<PathBuf>) -> Result<usize> {
+pub fn stage_skills(
+    target: &Target,
+    paths: &[PathBuf],
+    files: &mut Vec<PathBuf>,
+    drops: &mut FrontDrops,
+) -> Result<usize> {
     let base = target.dirs.skills();
     let mut count = 0;
     for path in paths {
@@ -309,6 +284,7 @@ pub fn stage_skills(target: &Target, paths: &[PathBuf], files: &mut Vec<PathBuf>
             copy_dir(&skill, &dest)?;
             let skill_md = dest.join("SKILL.md");
             let mut doc = Doc::parse(&std::fs::read_to_string(&skill_md)?);
+            drops.add("skill", &staged, &doc.keys());
             doc.set("name", &staged);
             let text = substitute(&doc.render(), &target.vars(Some(&dest)));
             std::fs::write(&skill_md, text)?;
@@ -326,31 +302,4 @@ pub fn remove_path(path: &Path) -> Result<()> {
         Err(_) => return Ok(()),
     };
     result.with_context(|| format!("cannot remove {}", path.display()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn maps_claude_arguments() {
-        let names = vec!["file".to_owned(), "mode".to_owned()];
-        let body = "A $ARGUMENTS[0] B $ARGUMENTS[1] $file/$mode $files $ARGUMENTS $5 cost $";
-        assert_eq!(
-            map_arguments(body, &names),
-            "A $1 B $2 $1/$2 $files $ARGUMENTS $5 cost $"
-        );
-    }
-
-    #[test]
-    fn appends_arguments_without_placeholders() {
-        let vars = Vars::new();
-        let text = "---\ndescription: d\n---\nDo it";
-        assert_eq!(
-            convert_command(text, &vars),
-            "---\ndescription: d\n---\nDo it\n\nARGUMENTS: $ARGUMENTS\n"
-        );
-        assert_eq!(convert_command("Use $1", &vars), "Use $1");
-        assert_eq!(convert_command("Use ${@:2}", &vars), "Use ${@:2}");
-    }
 }

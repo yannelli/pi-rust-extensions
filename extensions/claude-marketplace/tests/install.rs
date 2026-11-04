@@ -51,7 +51,7 @@ fn install_and_uninstall_user_scope() {
     let root = fx.repo.join("plugins/fmt");
     assert_eq!(names(&dirs.prompts()), ["fmt:build:web.md", "fmt:hello.md"]);
     let web = read(&dirs.prompts().join("fmt:build:web.md"));
-    let appended = "\nARGUMENTS: $ARGUMENTS\n";
+    let appended = "\n$ARGUMENTS\n";
     assert_eq!(
         web,
         format!("Build with {}/web\n{appended}", root.display())
@@ -136,7 +136,10 @@ fn project_scope_needs_trust_and_substitutes_project_dir() {
 
     let env = fx.env(true);
     let text = install::install(&env, "lint@acme", Scope::Project).unwrap();
-    assert!(text.contains("Not supported in pi: lspServers"), "{text}");
+    assert!(
+        text.contains("Not applied in pi: plugin.json lspServers (pi runs no plugin LSP servers"),
+        "{text}"
+    );
     let dirs = Dirs::new(&fx.project.join(".pi"));
     assert_eq!(names(&dirs.prompts()), ["lint:run.md"]);
     assert!(read(&dirs.skills().join("lint-rules/SKILL.md")).contains("name: lint-rules"));
@@ -187,7 +190,7 @@ fn update_after_new_commit_reinstalls() {
     let text = cli::run(&env, "update").unwrap();
     assert!(text.contains("Updated marketplace acme [user]"), "{text}");
     assert!(text.contains("Installed fmt@acme"), "{text}");
-    let appended = "\nARGUMENTS: $ARGUMENTS\n";
+    let appended = "\n$ARGUMENTS\n";
     assert_eq!(
         read(&dirs.prompts().join("fmt:hello.md")),
         format!("Hi again\n{appended}")

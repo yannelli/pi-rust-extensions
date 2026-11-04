@@ -170,6 +170,11 @@ impl Dirs {
         self.state_dir.join("resources").join("skills")
     }
 
+    /// Env files that bash commands naming a plugin bin file source.
+    pub fn env_files(&self) -> PathBuf {
+        self.state_dir.join("env")
+    }
+
     pub fn output_styles(&self) -> PathBuf {
         self.state_dir.join("resources").join("output-styles")
     }

@@ -23,6 +23,11 @@ impl Config {
         jsonfile::write(&self.dirs.config_file(), &Value::Object(self.data.clone()))
     }
 
+    /// The whole config object.
+    pub fn top(&self) -> &Map<String, Value> {
+        &self.data
+    }
+
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.data.get(key)
     }
@@ -113,8 +118,21 @@ impl Config {
         Ok(())
     }
 
+    /// Removes the entry, or sets `enabled: false` when it holds other keys (overrides).
     pub fn remove_plugin(&mut self, id: &str) -> Result<()> {
-        jsonfile::object_entry(&mut self.data, "plugins")?.shift_remove(id);
+        let section = jsonfile::object_entry(&mut self.data, "plugins")?;
+        let keeps = section
+            .get(id)
+            .and_then(Value::as_object)
+            .is_some_and(|entry| entry.keys().any(|k| k != "enabled"));
+        match (keeps, section.get_mut(id).and_then(Value::as_object_mut)) {
+            (true, Some(entry)) => {
+                entry.insert("enabled".into(), json!(false));
+            }
+            _ => {
+                section.shift_remove(id);
+            }
+        }
         Ok(())
     }
 }

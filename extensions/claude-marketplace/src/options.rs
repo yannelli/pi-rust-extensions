@@ -135,6 +135,23 @@ pub fn env(opts: &[Opt], stored: &Map<String, Value>) -> Map<String, Value> {
     out
 }
 
+/// `CLAUDE_PLUGIN_OPTION_<KEY>` pairs; `with_sensitive: false` leaves sensitive values out.
+pub fn env_vars(
+    opts: &[Opt],
+    stored: &Map<String, Value>,
+    with_sensitive: bool,
+) -> Vec<(String, String)> {
+    let shown: Vec<Opt> = opts
+        .iter()
+        .filter(|o| with_sensitive || !o.sensitive)
+        .cloned()
+        .collect();
+    env(&shown, stored)
+        .into_iter()
+        .map(|(k, v)| (k, to_text(&v)))
+        .collect()
+}
+
 /// Parses user text for `opt`. List values are comma separated.
 pub fn parse(opt: &Opt, text: &str) -> Result<Value> {
     let text = text.trim();

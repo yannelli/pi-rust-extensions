@@ -8,6 +8,7 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::env::{Env, Scope};
+use crate::fields::FrontDrops;
 use crate::frontmatter::{Doc, substitute};
 use crate::source::ensure_inside;
 use crate::stage::{COMMAND_SEPARATOR, Target, markdown_files};
@@ -27,7 +28,12 @@ pub struct Style {
     pub scope: Scope,
 }
 
-pub fn stage_styles(target: &Target, paths: &[PathBuf], files: &mut Vec<PathBuf>) -> Result<usize> {
+pub fn stage_styles(
+    target: &Target,
+    paths: &[PathBuf],
+    files: &mut Vec<PathBuf>,
+    drops: &mut FrontDrops,
+) -> Result<usize> {
     let dir = target.dirs.output_styles();
     let vars = target.vars(None);
     let mut count = 0;
@@ -47,6 +53,7 @@ pub fn stage_styles(target: &Target, paths: &[PathBuf], files: &mut Vec<PathBuf>
             if files.contains(&dest) {
                 continue;
             }
+            drops.add("style", &staged, &doc.keys());
             doc.set("name", &format!("{}:{name}", target.plugin));
             std::fs::create_dir_all(&dir)?;
             std::fs::write(&dest, substitute(&doc.render(), &vars))?;

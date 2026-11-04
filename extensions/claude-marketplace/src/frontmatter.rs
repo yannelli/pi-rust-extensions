@@ -51,6 +51,18 @@ impl Doc {
         end
     }
 
+    /// The top-level keys, in order.
+    pub fn keys(&self) -> Vec<String> {
+        let front = self.front.as_deref().unwrap_or_default();
+        front
+            .iter()
+            .filter(|line| !line.starts_with([' ', '\t', '#', '-']))
+            .filter_map(|line| line.split_once(':'))
+            .map(|(key, _)| key.trim().to_owned())
+            .filter(|key| !key.is_empty())
+            .collect()
+    }
+
     pub fn get(&self, key: &str) -> Option<String> {
         let index = self.key_line(key)?;
         let line = &self.front.as_ref()?[index];

@@ -120,9 +120,11 @@ fn installs_every_component_with_strict_entry_rules() {
     let text = install::install(&env, "kit@kits", Scope::User).unwrap();
     for part in [
         "Installed kit@kits 2.0.0 [user]: 3 command(s), 1 skill(s), 1 agent(s), 2 hook group(s), 2 MCP server(s), 1 output style(s), 1 bin command(s), 2 user config option(s).",
-        "Not supported in pi: monitors, themes, settings.",
-        "the marketplace entry's mcpServers is ignored because the plugin has a plugin.json",
-        "the default commands/ folder is ignored because the manifest sets commands",
+        "plugin.json experimental.monitors (pi has no background monitors)",
+        "themes/ (pi themes use another format)",
+        "settings.json (pi has no plugin default agent or subagent status line)",
+        "marketplace entry mcpServers (ignored because the plugin has a plugin.json)",
+        "commands/ folder (the manifest sets commands, which replaces the default folder)",
         "Needs user config: token.",
         "Dependency: Installed base@kits [user]: 1 command(s)",
     ] {
@@ -182,7 +184,7 @@ fn installs_every_component_with_strict_entry_rules() {
     );
 
     let record = &State::load(dirs).unwrap().plugins["kit@kits"];
-    assert_eq!(record.bin_names, ["kit-tool"]);
+    assert_eq!(record.bins[0].names, ["kit-tool"]);
     assert_eq!(record.default_agent.as_deref(), Some("audit"));
     let info = cli::info(&env, "kit@kits").unwrap();
     for part in [
@@ -192,7 +194,11 @@ fn installs_every_component_with_strict_entry_rules() {
         "Bin (bash PATH): kit-tool",
         "  token = (missing, required)  -- Token",
         "  region = eu (default)  -- Region",
-        "Not supported in pi: monitors, themes, settings",
+        "Not applied in pi:",
+        "  themes/ (pi themes use another format)",
+        "Strict: true (default)",
+        "Argument indexing: auto (default)",
+        "  kit-review-audit: model sonnet, effort high -> model inherit, thinking high (built-in)",
         "Default agent (not applied): audit",
     ] {
         assert!(info.contains(part), "missing {part:?} in {info}");
@@ -306,7 +312,8 @@ fn bin_dirs_join_path_for_commands_that_name_them() {
     assert_eq!(
         rewritten,
         format!(
-            "export PATH=\"$PATH\":'{}'; kit-tool --x | head",
+            ". '{}'; export PATH=\"$PATH\":'{}'; kit-tool --x | head",
+            kit.dirs.env_files().join("kits/kit.sh").display(),
             dir.display()
         )
     );
@@ -319,7 +326,10 @@ fn manifest_rules_lsp_conflicts_and_single_skill() {
     let kit = setup();
     let env = kit.fx.env(true);
     let text = install::install(&env, "lsp@kits", Scope::User).unwrap();
-    assert!(text.contains("Not supported in pi: lspServers."), "{text}");
+    assert!(
+        text.contains("Not applied in pi: marketplace entry lspServers (pi runs no plugin LSP"),
+        "{text}"
+    );
     let info = cli::info(&env, "lsp@kits").unwrap();
     assert!(
         info.contains("LSP servers (not run; add them to lens.json by hand): go: gopls"),
@@ -382,7 +392,11 @@ async fn protocol_adds_style_section_and_bin_path() {
         assert!(command.is_null(), "{reply}");
     } else {
         let text = command.as_str().unwrap();
-        assert!(text.starts_with("export PATH=\"$PATH\":'"), "{text}");
+        assert!(text.starts_with(". '"), "{text}");
+        assert!(
+            text.contains("/env/kits/kit.sh'; export PATH=\"$PATH\":'"),
+            "{text}"
+        );
         assert!(text.ends_with("/kits/kit/bin'; kit-tool"), "{text}");
     }
 

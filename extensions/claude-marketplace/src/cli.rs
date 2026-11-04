@@ -13,7 +13,7 @@ pub const HELP: &str = "\
 /claude-plugins marketplace autoupdate|noautoupdate <marketplace>
 /claude-plugins list [<marketplace>] [--installed] [--available] [--unavailable]
 /claude-plugins info <plugin>@<marketplace>
-/claude-plugins install <plugin>@<marketplace> [--scope user|project]
+/claude-plugins install <plugin>@<marketplace> | <source> [--scope user|project]
 /claude-plugins update [<plugin>@<marketplace>]
 /claude-plugins uninstall <plugin>@<marketplace> [--scope user|project]
 /claude-plugins enable|disable <plugin>@<marketplace>
@@ -116,8 +116,13 @@ pub fn info(env: &Env, id: &str) -> Result<String> {
     if !record.mcp_keys.is_empty() {
         lines.push(format!("MCP servers: {}", record.mcp_keys.join(", ")));
     }
-    if !record.bin_names.is_empty() {
-        lines.push(format!("Bin (bash PATH): {}", record.bin_names.join(", ")));
+    let bin_names: Vec<&str> = record
+        .bins
+        .iter()
+        .flat_map(|b| b.names.iter().map(String::as_str))
+        .collect();
+    if !bin_names.is_empty() {
+        lines.push(format!("Bin (bash PATH): {}", bin_names.join(", ")));
     }
     let opts = options::schema(&record.user_config);
     if !opts.is_empty() {
@@ -125,11 +130,20 @@ pub fn info(env: &Env, id: &str) -> Result<String> {
         lines.push("User config:".into());
         lines.extend(options::lines(&opts, &options::load(&file)?));
     }
-    if !record.unsupported.is_empty() {
-        lines.push(format!(
-            "Not supported in pi: {}",
-            record.unsupported.join(", ")
-        ));
+    if !record.strict.is_empty() {
+        lines.push(format!("Strict: {}", record.strict));
+    }
+    if !record.arguments.is_empty() {
+        lines.push(format!("Argument indexing: {}", record.arguments));
+    }
+    if !record.agent_models.is_empty() {
+        lines.push("Agent models:".into());
+        lines.extend(record.agent_models.iter().map(|l| format!("  {l}")));
+    }
+    let dropped = crate::fields::summary(&record.dropped);
+    if !dropped.is_empty() {
+        lines.push("Not applied in pi:".into());
+        lines.extend(dropped.iter().map(|l| format!("  {l}")));
     }
     if !record.lsp.is_empty() {
         lines.push(format!(
@@ -203,11 +217,14 @@ pub fn run(env: &Env, text: &str) -> Result<String> {
         "marketplace" | "mp" => marketplace_cmd(env, &args),
         "list" | "browse" => list_text(env, &args),
         "info" => info(env, need(words, 1, "plugin")?),
-        "install" => install::install(
-            env,
-            need(words, 1, "plugin")?,
-            args.scope.unwrap_or(Scope::User),
-        ),
+        "install" => {
+            let target = need(words, 1, "plugin or source")?;
+            let scope = args.scope.unwrap_or(Scope::User);
+            match crate::state::split_id(target) {
+                Ok(_) => install::install(env, target, scope),
+                Err(_) => install::install_source(env, target, scope),
+            }
+        }
         "reinstall" => {
             let id = need(words, 1, "plugin")?;
             let scope = match args.scope {

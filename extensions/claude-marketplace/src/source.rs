@@ -90,8 +90,11 @@ pub fn local_marketplace(path: &Path) -> Result<MarketplaceSource> {
         });
     }
     let manifest = path.join(".claude-plugin").join("marketplace.json");
-    if !manifest.is_file() {
-        bail!("{} has no .claude-plugin/marketplace.json", path.display());
+    if !manifest.is_file() && crate::synthetic::detect(&path).is_none() {
+        bail!(
+            "{} has no .claude-plugin/marketplace.json, plugin.json, or SKILL.md",
+            path.display()
+        );
     }
     Ok(MarketplaceSource::Local {
         root: path,

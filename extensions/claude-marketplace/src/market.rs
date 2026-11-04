@@ -9,7 +9,7 @@ use crate::install;
 use crate::source::{MarketplaceSource, parse_marketplace};
 use crate::stage::remove_path;
 use crate::state::{MarketplaceRecord, State};
-use crate::{RELOAD, git};
+use crate::{RELOAD, git, synthetic};
 
 #[derive(Debug, Clone)]
 pub struct Located {
@@ -70,6 +70,19 @@ fn incoming_dir(sources: &Path) -> PathBuf {
 }
 
 pub fn add(env: &Env, raw: &str, scope: Scope) -> Result<String> {
+    add_named(env, raw, scope).map(|(_, text)| text)
+}
+
+/// The kind of source, for the `add` text.
+fn layout_note(root: &Path, manifest: &Path) -> String {
+    match (manifest.is_file(), synthetic::detect(root)) {
+        (false, Some(layout)) => format!(", from {}", layout.label()),
+        _ => String::new(),
+    }
+}
+
+/// Adds a marketplace and returns its name and the text to show.
+pub fn add_named(env: &Env, raw: &str, scope: Scope) -> Result<(String, String)> {
     env.require(scope)?;
     let dirs = env.dirs(scope);
     let mut state = State::load(&dirs)?;
@@ -79,7 +92,7 @@ pub fn add(env: &Env, raw: &str, scope: Scope) -> Result<String> {
             let tmp = incoming_dir(&dirs.sources());
             git::clone(&url, &tmp, None, None)?;
             let manifest = tmp.join(".claude-plugin/marketplace.json");
-            let catalog = Catalog::read(&manifest, &tmp);
+            let catalog = Catalog::read_named(&manifest, &tmp, Some(&url));
             let name = match catalog {
                 Ok(catalog) if !state.marketplaces.contains_key(&catalog.name) => catalog.name,
                 Ok(catalog) => {
@@ -114,25 +127,37 @@ pub fn add(env: &Env, raw: &str, scope: Scope) -> Result<String> {
                     catalog.name
                 );
             }
+            let source = match manifest.is_file() {
+                true => &manifest,
+                false => &root,
+            };
             MarketplaceRecord {
                 name: catalog.name,
-                source: manifest.display().to_string(),
+                source: source.display().to_string(),
                 git_url: None,
                 root,
                 manifest,
             }
         }
     };
-    let count = Catalog::read(&record.manifest, &record.root)?.plugins.len();
+    let catalog = Catalog::read(&record.manifest, &record.root)?;
+    let count = catalog.plugins.len();
+    let note = layout_note(&record.root, &record.manifest);
     let name = record.name.clone();
     let mut config = Config::load(&dirs)?;
     config.set_marketplace(&name, &record.source)?;
     state.marketplaces.insert(name.clone(), record);
     state.save(&dirs)?;
     config.save()?;
-    Ok(format!(
-        "Added marketplace {name} ({count} plugin(s)) in {scope} scope. Install with /claude-plugins install <plugin>@{name}."
-    ))
+    let hint = match catalog.plugins.as_slice() {
+        [one] => format!("{}@{name}", one.name),
+        _ => format!("<plugin>@{name}"),
+    };
+    let mut text = format!(
+        "Added marketplace {name} ({count} plugin(s){note}) in {scope} scope. Install with /claude-plugins install {hint}."
+    );
+    text.push_str(&crate::fields::marketplace_note(&catalog.raw));
+    Ok((name, text))
 }
 
 /// Scopes and ids of installed plugins that come from `located`.
