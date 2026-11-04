@@ -31,6 +31,8 @@ const EXTENSIONS: &[Extension] = &[
     ("compact-tui", pi_ext_compact_tui::main),
     ("tool-results", pi_ext_tool_results::main),
     ("workflows", pi_ext_workflows::main),
+    ("simple-goal", pi_ext_simple_goal::main),
+    ("timers", pi_ext_timers::main),
 ];
 
 fn main() -> ExitCode {
