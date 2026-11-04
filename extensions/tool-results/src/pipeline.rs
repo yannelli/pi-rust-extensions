@@ -15,9 +15,11 @@ pub struct Outcome {
     pub before: usize,
     pub after: usize,
     pub applied: Vec<String>,
-    /// The full text after cleanup, to store under the result id.
+    /// The full text after cleanup, when the result must be stored under the result id.
     pub stored: Option<String>,
     pub truncated: bool,
+    /// The full text after cleanup, for the expanded view.
+    pub full: String,
 }
 
 struct Block {
@@ -189,6 +191,7 @@ pub fn process(blocks: &[Value], s: &Settings, id: &str, context: usize) -> Opti
     let size = joined.chars().count();
     let mut outcome = Outcome {
         before,
+        full: cleaned(),
         ..Outcome::default()
     };
     let others = blocks.iter().filter(|b| b["type"] != "text").cloned();

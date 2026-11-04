@@ -91,12 +91,14 @@ pub struct ToolCallRender {
     pub width: usize,
 }
 
-/// `options` of `render.toolResult`.
+/// `options` of `render.toolResult` and `render.toolResultExpanded`.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ResultOptions {
     pub expanded: bool,
     pub is_partial: bool,
+    /// `render.toolResultExpanded`: the height limit pi applies, 0 for none.
+    pub max_height: usize,
 }
 
 /// `render.toolResult`: the result row; `result` has `content`, `details`, and `isError`.

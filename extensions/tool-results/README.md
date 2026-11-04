@@ -8,7 +8,7 @@ Run it as `pi-rust-ext tool-results`. It needs pi-rust 0.8.0 or later, which app
 
 ## How it works
 
-The extension handles the `tool_result` event of pi. When a result gets smaller, it answers with a merge patch `{ "content": [...] }`, and pi replaces the content of the result. pi keeps `details` and `structuredContent`. The transcript in the TUI shows the changed content too. Tools can cut their own output first: pi's `bash` keeps the last 2,000 lines or 50 KB and names a log file. The extension works on what the tool returns.
+The extension handles the `tool_result` event of pi. When a result gets smaller, it answers with a merge patch `{ "content": [...], "details": { "toolResults": {...} } }`, and pi replaces the content of the result and adds the record to its `details`. pi keeps the tool's own `details` keys and `structuredContent`. The transcript in the TUI shows the shortened content, and an expanded row can show the full text (see [Expanded rows](#expanded-rows)). Tools can cut their own output first: pi's `bash` keeps the last 2,000 lines or 50 KB and names a log file. The extension works on what the tool returns.
 
 Each text block goes through these steps, in this order. Each step runs only when its key is on.
 
@@ -48,7 +48,25 @@ Rules that always apply:
 | `pattern`, `regex`, `ignore_case` | `search`: literal text, or a regular expression with `regex: true`. |
 | `context_chars`, `max_matches` | `search`: characters on each side of a match (default `contextChars`) and the most matches (default `maxMatches`). Matches with overlapping context merge. |
 
-Stored results are in `<agentDir>/ext/tool-results/sessions/<sessionId>/`. The extension removes the directory of a session when the session ends. A `/reload` keeps it. At session start it also removes session directories that are older than 7 days. Ids of a resumed session therefore no longer resolve.
+## Stored results
+
+Each changed result is stored in `<agentDir>/ext/tool-results/store/` as `<id>.txt` (the full text after steps 1 to 3) and `<id>.json` (tool, tool call id, session id and file, size, SHA-256, time). The id comes from the tool call id and the hash of the result, so a lookup needs only the id. Results therefore keep working after a resume, a fork (which gets a new session id), `/tree` navigation, a pi restart, and `/reload`. With `expandOriginal` and `embedOriginal` both off, only truncated results and results with elided parts are stored.
+
+The record `details.toolResults` of the result (`resultId`, `chars`, `lines`, `hash`) goes into the session file. When the store no longer has a result, `tool_result_get` finds the record and says that the retention policy or a purge removed it. Files are written to a temporary file, synced, and renamed, and a result counts only once its `<id>.json` exists, so a crash never leaves a half-written result.
+
+At each session start, a background task applies the retention policy without delaying the session:
+
+- `retentionDays` (default 30) removes older results. With `keepWhileSessionExists` (default on), results whose session file still exists skip this rule.
+- `retentionMaxMb` (default 1024) removes the oldest results until the store fits. This rule applies to every result.
+- Temporary files and texts without a record that are older than 1 hour are removed.
+
+`embedOriginal` (default off) also writes the full text into `details.toolResults.original`. The session file then has everything it needs, and `tool_result_get` and the expanded view work even after the store is gone. The cost: each changed result adds its full size to the session file, so a session with many large outputs grows by megabytes, and pi reads that text again on each resume. The model never gets `details`.
+
+## Expanded rows
+
+The existing expand key of pi (`app.tools.expand`, `ctrl+o` by default) or a click opens a tool row. For a changed result, the open row shows the full text from the store (or from `details`) in place of the shortened text, with a header line. The text never goes to the model. The view shows at most `expandedMaxHeight` lines (default 30) with a position line such as `lines 1-29 of 300`, and the mouse wheel over it scrolls it in fullscreen mode. The same key collapses the row, and the view returns to the top.
+
+This needs a pi-rust with the tool result expander (feature `toolResultExpander`, [yannelli/pi-rust#229](https://github.com/yannelli/pi-rust/pull/229)). Older hosts ignore it, and an expanded row shows the shortened content as before. Turn `expandOriginal` off to keep pi's own expanded rows.
 
 ## Commands
 
@@ -56,6 +74,8 @@ Stored results are in `<agentDir>/ext/tool-results/sessions/<sessionId>/`. The e
 - `/tool-results status` shows every setting and the rules.
 - `/tool-results preview` shows the last changed result, also in dry run.
 - `/tool-results stats` shows the characters saved per tool, for this session and in total.
+- `/tool-results list` shows the stored results, newest first, with their size and age.
+- `/tool-results purge <result_id>`, `purge session` (the results of this session), and `purge all` (asks first) remove stored results.
 - `/tool-results reset` clears the stats.
 
 The panel has 3 tabs. **Settings** has a row for each key: `←` `→` or space change a switch or a choice, and enter edits a number. **Rules** lists the per-tool rules: enter opens a rule, `a` adds one, and `d` deletes one. In a rule, each field can be `inherit`, or a value for the tools that match. **Stats** shows the calls, changed results, stored results, and characters saved per tool, and the last change. `r` clears the stats. The panel writes to `<agentDir>/ext/tool-results.json`.
@@ -84,6 +104,12 @@ The panel has 3 tabs. **Settings** has a row for each key: `←` `→` or space 
 | `headChars`, `tailChars` | `4000`, `2000` | The preview. |
 | `keepElided` | `true` | Store results that lost content in steps 5, 6, or 8. |
 | `contextChars`, `maxMatches` | `200`, `20` | Defaults of `search`. Global only. |
+| `expandOriginal` | `true` | Store every changed result and show it in an expanded row. Global only. |
+| `expandedMaxHeight` | `30` | Lines of the expanded view, with the position line. Global only. |
+| `embedOriginal` | `false` | Also keep the full text in the session file (see above). Global only. |
+| `retentionDays` | `30` | Days to keep stored results; `0` keeps them. Global only. |
+| `retentionMaxMb` | `1024` | Size limit of the store in MB; `0` sets none. Global only. |
+| `keepWhileSessionExists` | `true` | Results of an existing session file skip `retentionDays`. Global only. |
 | `tools` | `{}` | Per-tool rules: a tool name or glob (`*`, `?`) and the keys it sets. |
 
 Rules apply in file order after the global keys, and later rules win. The built-in rule for `read` turns off every text step and `json`, because the model edits file text by exact match. Only the storage of large results applies to `read`.

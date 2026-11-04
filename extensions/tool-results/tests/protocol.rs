@@ -1,94 +1,23 @@
-use pi_ext_sdk::test_util::TestHost;
-use pi_ext_tool_results::extension;
+mod common;
+
+use common::{Run, notice_id, text};
 use pi_ext_tool_results::lines::short;
-use serde_json::{Value, json};
-
-fn ctx(cwd: &str) -> Value {
-    json!({ "cwd": cwd, "hasUI": false, "flags": {}, "sessionId": "s-1", "isProjectTrusted": false })
-}
-
-/// Answers the host requests the extension makes: trust checks and notifications.
-fn fake(method: &str, _params: &Value) -> Value {
-    match method {
-        "pi.call" => json!(false),
-        _ => Value::Null,
-    }
-}
-
-struct Run {
-    host: TestHost,
-    root: String,
-    next: u64,
-    /// The `ui.notify` messages the extension sent.
-    notes: Vec<String>,
-}
-
-impl Run {
-    async fn start(dir: &tempfile::TempDir) -> Self {
-        let root = dir.path().display().to_string();
-        let mut host = TestHost::start(extension()).cwd(&root).agent_dir(&root);
-        let init = host.initialize().await;
-        assert_eq!(
-            init["events"],
-            json!(["session_start", "session_shutdown", "tool_result"])
-        );
-        assert_eq!(init["tools"][0]["name"], "tool_result_get");
-        assert_eq!(init["commands"][0]["name"], "tool-results");
-        let mut run = Self {
-            host,
-            root,
-            next: 1,
-            notes: Vec::new(),
-        };
-        let start = json!({ "type": "session_start", "reason": "startup" });
-        assert_eq!(run.event("session_start", start).await, json!({}));
-        run
-    }
-
-    async fn call(&mut self, method: &str, params: Value) -> Value {
-        self.next += 1;
-        let mut notes = Vec::new();
-        let reply = self
-            .host
-            .drive(self.next, method, params, |method, params| {
-                if method == "ui.notify" {
-                    notes.push(params["message"].as_str().unwrap_or_default().to_owned());
-                }
-                fake(method, params)
-            })
-            .await;
-        self.notes.extend(notes);
-        reply["result"].clone()
-    }
-
-    async fn event(&mut self, name: &str, event: Value) -> Value {
-        let params = json!({ "name": name, "event": event, "ctx": ctx(&self.root) });
-        self.call("event", params).await
-    }
-
-    async fn result(&mut self, tool: &str, id: &str, content: Value, is_error: bool) -> Value {
-        let event = json!({ "type": "tool_result", "toolName": tool, "toolCallId": id,
-                            "input": {}, "content": content, "isError": is_error });
-        self.event("tool_result", event).await
-    }
-
-    async fn get(&mut self, args: Value) -> Value {
-        let params = json!({ "toolCallId": "g", "name": "tool_result_get", "params": args, "ctx": ctx(&self.root) });
-        self.call("tool.execute", params).await
-    }
-}
-
-fn text(reply: &Value) -> &str {
-    reply["patch"]["content"][0]["text"].as_str().unwrap()
-}
+use serde_json::json;
 
 #[tokio::test]
 async fn cleans_results_and_leaves_others() {
     let dir = tempfile::tempdir().unwrap();
-    let mut run = Run::start(&dir).await;
+    let mut run = Run::start(dir.path(), "s-1", &[]).await;
     let noisy = json!([{ "type": "text", "text": "\u{1b}[31merror\u{1b}[0m   \n\n\n\nnext" }]);
     let reply = run.result("bash", "c1", noisy.clone(), false).await;
     assert_eq!(text(&reply), "error\n\nnext");
+    let record = &reply["patch"]["details"]["toolResults"];
+    assert_eq!(record["chars"], 16, "the full text after the cleanup steps");
+    assert!(record["hash"].as_str().unwrap().starts_with("sha256:"));
+    assert!(
+        record.get("original").is_none(),
+        "embedOriginal is off by default"
+    );
     let reply = run.result("bash", "c2", noisy.clone(), true).await;
     assert_eq!(text(&reply), "error\n\nnext", "errors get the cleanup");
     assert_eq!(
@@ -115,7 +44,7 @@ async fn cleans_results_and_leaves_others() {
 #[tokio::test]
 async fn stores_large_results_and_reads_them_back() {
     let dir = tempfile::tempdir().unwrap();
-    let mut run = Run::start(&dir).await;
+    let mut run = Run::start(dir.path(), "s-1", &[]).await;
     let big: String = (1..=3000)
         .map(|n| format!("entry {n} status=ok\n"))
         .collect();
@@ -129,21 +58,21 @@ async fn stores_large_results_and_reads_them_back() {
         .await;
     let shown = text(&reply);
     assert!(shown.starts_with("entry 1 status=ok\n"), "{shown}");
-    let id = shown
-        .split("result_id \"")
-        .nth(1)
-        .unwrap()
-        .split('"')
-        .next()
-        .unwrap()
-        .to_owned();
+    let id = notice_id(shown);
+    assert_eq!(
+        reply["patch"]["details"]["toolResults"]["resultId"],
+        id.as_str()
+    );
     let notice = format!(
         "Result truncated ({} characters, 3,000 lines).",
         short(big.chars().count())
     );
     assert!(shown.contains(&notice), "{shown}");
-    let session_dir = dir.path().join("ext/tool-results/sessions/s-1");
-    assert!(session_dir.join(format!("{id}.txt")).is_file());
+    assert!(
+        dir.path()
+            .join(format!("ext/tool-results/store/{id}.txt"))
+            .is_file()
+    );
 
     let lines = run
         .get(json!({ "result_id": id, "mode": "lines", "start": 1500, "end": 1501 }))
@@ -171,8 +100,10 @@ async fn stores_large_results_and_reads_them_back() {
     let stop = json!({ "type": "session_shutdown", "reason": "quit" });
     run.event("session_shutdown", stop).await;
     assert!(
-        !session_dir.exists(),
-        "the store is removed with the session"
+        dir.path()
+            .join(format!("ext/tool-results/store/{id}.txt"))
+            .is_file(),
+        "results outlive the session"
     );
     let stats = std::fs::read_to_string(dir.path().join("ext/tool-results/stats.json")).unwrap();
     assert!(stats.contains("\"truncated\": 1"), "{stats}");
@@ -184,7 +115,7 @@ async fn rules_and_dry_run_from_the_config_file() {
     let config = json!({ "dryRun": false, "tools": { "bash": { "enabled": false }, "mcp__*": { "json": "compact" } } });
     std::fs::create_dir_all(dir.path().join("ext")).unwrap();
     std::fs::write(dir.path().join("ext/tool-results.json"), config.to_string()).unwrap();
-    let mut run = Run::start(&dir).await;
+    let mut run = Run::start(dir.path(), "s-1", &[]).await;
     let noisy = json!([{ "type": "text", "text": "a   \n\n\n\nb" }]);
     assert_eq!(
         run.result("bash", "c1", noisy.clone(), false).await,
@@ -204,16 +135,9 @@ async fn rules_and_dry_run_from_the_config_file() {
     let start = json!({ "type": "session_start", "reason": "reload" });
     run.event("session_start", start).await;
     assert_eq!(run.result("grep", "c3", noisy, false).await, json!({}));
-    let params = json!({ "name": "tool-results", "args": "stats", "ctx": ctx(&run.root) });
-    run.call("command.run", params).await;
-    let stats = run.notes.last().unwrap();
+    let stats = run.command("stats").await;
     assert!(stats.contains("mcp__s__t: "), "{stats}");
     assert!(stats.contains("dry run would save: "), "{stats}");
-    let params = json!({ "name": "tool-results", "args": "", "ctx": ctx(&run.root) });
-    run.call("command.run", params).await;
-    assert!(
-        run.notes.last().unwrap().contains("tool-results (dry run"),
-        "{:?}",
-        run.notes
-    );
+    let status = run.command("").await;
+    assert!(status.contains("tool-results (dry run"), "{status}");
 }

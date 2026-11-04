@@ -5,13 +5,18 @@ use pi_ext_sdk::prelude::*;
 
 use crate::config::{Config, FIELDS};
 use crate::lines::{group, short};
+use crate::results::{list_text, purge, store_of};
 use crate::stats::{Stats, sum};
 use crate::{Shared, lock, reload, ui};
 
-const SUBCOMMANDS: [(&str, &str); 4] = [
+const SUBCOMMANDS: [(&str, &str); 8] = [
     ("status", "Settings and rules in effect"),
     ("preview", "The last result after the transforms"),
     ("stats", "Characters saved per tool"),
+    ("list", "Stored results, newest first"),
+    ("purge session", "Remove the stored results of this session"),
+    ("purge all", "Remove every stored result"),
+    ("purge ", "Remove one stored result: purge <result_id>"),
     ("reset", "Clear the saved stats"),
 ];
 
@@ -111,6 +116,22 @@ pub async fn run(state: Shared, args: String, ctx: CommandCtx) -> Result<()> {
         "" | "status" => status_text(&lock(&state).config),
         "preview" => preview_text(&lock(&state).stats),
         "stats" => stats_text(&lock(&state).stats),
+        "list" => list_text(&store_of(host)),
+        "purge" => "tool-results: use purge session, purge all, or purge <result_id>.".into(),
+        other if other.starts_with("purge ") => {
+            let what = other["purge ".len()..].trim();
+            if what == "all" && host.has_ui() {
+                let sure = host.confirm("Purge stored tool results", "Remove every stored result?");
+                if !sure.await? {
+                    return host.notify_info("tool-results: nothing removed.").await;
+                }
+            }
+            let removed = purge(&store_of(host), what, ctx.snapshot());
+            format!(
+                "tool-results: removed {} stored results.",
+                group(removed.len())
+            )
+        }
         "reset" => {
             let mut session = lock(&state);
             session.stats.reset();
@@ -118,7 +139,7 @@ pub async fn run(state: Shared, args: String, ctx: CommandCtx) -> Result<()> {
             "tool-results: stats cleared.".into()
         }
         other => format!(
-            "tool-results: unknown argument {other:?}; use status, preview, stats, or reset."
+            "tool-results: unknown argument {other:?}; use status, preview, stats, list, purge, or reset."
         ),
     };
     host.notify_info(text).await

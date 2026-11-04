@@ -2,6 +2,8 @@
 
 use serde_json::{Map, Value, json};
 
+pub use crate::glob::glob;
+
 pub const NAME: &str = "tool-results";
 pub const FILE_NAME: &str = "tool-results.json";
 
@@ -182,6 +184,36 @@ pub const FIELDS: &[Field] = &[
     ),
     global("contextChars", "Search context (characters)", Kind::Num(0)),
     global("maxMatches", "Search matches returned", Kind::Num(1)),
+    global(
+        "expandOriginal",
+        "Show the full result when expanded",
+        Kind::Bool,
+    ),
+    global(
+        "expandedMaxHeight",
+        "  Expanded height (lines)",
+        Kind::Num(3),
+    ),
+    global(
+        "embedOriginal",
+        "Keep the full result in the session file",
+        Kind::Bool,
+    ),
+    global(
+        "retentionDays",
+        "Keep stored results (days, 0: always)",
+        Kind::Num(0),
+    ),
+    global(
+        "retentionMaxMb",
+        "Store size limit (MB, 0: none)",
+        Kind::Num(0),
+    ),
+    global(
+        "keepWhileSessionExists",
+        "  Keep while the session file exists",
+        Kind::Bool,
+    ),
 ];
 
 pub fn field_def(key: &str) -> Option<&'static Field> {
@@ -304,6 +336,12 @@ pub struct Config {
     pub default_rules: bool,
     pub context_chars: usize,
     pub max_matches: usize,
+    pub expand_original: bool,
+    pub expanded_max_height: usize,
+    pub embed_original: bool,
+    pub retention_days: usize,
+    pub retention_max_mb: usize,
+    pub keep_while_session_exists: bool,
     pub rules: Vec<Rule>,
 }
 
@@ -372,6 +410,12 @@ impl Config {
             default_rules,
             context_chars: num("contextChars", 200),
             max_matches: num("maxMatches", 20),
+            expand_original: flag("expandOriginal", true),
+            expanded_max_height: num("expandedMaxHeight", 30),
+            embed_original: flag("embedOriginal", false),
+            retention_days: num("retentionDays", 30),
+            retention_max_mb: num("retentionMaxMb", 1024),
+            keep_while_session_exists: flag("keepWhileSessionExists", true),
             rules,
         }
     }
@@ -385,6 +429,15 @@ impl Config {
         settings
     }
 
+    /// The retention policy of the store.
+    pub fn retention(&self) -> crate::retention::Policy {
+        crate::retention::Policy {
+            max_age_days: self.retention_days as u64,
+            max_bytes: self.retention_max_mb as u64 * 1024 * 1024,
+            keep_while_session_exists: self.keep_while_session_exists,
+        }
+    }
+
     /// The value of a top-level key, including the global-only ones.
     pub fn get(&self, key: &str) -> Value {
         match key {
@@ -392,33 +445,15 @@ impl Config {
             "defaultRules" => json!(self.default_rules),
             "contextChars" => json!(self.context_chars),
             "maxMatches" => json!(self.max_matches),
+            "expandOriginal" => json!(self.expand_original),
+            "expandedMaxHeight" => json!(self.expanded_max_height),
+            "embedOriginal" => json!(self.embed_original),
+            "retentionDays" => json!(self.retention_days),
+            "retentionMaxMb" => json!(self.retention_max_mb),
+            "keepWhileSessionExists" => json!(self.keep_while_session_exists),
             _ => self.base.get(key),
         }
     }
-}
-
-/// `*` matches any run of characters and `?` one character.
-pub fn glob(pattern: &str, text: &str) -> bool {
-    let p: Vec<char> = pattern.chars().collect();
-    let t: Vec<char> = text.chars().collect();
-    let (mut pi, mut ti, mut star, mut mark) = (0, 0, None, 0);
-    while ti < t.len() {
-        if pi < p.len() && (p[pi] == '?' || p[pi] == t[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < p.len() && p[pi] == '*' {
-            star = Some(pi);
-            mark = ti;
-            pi += 1;
-        } else if let Some(s) = star {
-            pi = s + 1;
-            mark += 1;
-            ti = mark;
-        } else {
-            return false;
-        }
-    }
-    p[pi..].iter().all(|c| *c == '*')
 }
 
 #[cfg(test)]

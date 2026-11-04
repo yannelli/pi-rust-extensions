@@ -97,6 +97,25 @@ impl Extension {
         self
     }
 
+    /// Draws the expanded body of results of any tool whose `details` hold `details_key`
+    /// (feature `toolResultExpander`). pi shows at most `max_height` lines (0: all) and
+    /// scrolls them; the lines never reach the model.
+    pub fn tool_result_expander<R, F, Fut>(
+        mut self,
+        details_key: &str,
+        max_height: usize,
+        render: F,
+    ) -> Self
+    where
+        R: IntoRendered,
+        F: Fn(ToolResultRender, Host) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<R>> + Send + 'static,
+    {
+        let settings = serde_json::json!({ "detailsKey": details_key, "maxHeight": max_height });
+        self.registry.result_expander = Some((settings, handler::render(render)));
+        self
+    }
+
     /// `"self"`: the renderers of tool `name` draw their own frame; `"default"`: pi's frame.
     pub fn render_shell(mut self, name: &str, shell: &str) -> Self {
         put(&mut self.registry.render_shells, name, shell.to_owned());
