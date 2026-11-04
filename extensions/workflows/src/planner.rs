@@ -1,13 +1,26 @@
-//! Model calls that write workflows: the plan of a dynamic run, and a new workflow from a
-//! description.
+//! Model calls that write workflows: the plan of a dynamic run (a `pi -p` run of the runner), and
+//! a new workflow from a description (the session's model).
 
-use pi_ext_sdk::LlmRequest;
+use std::path::Path;
+
 use pi_ext_sdk::prelude::*;
+use pi_ext_sdk::{CancellationToken, LlmRequest};
 use serde::Deserialize;
 
+use crate::child::{self, Outcome};
+use crate::launch::Launch;
 use crate::model::{Step, Workflow, step_problems};
+use crate::policy::RUN_ENV;
 use crate::runs::RunState;
 use crate::store::FORMAT;
+
+pub const SCHEMA_FILE: &str = "plan.schema.json";
+pub const SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": { "steps": { "type": "array", "items": { "type": "object" } } },
+  "required": ["steps"]
+}
+"#;
 
 const DEFAULT_MAX_STEPS: usize = 12;
 
@@ -54,12 +67,13 @@ pub async fn available(host: &Host, catalog: &crate::launch::Catalog) -> Value {
     })
 }
 
-/// The steps after `index` for a dynamic run.
+/// The steps after `index` for a dynamic run, from a `pi -p` run without tools.
 pub async fn plan(
-    host: &Host,
+    pi: &Path,
+    dir: &Path,
     state: &RunState,
     index: usize,
-    available: Value,
+    cancel: &CancellationToken,
 ) -> Result<Vec<Step>, String> {
     let workflow = &state.workflow;
     let max = workflow
@@ -81,20 +95,57 @@ pub async fn plan(
         "completedSteps": completed,
         "currentPlan": workflow.steps[index..],
         "maxMoreSteps": max.saturating_sub(index),
-        "available": available,
+        "available": state.available,
     });
-    let text = complete(
-        host,
-        PLAN_RULES,
-        &request,
-        workflow.planner.model.as_deref(),
-    )
-    .await?;
+    let model = workflow
+        .planner
+        .model
+        .clone()
+        .or(state.parent_model.clone());
+    let mut args: Vec<String> = [
+        "--mode",
+        "json",
+        "-p",
+        "--no-session",
+        "--no-tools",
+        "--no-skills",
+        "--no-context-files",
+    ]
+    .map(String::from)
+    .to_vec();
+    if let Some(model) = &model {
+        args.extend(["--model".into(), model.clone()]);
+    }
+    args.extend([
+        "--system-prompt".into(),
+        format!("{PLAN_RULES}\n\n{FORMAT}"),
+    ]);
+    args.extend([
+        "--output-schema".into(),
+        dir.join(SCHEMA_FILE).display().to_string(),
+    ]);
+    let prompt = serde_json::to_string_pretty(&request).map_err(|e| e.to_string())?;
+    args.extend(["--".into(), prompt]);
+    let launch = Launch {
+        program: pi.to_owned(),
+        args,
+        env: vec![(RUN_ENV.into(), state.id.clone())],
+        cwd: state.cwd.clone().into(),
+        model,
+    };
+    let (outcome, fold) = child::run(&launch, cancel, |_| {}).await;
     #[derive(Deserialize)]
     struct Plan {
         steps: Vec<Step>,
     }
-    let mut plan: Plan = parse(&text)?;
+    let mut plan: Plan = match (fold.output, outcome) {
+        (Some(value), _) => {
+            serde_json::from_value(value).map_err(|e| format!("the plan is not valid: {e}"))?
+        }
+        (None, Outcome::Failed(reason)) => return Err(reason),
+        (None, Outcome::Cancelled) => return Err("cancelled".into()),
+        (None, Outcome::Report { .. }) => parse(&fold.final_text)?,
+    };
     plan.steps.truncate(max.saturating_sub(index));
     let problems: Vec<String> = plan
         .steps
@@ -115,21 +166,13 @@ pub async fn generate(
     available: Value,
 ) -> Result<Workflow, String> {
     let request = json!({ "description": description, "available": available });
-    let text = complete(host, GENERATE_RULES, &request, None).await?;
+    let text = complete(host, GENERATE_RULES, &request).await?;
     parse(&text)
 }
 
-async fn complete(
-    host: &Host,
-    rules: &str,
-    request: &Value,
-    model: Option<&str>,
-) -> Result<String, String> {
+async fn complete(host: &Host, rules: &str, request: &Value) -> Result<String, String> {
     let prompt = serde_json::to_string_pretty(request).map_err(|e| e.to_string())?;
-    let mut llm = LlmRequest::prompt(prompt).system(format!("{rules}\n\n{FORMAT}"));
-    if let Some(model) = model {
-        llm = llm.model(model);
-    }
+    let llm = LlmRequest::prompt(prompt).system(format!("{rules}\n\n{FORMAT}"));
     let response = host
         .complete(llm)
         .await

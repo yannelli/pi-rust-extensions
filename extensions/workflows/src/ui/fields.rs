@@ -28,6 +28,7 @@ pub enum Field {
     Description,
     Mode,
     Context,
+    Background,
     Model,
     Thinking,
     Tools,
@@ -74,7 +75,7 @@ pub fn fields(node: Node, workflow: &Workflow) -> Vec<Field> {
     use Field::*;
     match node {
         Node::Settings => {
-            let mut fields = vec![Name, Description, Mode, Context];
+            let mut fields = vec![Name, Description, Mode, Context, Background];
             fields.extend(SCOPE);
             if workflow.mode == crate::model::Mode::Dynamic {
                 fields.extend([PlannerRules, PlannerModel, MaxSteps]);
@@ -95,6 +96,7 @@ pub fn label(field: Field) -> &'static str {
         Field::Description => "Description",
         Field::Mode => "Mode",
         Field::Context => "Context",
+        Field::Background => "Background",
         Field::Model => "Model",
         Field::Thinking => "Thinking",
         Field::Tools => "Tools",
@@ -127,6 +129,9 @@ pub fn help(field: Field) -> &'static str {
             "Fixed runs the steps as written. Dynamic lets a planner model revise the remaining steps before each step."
         }
         Field::Context => "What each agent learns about the earlier steps.",
+        Field::Background => {
+            "Runs keep going after pi quits. b in the run view switches a running run."
+        }
         Field::Model => "provider/id, or ask to choose when the run starts.",
         Field::Thinking => "The thinking level of the agent.",
         Field::Tools => "The tools the agent may use.",
@@ -223,6 +228,8 @@ pub fn value(field: Field, node: Node, workflow: &Workflow, paint: &Paint) -> St
         Field::Description if workflow.description.is_empty() => none("none"),
         Field::Description => one_line(&workflow.description, 80),
         Field::Mode => workflow.mode.label().to_owned(),
+        Field::Background if workflow.background => paint.accent("[✓] yes"),
+        Field::Background => paint.dim("[ ] no · stops when pi quits"),
         Field::Context => match node {
             Node::Step(i) => match workflow.steps[i].context {
                 Some(context) => context.label().to_owned(),
@@ -338,6 +345,7 @@ pub fn reset(field: Field, node: Node, workflow: &mut Workflow) -> bool {
     match (field, node) {
         (Field::Context, Node::Step(i)) => workflow.steps[i].context = None,
         (Field::Description, _) => workflow.description.clear(),
+        (Field::Background, _) => workflow.background = false,
         (Field::PlannerRules, _) => workflow.planner.instructions.clear(),
         (Field::PlannerModel, _) => workflow.planner.model = None,
         (Field::MaxSteps, _) => workflow.planner.max_steps = None,
@@ -438,6 +446,10 @@ pub async fn edit(
                 (_, Some(context)) => workflow.context = context,
                 _ => {}
             }
+            true
+        }
+        Field::Background => {
+            workflow.background = !workflow.background;
             true
         }
         Field::PlannerRules => {

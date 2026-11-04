@@ -3,6 +3,7 @@
 //! `<agentDir>/ext/workflows/runs/<id>`; the bundled skills in `<agentDir>/ext/workflows/skills`.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::model::{Workflow, slug};
 
@@ -128,11 +129,15 @@ pub fn read(path: &Path) -> Result<Workflow, String> {
     Ok(workflow)
 }
 
+/// Writes a temporary file next to `path` and renames it, so readers never see a partial file.
+/// The temporary name is unique, because a runner and pi sessions write at the same time.
 pub fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension("tmp");
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("{}-{n}.tmp", std::process::id()));
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, path)
 }

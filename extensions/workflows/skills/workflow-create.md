@@ -23,7 +23,8 @@ A workflow runs steps in order. One agent runs each step and works through the s
 - Pick models by the work. Use a strong model with `high` thinking to implement and to fix. Use a mid model to review. Use a small model with `low` thinking to poll CI or read logs. Use `"model": "ask"` when the user wants to choose at run start.
 - Give least privilege. Set `tools`, `mcp`, and `skills` for steps that need few of them. Set `subagents` to `[]` or to a short list of rules when a step must not start other agents.
 - Use `until` with `every` and `repeat` for waits on outside systems, such as CI or a deploy. Use `delay`, `repeat`, and `every` for checks on a schedule.
-- Set `confirm: true` on tasks that merge to main, deploy to production, run production migrations, or delete data.
+- Set `confirm: true` on tasks that merge to main, deploy to production, run production migrations, or delete data. The run waits for the user's answer, so tell the user that a run waits for them.
+- Set `background: true` on workflows that wait for long (CI, deploys, monitors over hours), so they keep going after pi quits.
 - Put secrets in `env` as `${NAME}` references to the user's environment. Never write a secret value into the workflow.
 - Choose `context`: `handoff` for most workflows, `memory` when later agents need facts that do not fit in a report, `session` when all steps must share one conversation, and `none` for steps that do not need history (monitors).
 - Use `mode: "dynamic"` only when the steps depend on what the agents find. Give the planner `instructions` and keep `maxSteps` low.
@@ -36,6 +37,7 @@ A workflow runs steps in order. One agent runs each step and works through the s
   "name": "ship-change",
   "description": "Implement a change, check it against current docs, fix gaps, ship it through dev and staging to main, then watch production.",
   "context": "handoff",
+  "background": true,
   "agent": { "model": "anthropic/claude-sonnet-4-5", "thinking": "medium" },
   "steps": [
     { "name": "implement", "agent": { "model": "ask", "thinking": "high" },

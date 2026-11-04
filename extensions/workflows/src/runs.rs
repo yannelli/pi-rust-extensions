@@ -1,18 +1,20 @@
-//! Run state: what each step did, kept in memory for the UI and in `run.json` for history and
-//! resume.
+//! Run state: what each step did. The runner of a run owns its `run.json`; pi sessions read it
+//! for the UI, the widget, and reports.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use pi_ext_sdk::CancellationToken;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
+use serde_json::Value;
 
+use crate::launch::Catalog;
 use crate::model::{Workflow, format_duration};
 use crate::store::write_atomic;
+
+/// A runner writes its heartbeat each second; an active run without one for this long is dead.
+pub const STALE_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -23,7 +25,7 @@ pub enum RunStatus {
     Done,
     Failed,
     Cancelled,
-    /// pi quit while the run was active.
+    /// pi quit while a foreground run was active, or its runner stopped.
     Interrupted,
 }
 
@@ -91,8 +93,17 @@ pub struct StepRun {
     /// One line for each agent run.
     pub log: Vec<String>,
     /// The tool or text the agent works on now.
-    #[serde(skip)]
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub activity: String,
+}
+
+/// A task that waits for the user's approval.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Approval {
+    pub task: String,
+    pub step: usize,
+    pub asked_ms: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -115,6 +126,18 @@ pub struct RunState {
     /// The model and thinking of the session that started the run; steps without a model use them.
     pub parent_model: Option<String>,
     pub parent_thinking: Option<String>,
+    /// Background runs keep going when their pi quits; foreground runs stop with it.
+    pub background: bool,
+    /// The process id of the pi the run belongs to. That pi reports the end of the run.
+    pub owner: u32,
+    pub heartbeat_ms: u64,
+    pub approval: Option<Approval>,
+    /// The pi binary the runner starts agents with.
+    pub pi: String,
+    pub catalog: Catalog,
+    /// What the planner of a dynamic workflow may use.
+    #[serde(skip_serializing_if = "Value::is_null")]
+    pub available: Value,
 }
 
 impl RunState {
@@ -138,6 +161,33 @@ impl RunState {
     pub fn wait_left(&self) -> Option<Duration> {
         let until = self.wait_until_ms?;
         Some(Duration::from_millis(until.saturating_sub(now_ms())))
+    }
+
+    /// Active, but the runner stopped writing its heartbeat.
+    pub fn stale(&self) -> bool {
+        self.status.active() && now_ms().saturating_sub(self.heartbeat_ms) > STALE_MS
+    }
+
+    /// Ends the run with `status`. An interrupted run keeps its wait deadline, so it keeps the
+    /// rest of the wait when it resumes.
+    pub fn end(&mut self, status: RunStatus) {
+        self.status = status;
+        self.ended_ms = Some(now_ms());
+        self.approval = None;
+        self.note.clear();
+        if status != RunStatus::Interrupted {
+            self.wait_until_ms = None;
+        }
+        for step in &mut self.steps {
+            step.activity.clear();
+            if step.status == StepStatus::Running {
+                step.status = StepStatus::Pending;
+            }
+        }
+    }
+
+    pub fn interrupt(&mut self) {
+        self.end(RunStatus::Interrupted);
     }
 
     /// `12m4s · $1.84`.
@@ -177,25 +227,19 @@ pub fn new_id() -> String {
     format!("wf-{}", out.into_iter().collect::<String>())
 }
 
-/// Stop and skip-the-wait signals of an active run.
-#[derive(Clone, Default)]
-pub struct Control {
-    pub cancel: CancellationToken,
-    pub skip: Arc<Notify>,
-    /// Set when pi quits: the run stops as interrupted, so it can resume later.
-    pub interrupted: Arc<AtomicBool>,
-}
-
 struct Entry {
     state: RunState,
-    control: Option<Control>,
     dir: PathBuf,
+    /// When `run.json` changed last, as read by `refresh`.
+    modified: Option<SystemTime>,
 }
 
-/// The runs of this pi process and the ones loaded from disk.
+/// Runs by id: the one run of a runner, or the runs on disk that a pi session shows.
 #[derive(Clone, Default)]
 pub struct Runs {
     inner: Arc<Mutex<BTreeMap<String, Entry>>>,
+    /// Keeps the writes of one process in order, so a later write never holds older state.
+    writing: Arc<Mutex<()>>,
 }
 
 impl Runs {
@@ -203,16 +247,14 @@ impl Runs {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub fn insert(&self, state: RunState, dir: PathBuf, control: Option<Control>) {
+    pub fn insert(&self, state: RunState, dir: PathBuf) {
         let id = state.id.clone();
-        self.lock().insert(
-            id,
-            Entry {
-                state,
-                control,
-                dir,
-            },
-        );
+        let entry = Entry {
+            state,
+            dir,
+            modified: None,
+        };
+        self.lock().insert(id, entry);
     }
 
     pub fn get(&self, id: &str) -> Option<RunState> {
@@ -240,18 +282,9 @@ impl Runs {
         self.lock().get(id).map(|e| e.dir.clone())
     }
 
-    pub fn set_control(&self, id: &str, control: Option<Control>) {
-        if let Some(entry) = self.lock().get_mut(id) {
-            entry.control = control;
-        }
-    }
-
-    pub fn control(&self, id: &str) -> Option<Control> {
-        self.lock().get(id).and_then(|e| e.control.clone())
-    }
-
     /// Writes `run.json` of the run.
     pub fn persist(&self, id: &str) {
+        let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
         let Some((state, dir)) = self
             .lock()
             .get(id)
@@ -262,8 +295,9 @@ impl Runs {
         save(&dir, &state);
     }
 
-    /// Loads the newest runs from `root`; active runs of an earlier pi become interrupted.
-    pub fn load(&self, root: &Path, keep: usize) {
+    /// Reads the newest `keep` runs and the active runs it knows from `root`; a `run.json` is
+    /// parsed again only when it changed.
+    pub fn refresh(&self, root: &Path, keep: usize) {
         let Ok(entries) = std::fs::read_dir(root) else {
             return;
         };
@@ -273,27 +307,38 @@ impl Runs {
             .filter(|p| p.is_dir())
             .collect();
         dirs.sort();
-        for dir in dirs.into_iter().rev().take(keep) {
-            let Ok(text) = std::fs::read_to_string(dir.join(RUN_FILE)) else {
-                continue;
-            };
-            let Ok(mut state) = serde_json::from_str::<RunState>(&text) else {
-                continue;
-            };
-            if self.lock().contains_key(&state.id) {
+        let newest = dirs.len().saturating_sub(keep);
+        for (index, dir) in dirs.into_iter().enumerate() {
+            let id = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let known = self
+                .lock()
+                .get(&id)
+                .map(|e| (e.modified, e.state.status.active()));
+            if index < newest && !known.is_some_and(|(_, active)| active) {
                 continue;
             }
-            if state.status.active() {
-                state.status = RunStatus::Interrupted;
-                state.wait_until_ms = None;
-                for step in &mut state.steps {
-                    if step.status == StepStatus::Running {
-                        step.status = StepStatus::Pending;
-                    }
-                }
-                save(&dir, &state);
+            let file = dir.join(RUN_FILE);
+            let modified = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
+            if modified.is_none() || known.is_some_and(|(seen, _)| seen == modified) {
+                continue;
             }
-            self.insert(state, dir, None);
+            let Ok(text) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            let Ok(state) = serde_json::from_str::<RunState>(&text) else {
+                continue;
+            };
+            self.lock().insert(
+                state.id.clone(),
+                Entry {
+                    state,
+                    dir,
+                    modified,
+                },
+            );
         }
     }
 }
@@ -334,30 +379,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ids_sort_by_time_and_load_marks_interrupted() {
+    fn refresh_reads_changed_runs_and_stale_runs_interrupt() {
         let a = new_id();
         std::thread::sleep(Duration::from_millis(2));
         let b = new_id();
         assert!(a < b && a.starts_with("wf-"));
         let root = std::env::temp_dir().join(format!("wf-runs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let state = RunState {
+        let mut state = RunState {
             id: a.clone(),
             status: RunStatus::Waiting,
-            wait_until_ms: Some(1),
+            wait_until_ms: Some(5),
+            heartbeat_ms: now_ms(),
             steps: vec![StepRun {
                 status: StepStatus::Running,
+                activity: "bash make".into(),
                 ..StepRun::default()
             }],
             ..RunState::default()
         };
         save(&root.join(&a), &state);
+        save(
+            &root.join(&b),
+            &RunState {
+                id: b.clone(),
+                ..RunState::default()
+            },
+        );
         let runs = Runs::default();
-        runs.load(&root, 10);
+        runs.refresh(&root, 1);
+        assert!(
+            runs.get(&b).is_some() && runs.get(&a).is_none(),
+            "keeps the newest"
+        );
+        runs.refresh(&root, 10);
         let loaded = runs.get(&a).unwrap();
-        assert_eq!(loaded.status, RunStatus::Interrupted);
-        assert_eq!(loaded.wait_until_ms, None);
-        assert_eq!(loaded.steps[0].status, StepStatus::Pending);
+        assert_eq!(loaded.steps[0].activity, "bash make");
+        assert!(!loaded.stale());
+        state.heartbeat_ms = 1;
+        assert!(state.stale());
+        state.interrupt();
+        assert_eq!(state.status, RunStatus::Interrupted);
+        assert_eq!(state.wait_until_ms, Some(5));
+        assert_eq!(state.steps[0].status, StepStatus::Pending);
+        assert!(state.steps[0].activity.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 

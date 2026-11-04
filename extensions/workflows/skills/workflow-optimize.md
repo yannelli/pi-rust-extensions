@@ -28,5 +28,6 @@ description: Review a pi workflow and its run history, then make it faster, chea
 | Runs stop with a turn or cost limit | Raise `maxTurns` or `maxCost`, or split the task. |
 | A task that may fail stops the whole workflow, but later steps do not need it | Set `optional: true`. |
 | A risky task (merge to main, deploy, production migration) runs without a check | Set `confirm: true`. |
+| Runs end as `interrupted` because pi quit during long waits | Set `background: true`. |
 
 Do not remove `confirm` gates or widen tool access without the user's approval. Do not put secret values into `env`; use `${NAME}` references.

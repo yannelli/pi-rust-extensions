@@ -6,6 +6,7 @@ use std::time::Duration;
 use pi_ext_sdk::prelude::*;
 use pi_ext_sdk::style;
 
+use crate::control::Decision;
 use crate::model::format_duration;
 use crate::runs::{RunState, RunStatus};
 use crate::ui::home::row_line;
@@ -53,28 +54,61 @@ pub async fn run(ui: &Ui, screen: &mut Screen, id: &str) -> Result<()> {
     }
 }
 
-/// Stop (`x`), skip the wait (`s`), and resume (`r`), shared with the runs tab.
+/// The run keys, shared with the runs tab: stop (`x`), skip the wait (`s`), resume (`r`), switch
+/// background and foreground (`b`), and answer an approval (`a` run it, `n` skip the task).
 pub async fn act(ui: &Ui, key: &Key, run: &RunState) -> Result<()> {
-    if key.is("x") && run.status.active() {
+    let result = if key.is("x") && run.status.active() {
         let question = format!("Stop the run of {}?", run.workflow.name);
-        if ui
-            .host
-            .confirm(
-                &question,
-                "You can resume it later at the task that did not finish.",
-            )
-            .await?
-        {
-            ui.app.stop(&run.id);
+        let detail = "You can resume it later at the task that did not finish.";
+        if !ui.host.confirm(&question, detail).await? {
+            return Ok(());
         }
-    } else if key.is("s") && !ui.app.skip_wait(&run.id) {
-        ui.host.notify_info("The run is not waiting.").await?;
-    } else if key.is("r")
-        && let Err(err) = ui.app.resume(&ui.host, &run.id).await
-    {
+        ui.app.stop(&run.id)
+    } else if key.is("s") {
+        ui.app.skip_wait(&run.id)
+    } else if key.is("r") {
+        ui.app.resume(&ui.host, &run.id).await
+    } else if key.is("b") {
+        ui.app.set_background(&run.id, !run.background)
+    } else if key.is("a") || key.is("n") {
+        let decision = if key.is("a") {
+            Decision::Run
+        } else {
+            Decision::Skip
+        };
+        ui.app.approve(&run.id, decision).map(drop)
+    } else {
+        return Ok(());
+    };
+    if let Err(err) = result {
         ui.host.notify_warning(err).await?;
     }
     Ok(())
+}
+
+/// The keys of `act` that apply to the run now.
+pub fn run_keys(run: &RunState) -> Vec<(&'static str, &'static str)> {
+    let mut keys = Vec::new();
+    if run.approval.is_some() {
+        keys.extend([("a", "approve"), ("n", "skip task")]);
+    }
+    if run.status.active() {
+        keys.push(("x", "stop"));
+        if run.wait_until_ms.is_some() {
+            keys.push(("s", "skip wait"));
+        }
+        keys.push((
+            "b",
+            if run.background {
+                "foreground"
+            } else {
+                "background"
+            },
+        ));
+    } else if run.status != RunStatus::Done {
+        keys.push(("r", "resume"));
+    }
+    keys
 }
 
 fn render(
@@ -86,8 +120,13 @@ fn render(
     rows: usize,
 ) -> (Vec<String>, usize) {
     let p = &ui.paint;
+    let mode = match (run.status.active(), run.background) {
+        (true, true) => " · background",
+        (true, false) => " · foreground",
+        (false, _) => "",
+    };
     let right = format!(
-        "{} {} · {}",
+        "{} {}{mode} · {}",
         p.run_glyph(run.status),
         run.status.label(),
         p.muted(&run.stats())
@@ -142,9 +181,14 @@ fn render(
         lines.push(p.muted("  The planner has not planned any steps yet."));
     }
     lines.push(p.rule(width));
-    let now = widget::now_line(run);
-    if run.status.active() && !now.is_empty() {
-        lines.push(p.accent(&format!(" {now}")));
+    if let Some(approval) = run.approval.as_ref().filter(|_| run.status.active()) {
+        let ask = format!(" ? \"{}\" waits for your approval", approval.task);
+        lines.push(p.fg("warning", &ask));
+    } else {
+        let now = widget::now_line(run);
+        if run.status.active() && !now.is_empty() {
+            lines.push(p.accent(&format!(" {now}")));
+        }
     }
     if let Some(error) = &run.error {
         lines.extend(
@@ -193,11 +237,7 @@ fn render(
     }
     lines.push(p.rule(width));
     let mut keys: Vec<(&str, &str)> = vec![("↑↓", "step"), ("pgup/pgdn", "scroll")];
-    if run.status.active() {
-        keys.extend([("x", "stop"), ("s", "skip wait")]);
-    } else if run.status != RunStatus::Done {
-        keys.push(("r", "resume"));
-    }
+    keys.extend(run_keys(run));
     keys.push(("esc", "back"));
     lines.push(hints(p, &keys, width));
     (lines, max_scroll)

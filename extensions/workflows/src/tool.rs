@@ -20,6 +20,7 @@ pub struct Params {
     pub inputs: Option<BTreeMap<String, String>>,
     pub scope: Option<String>,
     pub id: Option<String>,
+    pub background: Option<bool>,
 }
 
 pub fn spec() -> ToolSpec {
@@ -27,26 +28,29 @@ pub fn spec() -> ToolSpec {
         "workflow",
         "Manage and run pi workflows: multi-step pipelines where each step runs as its own agent with its \
 own model, thinking level, tools, skills, MCP servers, subagent rules, and environment, and tasks can wait, \
-repeat, loop until a goal is met, or ask the user first. Actions: list; get (name); save (workflow, scope); \
-delete (name); run (name or workflow, inputs); status (all runs, or one run by id); stop (id); resume (id). \
+repeat, loop until a goal is met, or wait for the user's approval. Actions: list; get (name); save (workflow, \
+scope); delete (name); run (name or workflow, inputs, background); status (all runs, or one run by id); stop \
+(id); resume (id); background (id) keeps a run going after pi quits; foreground (id) stops it with this pi. \
 The workflow-create and workflow-optimize skills describe the format and how to design workflows.",
     )
     .label("Workflow")
     .parameters(json!({
         "type": "object",
         "properties": {
-            "action": { "type": "string", "enum": ["list", "get", "save", "delete", "run", "status", "stop", "resume"] },
+            "action": { "type": "string", "enum": ["list", "get", "save", "delete", "run", "status", "stop", "resume", "background", "foreground"] },
             "name": { "type": "string", "description": "Workflow name for get, delete, and run" },
             "workflow": { "type": "object", "description": "A full workflow definition for save, or an unsaved workflow for run" },
             "inputs": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Values for the {{placeholders}} of the prompts; `goal` for dynamic workflows" },
             "scope": { "type": "string", "enum": ["global", "project"], "description": "Where save writes; default: where the workflow is now, else global" },
-            "id": { "type": "string", "description": "Run id for status, stop, and resume" }
+            "id": { "type": "string", "description": "Run id for status, stop, resume, background, and foreground" },
+            "background": { "type": "boolean", "description": "For run: keep running after pi quits. Default: the workflow's setting, and always in print mode" }
         },
         "required": ["action"]
     }))
     .prompt_snippet("Create, edit, run, and inspect multi-agent workflows (implement, review, ship, deploy, monitor)")
     .guideline("Load the workflow-create skill before you design a workflow, and workflow-optimize before you tune one.")
-    .guideline("A workflow run continues in the background; its result arrives as a message when it ends.")
+    .guideline("A workflow run does not block you; its result arrives as a message when it ends.")
+    .guideline("Tasks that ask first wait until the user approves them in a pi session; tell the user when a run waits.")
 }
 
 pub async fn execute(app: App, params: Params, ctx: ToolCtx) -> Result<ToolResult> {
@@ -57,13 +61,18 @@ pub async fn execute(app: App, params: Params, ctx: ToolCtx) -> Result<ToolResul
         "save" => save(&app, &host, &params),
         "delete" => delete(&app, &host, &params),
         "run" => run(&app, &host, params).await,
-        "status" => status(&app, params.id.as_deref()),
+        "status" => status(&app, &host, params.id.as_deref()),
         "stop" => with_id(&params, |id| {
-            if app.stop(id) {
-                Ok(format!("Stopping run {id}."))
-            } else {
-                Err(format!("Run {id} is not active."))
-            }
+            app.stop(id).map(|()| format!("Stopping run {id}."))
+        }),
+        "background" => with_id(&params, |id| {
+            let text =
+                format!("Run {id} runs in the background now and keeps going after pi quits.");
+            app.set_background(id, true).map(|()| text)
+        }),
+        "foreground" => with_id(&params, |id| {
+            let text = format!("Run {id} runs in the foreground now and stops when this pi quits.");
+            app.set_background(id, false).map(|()| text)
         }),
         "resume" => match params.id.as_deref() {
             Some(id) => app
@@ -189,13 +198,24 @@ async fn run(app: &App, host: &Host, params: Params) -> Answer {
         (None, None) => return Err("run needs a name or a workflow".into()),
     };
     let inputs = params.inputs.unwrap_or_default();
-    let id = app.start(host, workflow, inputs, Origin::Agent).await?;
+    let background = params
+        .background
+        .unwrap_or(workflow.background || !host.has_ui());
+    let id = app
+        .start(host, workflow, inputs, Origin::Agent, background)
+        .await?;
+    let mode = if background {
+        "in the background; it keeps going after pi quits"
+    } else {
+        "in the foreground; it stops when this pi quits"
+    };
     Ok(format!(
-        "Started run {id}. It runs in the background; its result arrives as a message. Use action status with this id to check it."
+        "Started run {id} {mode}. Its result arrives as a message. Use action status with this id to check it."
     ))
 }
 
-fn status(app: &App, id: Option<&str>) -> Answer {
+fn status(app: &App, host: &Host, id: Option<&str>) -> Answer {
+    app.refresh(host);
     let Some(id) = id else {
         return Ok(runs_text(app));
     };
@@ -211,8 +231,15 @@ pub fn runs_text(app: &App) -> String {
     let lines: Vec<String> = runs
         .iter()
         .map(|r| {
+            let mut tags = String::new();
+            if r.status.active() && r.background {
+                tags.push_str(" · background");
+            }
+            if r.approval.is_some() {
+                tags.push_str(" · waits for approval");
+            }
             format!(
-                "- {} {} · {} · {}",
+                "- {} {} · {}{tags} · {}",
                 r.id,
                 r.workflow.name,
                 r.status.label(),
@@ -236,7 +263,18 @@ pub fn detail(run: &RunState) -> String {
         let inputs: Vec<String> = run.inputs.iter().map(|(k, v)| format!("{k}={v}")).collect();
         lines.push(format!("Inputs: {}", inputs.join("; ")));
     }
-    if !run.note.is_empty() {
+    let mode = if run.background {
+        "background"
+    } else {
+        "foreground"
+    };
+    lines.push(format!("Mode: {mode}"));
+    if let Some(approval) = &run.approval {
+        lines.push(format!(
+            "Waits for the user's approval of \"{}\"",
+            approval.task
+        ));
+    } else if !run.note.is_empty() {
         lines.push(format!("Now: {}", run.note));
     }
     if let Some(error) = &run.error {

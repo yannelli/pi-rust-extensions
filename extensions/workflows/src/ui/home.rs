@@ -193,8 +193,8 @@ impl Home {
             Tab::Runs => self.render_runs(ui, runs, width, body, &mut lines),
         }
         lines.push(p.rule(width));
-        let keys: &[(&str, &str)] = match self.tab {
-            Tab::Workflows => &[
+        let keys: Vec<(&str, &str)> = match self.tab {
+            Tab::Workflows => vec![
                 ("enter", "edit"),
                 ("r", "run"),
                 ("n", "new"),
@@ -204,16 +204,15 @@ impl Home {
                 ("tab", "runs"),
                 ("q", "close"),
             ],
-            Tab::Runs => &[
-                ("enter", "open"),
-                ("x", "stop"),
-                ("s", "skip wait"),
-                ("r", "resume"),
-                ("tab", "workflows"),
-                ("q", "close"),
-            ],
+            Tab::Runs => {
+                let selected = runs.get(self.run_row.min(runs.len().saturating_sub(1)));
+                let mut keys = vec![("enter", "open")];
+                keys.extend(selected.map(run_view::run_keys).unwrap_or_default());
+                keys.extend([("tab", "workflows"), ("q", "close")]);
+                keys
+            }
         };
-        lines.push(hints(p, keys, width));
+        lines.push(hints(p, &keys, width));
         lines
     }
 
@@ -295,12 +294,21 @@ impl Home {
         let selected = self.run_row.min(runs.len() - 1);
         for i in window(selected, runs.len(), body) {
             let run = &runs[i];
+            let tag = match (
+                run.approval.is_some(),
+                run.status.active() && run.background,
+            ) {
+                (true, _) => p.fg("warning", "approve"),
+                (false, true) => p.accent("bg"),
+                (false, false) => String::new(),
+            };
             let text = format!(
-                "{} {:<20} {}  {}",
+                "{} {:<20} {}  {}  {}",
                 p.run_glyph(run.status),
                 run.workflow.name,
                 p.muted(&format!("{:<11} {:<16}", run.status.label(), run.stats())),
-                p.dim(&run.id)
+                p.dim(&run.id),
+                tag
             );
             lines.push(row_line(ui, &text, i == selected, width.min(ROW_WIDTH)));
         }
@@ -310,9 +318,14 @@ impl Home {
             "  {}",
             widget::pipeline(run, p, width.saturating_sub(4))
         ));
-        let now = widget::now_line(run);
-        if !now.is_empty() {
-            lines.push(p.muted(&format!("  {now}")));
+        if let Some(approval) = &run.approval {
+            let ask = format!("  ? \"{}\" waits for your approval", approval.task);
+            lines.push(p.fg("warning", &ask));
+        } else {
+            let now = widget::now_line(run);
+            if !now.is_empty() {
+                lines.push(p.muted(&format!("  {now}")));
+            }
         }
         if let Some(error) = &run.error {
             lines.extend(

@@ -1,30 +1,68 @@
-//! The run loop: steps in order, each step's tasks in one agent session, with waits, repeats,
-//! goals, confirmations, and the context that each agent gets.
+//! The runner: a process of its own (`pi-rust-ext workflows --runner <run dir>`) that runs one
+//! workflow to its end. It runs the steps in order, each step's tasks in one agent session, with
+//! waits, repeats, goals, approvals, and the context that each agent gets. pi sessions control it
+//! through command files and read its `run.json`.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use pi_ext_sdk::CancellationToken;
 use pi_ext_sdk::prelude::*;
+use tokio::sync::Notify;
 
 use crate::child::{self, Outcome, Status};
-use crate::launch::{self, Catalog, Request};
+use crate::control::{self, Command, Decision};
+use crate::launch::{self, Request};
 use crate::model::{ContextMode, Mode, Step, Task, fill, format_duration, slug};
 use crate::planner;
 use crate::policy::{RUN_ENV, STEP_ENV};
-use crate::runs::{Control, Origin, RunState, RunStatus, Runs, StepRun, StepStatus, now_ms};
+use crate::runs::{Approval, RUN_FILE, RunState, RunStatus, Runs, StepRun, StepStatus, now_ms};
 
+pub const FLAG: &str = "--runner";
 pub const SCHEMA_FILE: &str = "report.schema.json";
 pub const MEMORY_FILE: &str = "memory.md";
-pub const MESSAGE_TYPE: &str = "workflow-run";
+pub const LOG_FILE: &str = "runner.log";
 const SUMMARY_LIMIT: usize = 4000;
 const HISTORY_LIMIT: usize = 12_000;
+const MEMORY_LIMIT: usize = 16_000;
+const TICK: Duration = Duration::from_millis(250);
+
+/// The signals of the run: stop, skip the wait, and the user's approval.
+#[derive(Clone, Default)]
+pub struct Control {
+    pub cancel: CancellationToken,
+    pub skip: Arc<Notify>,
+    /// The run stops as interrupted, so it can resume later.
+    pub interrupted: Arc<AtomicBool>,
+    decision: Arc<Mutex<Option<Decision>>>,
+    decided: Arc<Notify>,
+}
+
+impl Control {
+    fn interrupt(&self) {
+        self.interrupted.store(true, Ordering::SeqCst);
+        self.cancel.cancel();
+    }
+
+    fn decide(&self, decision: Decision) {
+        *self.decision.lock().unwrap_or_else(|e| e.into_inner()) = Some(decision);
+        self.decided.notify_one();
+    }
+
+    fn take_decision(&self) -> Option<Decision> {
+        self.decision
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    }
+}
 
 pub struct Ctx {
-    pub host: Host,
     pub runs: Runs,
     pub pi: PathBuf,
-    pub catalog: Catalog,
     pub control: Control,
     pub dir: PathBuf,
 }
@@ -34,7 +72,114 @@ enum Stop {
     Failed(String),
 }
 
-/// Runs the workflow to its end, then reports to the pi session.
+/// The runner process: runs the workflow in `dir` while it applies commands, writes the
+/// heartbeat, and stops a foreground run when its pi is gone.
+pub fn main(dir: Option<&str>) -> ExitCode {
+    let Some(dir) = dir.map(PathBuf::from) else {
+        pi_ext_sdk::error!("usage: pi-rust-ext workflows {FLAG} <run dir>");
+        return ExitCode::from(2);
+    };
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            pi_ext_sdk::error!("cannot start the tokio runtime: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let code = runtime.block_on(serve(dir));
+    runtime.shutdown_background();
+    code
+}
+
+async fn serve(dir: PathBuf) -> ExitCode {
+    let read = std::fs::read_to_string(dir.join(RUN_FILE)).map_err(|e| e.to_string());
+    let state =
+        match read.and_then(|t| serde_json::from_str::<RunState>(&t).map_err(|e| e.to_string())) {
+            Ok(state) => state,
+            Err(err) => {
+                pi_ext_sdk::error!("cannot read {}: {err}", dir.display());
+                return ExitCode::FAILURE;
+            }
+        };
+    ignore_hangup();
+    // Commands sent before this runner started belong to an earlier one.
+    let _ = control::take(&dir);
+    let id = state.id.clone();
+    let root = dir
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_owned)
+        .unwrap_or_default();
+    let ctx = Ctx {
+        runs: Runs::default(),
+        pi: PathBuf::from(&state.pi),
+        control: Control::default(),
+        dir: dir.clone(),
+    };
+    ctx.runs.insert(state, dir.clone());
+    ctx.runs.update(&id, |run| run.heartbeat_ms = now_ms());
+    ctx.runs.persist(&id);
+    let (runs, control) = (ctx.runs.clone(), ctx.control.clone());
+    let mut engine = tokio::spawn(drive(ctx, id.clone()));
+    let mut ticks: u64 = 0;
+    loop {
+        // The engine writes the final state; nothing writes after it.
+        tokio::select! {
+            _ = &mut engine => break,
+            () = tokio::time::sleep(TICK) => {}
+        }
+        for command in control::take(&dir) {
+            apply(&runs, &id, &control, command);
+        }
+        ticks += 1;
+        if ticks % 4 != 0 {
+            continue;
+        }
+        let orphaned = runs.get(&id).is_some_and(|run| {
+            !run.background && run.owner != 0 && !control::alive(&root, run.owner)
+        });
+        if orphaned {
+            control.interrupt();
+        }
+        runs.update(&id, |run| run.heartbeat_ms = now_ms());
+        runs.persist(&id);
+    }
+    ExitCode::SUCCESS
+}
+
+fn apply(runs: &Runs, id: &str, control: &Control, command: Command) {
+    match command {
+        Command::Stop => control.cancel.cancel(),
+        Command::Interrupt => control.interrupt(),
+        Command::Skip => control.skip.notify_waiters(),
+        Command::Approve { decision } => {
+            if runs.get(id).is_some_and(|run| run.approval.is_some()) {
+                control.decide(decision);
+            }
+        }
+        Command::Mode { background, owner } => {
+            runs.update(id, |run| {
+                run.background = background;
+                run.owner = owner;
+            });
+            runs.persist(id);
+        }
+    }
+}
+
+/// A terminal hangup must not end a background run.
+fn ignore_hangup() {
+    #[cfg(unix)]
+    if let Ok(mut hangup) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
+        tokio::spawn(async move { while hangup.recv().await.is_some() {} });
+    }
+}
+
+/// Runs the workflow to its end and writes the final state; pi sessions report it.
 pub async fn drive(ctx: Ctx, id: String) {
     let (status, error) = match steps(&ctx, &id).await {
         Ok(()) => (RunStatus::Done, None),
@@ -45,31 +190,10 @@ pub async fn drive(ctx: Ctx, id: String) {
         Err(Stop::Failed(reason)) => (RunStatus::Failed, Some(reason)),
     };
     ctx.runs.update(&id, |run| {
-        run.status = status;
+        run.end(status);
         run.error = error;
-        run.ended_ms = Some(now_ms());
-        run.wait_until_ms = None;
-        run.note.clear();
-        for step in &mut run.steps {
-            step.activity.clear();
-        }
     });
-    ctx.runs.set_control(&id, None);
     ctx.runs.persist(&id);
-    if let Some(run) = ctx
-        .runs
-        .get(&id)
-        .filter(|r| r.status != RunStatus::Interrupted)
-    {
-        let message = CustomMessage::new(MESSAGE_TYPE, report_text(&run))
-            .display(true)
-            .details(report_details(&run))
-            .deliver_as(DeliverAs::FollowUp)
-            .trigger_turn(run.origin == Origin::Agent);
-        if let Err(err) = ctx.host.send_message(message).await {
-            pi_ext_sdk::warn!("cannot report workflow run {id}: {}", err.message());
-        }
-    }
 }
 
 fn state(ctx: &Ctx, id: &str) -> Result<RunState, Stop> {
@@ -117,11 +241,10 @@ async fn replan(ctx: &Ctx, id: &str, index: usize) -> Result<(), Stop> {
     ctx.runs
         .update(id, |run| run.note = "Planning the next steps".into());
     let run = state(ctx, id)?;
-    let available = planner::available(&ctx.host, &ctx.catalog).await;
-    let planned = tokio::select! {
-        () = ctx.control.cancel.cancelled() => return Err(Stop::Cancelled),
-        planned = planner::plan(&ctx.host, &run, index, available) => planned,
-    };
+    let planned = planner::plan(&ctx.pi, &ctx.dir, &run, index, &ctx.control.cancel).await;
+    if ctx.control.cancel.is_cancelled() {
+        return Err(Stop::Cancelled);
+    }
     ctx.runs.update(id, |run| match planned {
         Ok(steps) => {
             run.note = format!("The planner planned {} more step(s)", steps.len());
@@ -153,10 +276,8 @@ async fn run_step(ctx: &Ctx, id: &str, index: usize) -> Result<(), Stop> {
     for task_index in run.steps[index].tasks_done..step.tasks.len() {
         let task = &step.tasks[task_index];
         let label = task_label(&step, task_index);
-        if !task.confirm || confirm(ctx, id, &label).await? {
+        if !task.confirm || confirm(ctx, id, index, &label).await? {
             run_task(ctx, id, index, task, &label).await?;
-        } else {
-            log(ctx, id, index, format!("{label}: skipped by the user"));
         }
         ctx.runs
             .update(id, |run| run.steps[index].tasks_done = task_index + 1);
@@ -270,7 +391,7 @@ async fn agent(ctx: &Ctx, id: &str, index: usize, prompt: &str) -> Outcome {
         scope: &run.workflow.scope(step),
         parent_model: run.parent_model.as_deref(),
         parent_thinking: run.parent_thinking.as_deref(),
-        catalog: &ctx.catalog,
+        catalog: &run.catalog,
         session: &session,
         schema: &ctx.dir.join(SCHEMA_FILE),
         task_skills: &task_skills,
@@ -322,8 +443,13 @@ pub fn session_file(dir: &Path, index: usize, step: &Step, context: ContextMode)
     }
 }
 
+/// Waits `duration`. A deadline left by an interrupted run that resumes counts first, so a
+/// resumed wait does not start over.
 async fn wait(ctx: &Ctx, id: &str, duration: Duration, note: String) -> Result<(), Stop> {
+    let left = state(ctx, id)?.wait_left();
+    let duration = left.unwrap_or(duration);
     if duration.is_zero() {
+        ctx.runs.update(id, |run| run.wait_until_ms = None);
         return Ok(());
     }
     ctx.runs.update(id, |run| {
@@ -345,36 +471,44 @@ async fn wait(ctx: &Ctx, id: &str, duration: Duration, note: String) -> Result<(
     Ok(())
 }
 
-const RUN: &str = "Run it";
-const SKIP: &str = "Skip this task";
-const STOP: &str = "Stop the workflow";
-
-/// Asks the user to approve a task; `false` skips it.
-async fn confirm(ctx: &Ctx, id: &str, label: &str) -> Result<bool, Stop> {
-    if !ctx.host.has_ui() {
-        return Err(Stop::Failed(format!(
-            "{label} needs the user's approval, and pi has no UI"
-        )));
-    }
-    let name = state(ctx, id)?.workflow.name;
+/// Waits for the user's approval of a task, from any pi session; `false` skips the task.
+async fn confirm(ctx: &Ctx, id: &str, index: usize, label: &str) -> Result<bool, Stop> {
+    ctx.control.take_decision();
     ctx.runs.update(id, |run| {
         run.status = RunStatus::Waiting;
         run.note = format!("{label} waits for your approval");
+        run.approval = Some(Approval {
+            task: label.to_owned(),
+            step: index,
+            asked_ms: now_ms(),
+        });
     });
     ctx.runs.persist(id);
-    let title = format!("Workflow {name}: run \"{label}\"?");
-    let choice = tokio::select! {
-        () = ctx.control.cancel.cancelled() => return Err(Stop::Cancelled),
-        choice = ctx.host.select(&title, &[RUN, SKIP, STOP]) => choice,
+    let decision = loop {
+        if let Some(decision) = ctx.control.take_decision() {
+            break decision;
+        }
+        tokio::select! {
+            () = ctx.control.cancel.cancelled() => return Err(Stop::Cancelled),
+            () = ctx.control.decided.notified() => {}
+        }
     };
     ctx.runs.update(id, |run| {
         run.status = RunStatus::Running;
+        run.approval = None;
         run.note.clear();
     });
-    match choice.ok().flatten().as_deref() {
-        Some(RUN) => Ok(true),
-        Some(SKIP) => Ok(false),
-        _ => Err(Stop::Cancelled),
+    let word = match decision {
+        Decision::Run => "approved",
+        Decision::Skip => "skipped",
+        Decision::Stop => "stopped",
+    };
+    log(ctx, id, index, format!("{label}: {word} by the user"));
+    ctx.runs.persist(id);
+    match decision {
+        Decision::Run => Ok(true),
+        Decision::Skip => Ok(false),
+        Decision::Stop => Err(Stop::Cancelled),
     }
 }
 
@@ -425,10 +559,9 @@ pub fn compose(
             out.push_str(&history(run, index));
         }
         if let Some(memory) = memory {
-            let memory = if memory.trim().is_empty() {
-                "(empty)"
-            } else {
-                memory.trim()
+            let memory = match memory.trim() {
+                "" => "(empty)".to_owned(),
+                text => newest(text, MEMORY_LIMIT),
             };
             out.push_str(&format!(
                 "\n## Shared memory\n{memory}\n\nAdd facts that later steps need with the `workflow_memory` tool.\n"
@@ -515,6 +648,18 @@ fn clip(text: &str, max: usize) -> String {
     format!("{}…", &text[..end])
 }
 
+/// The end of `text`: the shared notes grow, and a prompt argument has a size limit.
+fn newest(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_owned();
+    }
+    let mut start = text.len() - max;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("(older notes are left out)\n…{}", &text[start..])
+}
+
 pub fn first_line(text: &str) -> String {
     let line = text.trim().lines().next().unwrap_or("").trim();
     if line.chars().count() > 100 {
@@ -525,7 +670,7 @@ pub fn first_line(text: &str) -> String {
 }
 
 /// What the `workflow-run` message renderer draws.
-fn report_details(run: &RunState) -> Value {
+pub fn report_details(run: &RunState) -> Value {
     let steps: Vec<Value> = run
         .workflow
         .steps
@@ -537,7 +682,7 @@ fn report_details(run: &RunState) -> Value {
         "steps": steps, "error": run.error })
 }
 
-fn report_text(run: &RunState) -> String {
+pub fn report_text(run: &RunState) -> String {
     let mut lines = vec![format!(
         "Workflow **{}** {} ({}). Run id: `{}`.",
         run.workflow.name,
@@ -639,6 +784,10 @@ mod tests {
         run.steps[1].runs = 0;
         let fresh = compose(&run, 1, task, 0, Some(""));
         assert!(fresh.contains("## Shared memory\n(empty)"), "{fresh}");
+        let long = format!("old fact\n{}\nnewest fact", "x".repeat(MEMORY_LIMIT));
+        let clipped = compose(&run, 1, task, 0, Some(&long));
+        assert!(clipped.contains("(older notes are left out)") && clipped.contains("newest fact"));
+        assert!(!clipped.contains("old fact"), "the oldest notes go first");
         let none = compose(&self::run("none"), 1, task, 0, None);
         assert!(!none.contains("Reports of earlier steps"), "{none}");
     }
