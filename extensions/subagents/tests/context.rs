@@ -42,7 +42,7 @@ fn exposure_frontmatter_is_parsed_and_layered() {
 }
 
 #[test]
-fn entries_use_the_tool_name_param_path_and_exposure() {
+fn entries_use_the_tool_name_param_and_exposure() {
     let spec = pi_ext_subagents::tool::spec();
     assert!(spec.parameters["properties"][AGENT_PARAM].is_object());
     let explore = builtin_agents().remove(0);
@@ -63,7 +63,7 @@ fn entries_use_the_tool_name_param_path_and_exposure() {
     );
     let entry = context::entry(&agents[0], &spec.name).unwrap();
     assert_eq!(entry["description"], "Reviews diffs.");
-    assert_eq!(entry["path"], "/g/reviewer.md");
+    assert!(entry.get("path").is_none());
     assert_eq!(entry["exposure"], "deferred");
     agents[0].description = " ".into();
     assert!(context::entry(&agents[0], &spec.name).is_none());
@@ -73,7 +73,10 @@ fn entries_use_the_tool_name_param_path_and_exposure() {
 fn section_lists_only_agents_pi_does_not_list() {
     let agents = builtin_agents();
     let full = context::prompt_section(&agents, None);
-    assert!(full.contains("shows their tools and models):\n- `explore`"), "{full}");
+    assert!(
+        full.contains("shows their tools and models):\n- `explore`"),
+        "{full}"
+    );
     let offered: BTreeSet<String> = ["explore", "build"].map(String::from).into();
     let section = context::prompt_section(&agents, Some(&offered));
     assert!(section.contains("<available_context>"), "{section}");
@@ -127,8 +130,7 @@ async fn new_host_gets_entries_and_the_section_skips_them() {
     assert_eq!(names, ["explore", "build", "advisor", "reviewer"]);
     let reviewer = &entries[3];
     assert_eq!(reviewer["exposure"], "deferred");
-    let path = d.agent.join("ext/subagents/agents/reviewer.md");
-    assert_eq!(reviewer["path"], path.display().to_string());
+    assert!(reviewer.get("path").is_none());
 
     let text = section(&mut host, 2, &d.cwd).await;
     assert!(
@@ -158,7 +160,10 @@ async fn old_host_keeps_the_full_section() {
     let found = discover(&mut host, 1, &d.cwd).await;
     assert!(found.is_null(), "{found}");
     let text = section(&mut host, 2, &d.cwd).await;
-    assert!(text.contains("shows their tools and models):\n- `explore`"), "{text}");
+    assert!(
+        text.contains("shows their tools and models):\n- `explore`"),
+        "{text}"
+    );
     assert!(text.contains("- `reviewer`: Reviews diffs."), "{text}");
     host.finish().await;
 }

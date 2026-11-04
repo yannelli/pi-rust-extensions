@@ -22,7 +22,8 @@ pub fn host_supports(host: &Host) -> bool {
     host.init().is_some_and(|init| init.has_feature(FEATURE))
 }
 
-/// The entry of one agent; `None` without a description, which pi needs.
+/// The entry of one agent; `None` without a description, which pi needs. No `path`: the model
+/// calls the tool and never needs to read the agent file.
 pub fn entry(agent: &AgentDef, tool: &str) -> Option<Value> {
     let description = agent.description.trim();
     if description.is_empty() {
@@ -34,9 +35,6 @@ pub fn entry(agent: &AgentDef, tool: &str) -> Option<Value> {
         "description": description,
         "usage": format!("Call the {tool} tool with {AGENT_PARAM} \"{}\".", agent.name),
     });
-    if let Some(path) = agent.files.last() {
-        entry["path"] = json!(path.display().to_string());
-    }
     if let Some(exposure) = agent.exposure {
         entry["exposure"] = json!(exposure.as_str());
     }
