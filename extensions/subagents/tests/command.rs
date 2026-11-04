@@ -22,6 +22,7 @@ fn args_of(
         agent,
         task,
         run_id: "run1",
+        session_file: Path::new("/agent/ext/subagents/runs/run1/session.jsonl"),
         parent: &parent(),
         overrides,
         program: Path::new("/bin/pi"),
@@ -39,7 +40,16 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 fn explore_inherits_parent_model_and_thinking() {
     let explore = builtin_agents().remove(0);
     let spec = args_of(&explore, &Overrides::default(), "find main");
-    assert_eq!(&spec.args[..4], ["--mode", "json", "-p", "--no-session"]);
+    assert_eq!(
+        &spec.args[..5],
+        [
+            "--mode",
+            "json",
+            "-p",
+            "--session",
+            "/agent/ext/subagents/runs/run1/session.jsonl"
+        ]
+    );
     assert_eq!(flag(&spec.args, "--model"), Some("mock/parent"));
     assert_eq!(flag(&spec.args, "--thinking"), Some("high"));
     assert_eq!(flag(&spec.args, "--tools"), Some("read,grep,find,ls,todo"));
@@ -99,6 +109,7 @@ fn no_parent_model_passes_no_model_flag() {
         agent: &explore,
         task: "t",
         run_id: "r",
+        session_file: Path::new("/s.jsonl"),
         parent: &Inherit::default(),
         overrides: &Overrides::default(),
         program: Path::new("pi"),

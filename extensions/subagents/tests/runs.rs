@@ -33,8 +33,21 @@ async fn foreground_run_streams_and_inherits_model() {
     let result = &response["result"];
     assert_eq!(result["content"][0]["text"], "Found main at src/main.rs:3");
     assert!(result.get("isError").is_none(), "{result}");
-    let run = &result["details"]["runs"][0];
+    let details = &result["details"];
+    let run = &details["runs"][0];
     assert_eq!(run["status"], "completed");
+    let id = run["id"].as_str().unwrap();
+    let session_file = d
+        .agent
+        .join(format!("ext/subagents/runs/{id}/session.jsonl"));
+    let session = session_file.display().to_string();
+    assert_eq!(run["sessionFile"], session);
+    assert_eq!(details["mode"], "single");
+    assert_eq!(details["runId"], id);
+    assert_eq!(
+        details["results"],
+        json!([{ "index": 0, "agent": "explore", "exitCode": 0, "success": true, "sessionFile": session }])
+    );
     assert_eq!(run["turns"], 1);
     assert_eq!(run["tools"].as_array().unwrap().len(), 2);
     let updates = host.seen_of("tool.update");
@@ -51,8 +64,9 @@ async fn foreground_run_streams_and_inherits_model() {
     assert_eq!(flag("--model"), Some("mock/parent-model"));
     assert_eq!(flag("--thinking"), Some("high"));
     assert_eq!(flag("--tools"), Some("read,grep,find,ls,todo"));
+    assert_eq!(flag("--session"), Some(session.as_str()));
+    assert!(!args.contains(&"--no-session"));
     let env = std::fs::read_to_string(d.fake.join("env")).unwrap();
-    let id = run["id"].as_str().unwrap();
     assert!(env.contains(&format!("PI_TODO_SCOPE={id}")), "{env}");
     let cwd = std::fs::read_to_string(d.fake.join("cwd")).unwrap();
     assert_eq!(
@@ -110,15 +124,33 @@ async fn background_run_reports_with_message_and_widget() {
         text.starts_with("Started 1 background subagent run"),
         "{text}"
     );
+    let details = &response["result"]["details"];
+    let id = details["runs"][0]["id"].as_str().unwrap().to_owned();
+    let dir = d.agent.join(format!("ext/subagents/runs/{id}"));
+    let session = dir.join("session.jsonl").display().to_string();
+    assert_eq!(details["mode"], "single");
+    assert_eq!(details["results"], json!([]));
+    assert_eq!(details["asyncId"], id.as_str());
+    assert_eq!(details["asyncDir"], dir.display().to_string());
     let message = host.until_method("session.sendMessage").await;
-    assert_eq!(message["customType"], "subagent-result");
+    assert_eq!(message["customType"], "subagent-notify");
     assert_eq!(message["triggerTurn"], true);
     assert_eq!(message["deliverAs"], "followUp");
-    assert!(
-        message["content"]
-            .as_str()
-            .unwrap()
-            .contains("Background answer")
+    assert_eq!(message["details"]["runs"][0]["id"], id.as_str());
+    let content = message["content"].as_str().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(
+        lines[..3],
+        [
+            format!("Background task completed: **advisor** ({id})"),
+            format!("Retention-managed async directory: {}", dir.display()),
+            format!("Session file: {session}"),
+        ]
+    );
+    assert!(content.contains("Background answer"), "{content}");
+    assert_eq!(
+        status_file(&dir),
+        json!({ "state": "complete", "steps": [{ "agent": "advisor", "status": "completed", "sessionFile": session }] })
     );
     let widgets = host.seen_of("ui.setWidget");
     assert!(widgets.iter().any(|w| w["key"] == "subagents"
@@ -147,13 +179,65 @@ async fn parallel_tasks_return_sections() {
         text.contains("## [1] explore: one") && text.contains("## [2] build: two"),
         "{text}"
     );
+    let details = &response["result"]["details"];
+    assert_eq!(details["runs"].as_array().unwrap().len(), 2);
+    assert_eq!(details["mode"], "parallel");
+    assert!(details.get("runId").is_none(), "{details}");
+    let rows: Vec<(Value, Value, Value)> = details["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["index"].clone(), r["agent"].clone(), r["success"].clone()))
+        .collect();
     assert_eq!(
-        response["result"]["details"]["runs"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
+        rows,
+        [
+            (json!(0), json!("explore"), json!(true)),
+            (json!(1), json!("build"), json!(true))
+        ]
     );
+    host.finish().await;
+}
+
+fn status_file(dir: &std::path::Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(dir.join("status.json")).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn stopped_background_run_updates_status_and_notifies() {
+    let d = dirs(&scripted_events("never"), 30);
+    let mut host = TestHost::start(pi_ext_subagents::extension());
+    host.initialize(&d.agent, &d.cwd).await;
+    let params = json!({ "agent": "explore", "task": "Slow", "async": true });
+    host.request(1, "tool.execute", execute(params, &d.cwd))
+        .await;
+    let response = host.until_response(1).await;
+    let details = &response["result"]["details"];
+    let id = details["asyncId"].as_str().unwrap().to_owned();
+    let dir = std::path::PathBuf::from(details["asyncDir"].as_str().unwrap());
+    let session = details["runs"][0]["sessionFile"].clone();
+    assert_eq!(
+        status_file(&dir),
+        json!({ "state": "running", "steps": [{ "agent": "explore", "status": "running", "sessionFile": session }] })
+    );
+    host.request(
+        2,
+        "tool.execute",
+        execute(json!({ "action": "stop", "id": id }), &d.cwd),
+    )
+    .await;
+    host.until_response(2).await;
+    let message = host.until_method("session.sendMessage").await;
+    assert_eq!(message["customType"], "subagent-notify");
+    let content = message["content"].as_str().unwrap();
+    assert_eq!(
+        content.lines().next().unwrap(),
+        format!("Background task stopped: **explore** ({id})")
+    );
+    assert_eq!(message["details"]["results"][0]["success"], false);
+    let status = status_file(&dir);
+    assert_eq!(status["state"], "stopped");
+    assert_eq!(status["steps"][0]["status"], "stopped");
     host.finish().await;
 }
 

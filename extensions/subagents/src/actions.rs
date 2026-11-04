@@ -1,13 +1,20 @@
 //! The `list`, `status`, and `stop` actions, run details, and background completion messages.
 
+use std::path::PathBuf;
+
 use pi_ext_sdk::DeliverAs;
 use pi_ext_sdk::prelude::*;
+use tokio::task::JoinSet;
 
 use crate::agent::AgentDef;
 use crate::app::App;
 use crate::jobs::Started;
 use crate::render;
-use crate::runs::Run;
+use crate::runs::{Run, Status};
+use crate::store;
+
+/// The custom message type of a finished `async` call, as pi-subagents names it.
+pub const NOTIFY_TYPE: &str = "subagent-notify";
 
 pub fn list_agents(agents: &[AgentDef]) -> ToolResult {
     let lines: Vec<String> = agents
@@ -53,25 +60,28 @@ pub fn stop(app: &App, id: Option<&str>) -> ToolResult {
     }
 }
 
-pub async fn report_when_done(app: App, host: Host, started: Vec<Started>) {
+/// Waits for the runs of one `async` call, rewrites `<asyncDir>/status.json` after each run ends,
+/// and sends the `subagent-notify` message.
+pub async fn report_when_done(
+    app: App,
+    host: Host,
+    mode: &'static str,
+    async_dir: PathBuf,
+    started: Vec<Started>,
+) {
     let ids: Vec<String> = started.iter().map(|s| s.id.clone()).collect();
+    let mut pending = JoinSet::new();
     for s in started {
-        let _ = s.handle.await;
+        pending.spawn(s.handle);
+    }
+    while pending.join_next().await.is_some() {
+        store::write_status(&async_dir, &collect(&app, &ids));
     }
     let _ = app.draw_widget(&host).await;
     let runs = collect(&app, &ids);
-    let summary: Vec<String> = runs
-        .iter()
-        .map(|r| format!("{} {} ({})", r.id, r.status.as_str(), r.agent))
-        .collect();
-    let content = format!(
-        "Background subagent run(s) finished: {}.\n\n{}",
-        summary.join(", "),
-        render::final_text(&runs)
-    );
-    let message = CustomMessage::new("subagent-result", content)
+    let message = CustomMessage::new(NOTIFY_TYPE, notify_text(&runs))
         .display(true)
-        .details(run_details(&runs))
+        .details(call_details(&runs, mode))
         .deliver_as(DeliverAs::FollowUp)
         .trigger_turn(true);
     if let Err(err) = host.send_message(message).await {
@@ -79,10 +89,51 @@ pub async fn report_when_done(app: App, host: Host, started: Vec<Started>) {
     }
 }
 
+/// The header line, then per run its directory and session file, then the run results.
+pub fn notify_text(runs: &[Run]) -> String {
+    let header = match (runs, store::call_state(runs)) {
+        ([run], _) => format!(
+            "Background task {}: **{}** ({})",
+            outcome(run.status),
+            run.agent,
+            run.id
+        ),
+        (_, "complete") => format!("Background tasks completed ({}):", runs.len()),
+        (_, state) => format!("Background tasks {state} ({}):", runs.len()),
+    };
+    let mut lines = vec![header];
+    for run in runs {
+        lines.push(format!(
+            "Retention-managed async directory: {}",
+            run.dir().display()
+        ));
+        lines.push(format!("Session file: {}", run.session_file.display()));
+    }
+    let summary: Vec<String> = runs
+        .iter()
+        .map(|r| format!("{} {} ({})", r.id, r.status.as_str(), r.agent))
+        .collect();
+    format!(
+        "{}\n\nBackground subagent run(s) finished: {}.\n\n{}",
+        lines.join("\n"),
+        summary.join(", "),
+        render::final_text(runs)
+    )
+}
+
+fn outcome(status: Status) -> &'static str {
+    match status {
+        Status::Cancelled => "stopped",
+        Status::Completed => "completed",
+        Status::Failed | Status::Running => "failed",
+    }
+}
+
 pub fn collect(app: &App, ids: &[String]) -> Vec<Run> {
     ids.iter().filter_map(|id| app.runs.get(id)).collect()
 }
 
+/// `{ runs }` with one entry per run.
 pub fn run_details(runs: &[Run]) -> Value {
     let runs: Vec<Value> = runs
         .iter()
@@ -92,9 +143,36 @@ pub fn run_details(runs: &[Run]) -> Value {
                 "background": r.background, "model": r.progress.model.clone().or_else(|| r.model.clone()),
                 "turns": r.progress.turns, "tools": r.progress.tools, "usage": r.progress.usage,
                 "output": r.progress.output(), "exitCode": r.exit_code,
-                "durationMs": r.elapsed().as_millis() as u64,
+                "durationMs": r.elapsed().as_millis() as u64, "sessionFile": r.session_file,
             })
         })
         .collect();
     json!({ "runs": runs })
+}
+
+/// [`run_details`] plus the fields of the pi-subagents result: `mode` (`single` or `parallel`),
+/// `runId` for a single run, and `results` with one row per finished run.
+pub fn call_details(runs: &[Run], mode: &str) -> Value {
+    let mut details = run_details(runs);
+    let results: Vec<Value> = runs
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.status != Status::Running)
+        .map(|(index, r)| {
+            let mut row = json!({
+                "index": index, "agent": r.agent, "success": r.status == Status::Completed,
+                "sessionFile": r.session_file,
+            });
+            if let Some(code) = r.exit_code {
+                row["exitCode"] = json!(code);
+            }
+            row
+        })
+        .collect();
+    details["mode"] = json!(mode);
+    details["results"] = json!(results);
+    if let ("single", [run]) = (mode, runs) {
+        details["runId"] = json!(run.id);
+    }
+    details
 }

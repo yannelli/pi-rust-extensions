@@ -1,6 +1,6 @@
 # pi-ext-subagents
 
-Created 2026-10-30. Last updated 2026-10-31.
+Created 2026-10-30. Last updated 2026-11-04.
 
 Runs tasks in child pi processes. Three built-in agents: `explore` (read-only search), `build` (full tools), and `advisor` (read-only review with a recommendation). You can change them and add your own. Run it with `pi-rust-ext subagents`. Simplified from `pi-subagents`.
 
@@ -12,21 +12,36 @@ Runs tasks in child pi processes. Three built-in agents: `explore` (read-only se
 | `agent` | Agent name. Default `explore`. |
 | `task` | The full task. The child does not see the parent conversation. |
 | `tasks` | `[{ agent?, task, model?, thinking?, cwd? }]`: tasks that run in parallel (`maxParallel` at a time). |
-| `async` | `true` runs in the background. The tool returns the run ids at once. A `subagent-result` message comes when the runs finish (`deliverAs: followUp`, `triggerTurn: true`). |
+| `async` | `true` runs in the background. The tool returns the run ids at once. A `subagent-notify` message comes when the runs finish (`deliverAs: followUp`, `triggerTurn: true`). |
 | `model`, `thinking` | Override for this call. |
 | `cwd` | Child working directory, relative to the session cwd. A path that resolves outside the session cwd is refused. |
 
-Foreground runs send `tool.update` with each child tool call and the tail of the child's text. Background runs show in the widget `subagents` below the editor. The result `details` is `{ runs: [{ id, agent, task, status, background, model, turns, tools, usage, output, exitCode, durationMs }] }`. An abort of the tool call kills the child's process group. On shutdown the extension cancels all runs and waits up to 1.4 seconds, so the group gets SIGKILL 1 second after SIGTERM.
+Foreground runs send `tool.update` with each child tool call and the tail of the child's text. Background runs show in the widget `subagents` below the editor. The result `details` is `{ mode, runId?, results, runs }`:
+
+- `mode`: `single` for a `task` call, `parallel` for a `tasks` call. `runId`: the run id of a `single` call.
+- `results`: one row `{ index, agent, exitCode?, success, sessionFile }` per finished run. `success` is `true` for a completed run only. `exitCode` is absent when the child did not exit by itself.
+- `runs`: `[{ id, agent, task, status, background, model, turns, tools, usage, output, exitCode, durationMs, sessionFile }]`.
+- An `async` call returns `results: []`, `asyncId` (the first run id), and `asyncDir` (the first run's directory).
+
+These are the fields of the `pi-subagents` result, so Paseo links each `subagent` call with `agent` and `task` to its child and shows the child session. An abort of the tool call kills the child's process group. On shutdown the extension cancels all runs and waits up to 1.4 seconds, so the group gets SIGKILL 1 second after SIGTERM.
 
 ## Child process
 
-`<pi> --mode json -p --no-session [--model <m>] [--thinking <t>] (--tools <list> | --no-tools | --exclude-tools subagent[,<disallowedTools>]) (--append-system-prompt | --system-prompt) <prompt> [--max-turns <n>] [extraArgs] -- <task>`, in the session cwd.
+`<pi> --mode json -p --session <run dir>/session.jsonl [--model <m>] [--thinking <t>] (--tools <list> | --no-tools | --exclude-tools subagent[,<disallowedTools>]) (--append-system-prompt | --system-prompt) <prompt> [--max-turns <n>] [extraArgs] -- <task>`, in the session cwd.
 
 - Model and thinking level: the call override, else the agent's `model`, else the parent session's current model. When neither the call nor the agent sets a model, the child also gets the parent's thinking level, unless the agent or call sets one.
 - The pi binary: config `piBin`, else `$PI_BIN`, else the parent process when its file name starts with `pi`, else `pi` on `PATH`.
 - Env: `PI_TODO_SCOPE=<run id>`, `PI_SUBAGENT_RUN_ID=<run id>`, `PI_SUBAGENT_AGENT=<name>`.
 - Todo scopes: each child `todo` tool result is sent on the `pi.events` channel `todo:scope` as `{ scope, label, status, state }`, with `status` `running`, `completed`, `failed`, or `cancelled` and `state` the child's todo `details` (or `null`). The `todo` extension shows these scopes.
 - Lifecycle: `subagents:start` `{ agentId, agentType }` when a run starts and `subagents:stop` `{ agentId, agentType, status, lastAssistantMessage }` when it ends, on `pi.events`. The `hooks` extension runs SubagentStart and SubagentStop hooks from them.
+
+## Run directories
+
+Each run has the directory `<agentDir>/ext/subagents/runs/<run id>/`. The child writes its pi session to `session.jsonl` there. When a call starts runs, the extension deletes run directories last modified more than 14 days ago.
+
+An `async` call writes `<asyncDir>/status.json` when it starts and after each run ends: `{ state, steps: [{ agent, status, sessionFile }] }`. `state` is `running` until all runs end, then `complete` when all completed, `stopped` when one was cancelled, else `failed`. A step `status` is `running`, `completed`, `failed`, or `stopped`.
+
+The `subagent-notify` message starts with `Background task completed|failed|stopped: **<agent>** (<run id>)` for one run. For several runs it starts with `Background tasks completed (N):`, or `Background tasks failed (N):` / `Background tasks stopped (N):` with the same rules as `state`. Then for each run come `Retention-managed async directory: <run dir>` and `Session file: <file>`, then the run summary and results. Its `details` are those of the tool result.
 
 ## Agent files
 

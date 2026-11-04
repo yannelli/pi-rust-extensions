@@ -1,5 +1,6 @@
 //! Running and recent child runs, shared by the tool, the widget, and `/agents runs`.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -51,9 +52,15 @@ pub struct Run {
     pub exit_code: Option<i32>,
     pub model: Option<String>,
     pub cancel: CancellationToken,
+    /// The child's pi session file, `<run dir>/session.jsonl`.
+    pub session_file: PathBuf,
 }
 
 impl Run {
+    pub fn dir(&self) -> &Path {
+        self.session_file.parent().unwrap_or(Path::new(""))
+    }
+
     pub fn elapsed(&self) -> Duration {
         self.finished.unwrap_or_else(Instant::now) - self.started
     }
@@ -122,6 +129,7 @@ impl Runs {
             exit_code: None,
             model: None,
             cancel,
+            session_file: PathBuf::new(),
         });
         id
     }

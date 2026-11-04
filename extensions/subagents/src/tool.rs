@@ -9,13 +9,14 @@ use pi_ext_sdk::prelude::*;
 use serde::Deserialize;
 use tokio::sync::{Notify, Semaphore};
 
-use crate::actions::{collect, list_agents, report_when_done, run_details, status, stop};
+use crate::actions::{call_details, collect, list_agents, report_when_done, status, stop};
 use crate::agent::AgentDef;
 use crate::app::App;
 use crate::command::{Inherit, Overrides, pi_binary};
 use crate::jobs::{self, Job, Launch, Started};
 use crate::render;
 use crate::runs::Status;
+use crate::store;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,17 +120,23 @@ pub fn child_cwd(cwd: &Path, rel: &str) -> std::result::Result<std::path::PathBu
     Ok(dir)
 }
 
+/// The jobs of a call and its mode: `parallel` for `tasks`, else `single`.
 fn jobs_of(
     params: &Params,
     agents: &[AgentDef],
     cwd: &Path,
-) -> std::result::Result<Vec<Job>, String> {
+) -> std::result::Result<(Vec<Job>, &'static str), String> {
     let tasks: Vec<TaskParam> = match &params.tasks {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::String(text)) => {
             serde_json::from_str(text).map_err(|e| format!("tasks: {e}"))?
         }
         Some(value) => serde_json::from_value(value.clone()).map_err(|e| format!("tasks: {e}"))?,
+    };
+    let mode = if tasks.is_empty() {
+        "single"
+    } else {
+        "parallel"
     };
     let mut wanted: Vec<TaskParam> = tasks;
     if wanted.is_empty() {
@@ -147,7 +154,7 @@ fn jobs_of(
         });
     }
     let default_agent = params.agent.clone().unwrap_or_else(|| "explore".into());
-    wanted
+    let jobs = wanted
         .into_iter()
         .map(|t| {
             let name = t.agent.unwrap_or_else(|| default_agent.clone());
@@ -179,7 +186,8 @@ fn jobs_of(
                 cwd: dir,
             })
         })
-        .collect()
+        .collect::<std::result::Result<Vec<Job>, String>>()?;
+    Ok((jobs, mode))
 }
 
 async fn run(app: App, params: Params, ctx: ToolCtx) -> Result<ToolResult> {
@@ -191,17 +199,19 @@ async fn run(app: App, params: Params, ctx: ToolCtx) -> Result<ToolResult> {
     } else {
         cwd
     };
-    let jobs = match jobs_of(&params, &app.agents(&host), &cwd) {
-        Ok(jobs) if jobs.len() > config.max_tasks => {
+    let (jobs, mode) = match jobs_of(&params, &app.agents(&host), &cwd) {
+        Ok((jobs, _)) if jobs.len() > config.max_tasks => {
             return Ok(ToolResult::error(format!(
                 "At most {} tasks per call.",
                 config.max_tasks
             )));
         }
-        Ok(jobs) => jobs,
+        Ok(found) => found,
         Err(message) => return Ok(ToolResult::error(message)),
     };
     let background = params.background.unwrap_or(config.async_by_default);
+    let runs_root = store::runs_root(&host.agent_dir());
+    store::prune(&runs_root, store::RETENTION);
     let launch = Launch {
         program: pi_binary(config.pi_bin.as_deref()),
         parent: Inherit {
@@ -209,6 +219,7 @@ async fn run(app: App, params: Params, ctx: ToolCtx) -> Result<ToolResult> {
             thinking: ctx.snapshot().thinking_level.clone(),
         },
         extra_args: config.extra_args.clone(),
+        runs_root,
         keep: config.max_recent_runs,
         limit: Arc::new(Semaphore::new(config.max_parallel)),
         changed: Arc::new(Notify::new()),
@@ -226,15 +237,31 @@ async fn run(app: App, params: Params, ctx: ToolCtx) -> Result<ToolResult> {
         .collect();
     let ids: Vec<String> = started.iter().map(|s| s.id.clone()).collect();
     if background {
+        let runs = collect(&app, &ids);
+        let async_dir = runs
+            .first()
+            .map(|run| run.dir().to_path_buf())
+            .unwrap_or_default();
+        store::write_status(&async_dir, &runs);
         app.start_widget(&host);
-        tokio::spawn(report_when_done(app.clone(), host, started));
+        tokio::spawn(report_when_done(
+            app.clone(),
+            host,
+            mode,
+            async_dir.clone(),
+            started,
+        ));
         let text = format!(
             "Started {} background subagent run(s): {}. The results arrive as a message when they finish; \
 use action status with an id to check progress.",
             ids.len(),
             ids.join(", ")
         );
-        return Ok(ToolResult::text(text).details(run_details(&collect(&app, &ids))));
+        let mut details = call_details(&runs, mode);
+        details["results"] = json!([]);
+        details["asyncId"] = json!(ids[0]);
+        details["asyncDir"] = json!(async_dir);
+        return Ok(ToolResult::text(text).details(details));
     }
     let mut handles: Vec<_> = started.into_iter().map(|s| s.handle).collect();
     let mut last_update = String::new();
@@ -246,7 +273,7 @@ use action status with an id to check progress.",
         let runs = collect(&app, &ids);
         let text = render::progress_text(&runs);
         if text != last_update {
-            ctx.update(ToolResult::text(text.clone()).details(run_details(&runs)))?;
+            ctx.update(ToolResult::text(text.clone()).details(call_details(&runs, mode)))?;
             last_update = text;
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
@@ -256,6 +283,6 @@ use action status with an id to check progress.",
     }
     let runs = collect(&app, &ids);
     let failed = runs.iter().all(|r| r.status != Status::Completed);
-    let result = ToolResult::text(render::final_text(&runs)).details(run_details(&runs));
+    let result = ToolResult::text(render::final_text(&runs)).details(call_details(&runs, mode));
     Ok(if failed { result.failed() } else { result })
 }

@@ -32,6 +32,8 @@ pub struct Launch {
     pub program: PathBuf,
     pub parent: Inherit,
     pub extra_args: Vec<String>,
+    /// `<agentDir>/ext/subagents/runs`.
+    pub runs_root: PathBuf,
     pub keep: usize,
     pub limit: Arc<Semaphore>,
     /// Woken on each progress change of any run of this launch.
@@ -54,6 +56,9 @@ pub fn start(
     let id = app
         .runs
         .start(&job.agent.name, &job.task, background, cancel.clone());
+    let session_file = crate::store::session_file(&launch.runs_root, &id);
+    app.runs
+        .update(&id, |run| run.session_file = session_file.clone());
     let (publish_app, publish_host) = (app.clone(), host.clone());
     tokio::spawn(
         async move { crate::active_work::publish(&publish_app, &publish_host, false).await },
@@ -63,6 +68,7 @@ pub fn start(
         agent: &job.agent,
         task: &job.task,
         run_id: &id,
+        session_file: &session_file,
         parent: &launch.parent,
         overrides: &job.overrides,
         program: &launch.program,
