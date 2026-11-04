@@ -202,26 +202,26 @@ pub fn parameters_schema() -> Value {
     let option = json!({
         "type": "object",
         "properties": {
-            "label": { "type": "string", "maxLength": MAX_LABEL_LENGTH, "description": format!("MAX {MAX_LABEL_LENGTH} CHARACTERS — hard limit, requests over the limit are rejected. The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.") },
-            "description": { "type": "string", "description": "Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications." },
-            "preview": { "type": "string", "description": "Optional preview content rendered when this option is focused. Use for mockups, code snippets, or visual comparisons that help users compare options. See the tool description for the expected content format." }
+            "label": { "type": "string", "maxLength": MAX_LABEL_LENGTH, "description": "1-5 words; unique; reserved: Other, Type something., Next" },
+            "description": { "type": "string", "description": "Meaning or trade-offs" },
+            "preview": { "type": "string", "description": "Markdown artifact comparison; single-select only; omit for simple preferences" }
         },
         "required": ["label", "description"]
     });
     let question = json!({
         "type": "object",
         "properties": {
-            "question": { "type": "string", "description": "The complete question to ask the user. Should be clear, specific, and end with a question mark. Example: \"Which library should we use for date formatting?\" If multiSelect is true, phrase it accordingly, e.g. \"Which features do you want to enable?\"" },
-            "header": { "type": "string", "maxLength": MAX_HEADER_LENGTH, "description": format!("MAX {MAX_HEADER_LENGTH} CHARACTERS — hard limit, requests over the limit are rejected. Very short chip/tag shown next to the question. Examples: \"Auth method\", \"Library\", \"Approach\".") },
-            "options": { "type": "array", "items": option, "minItems": MIN_OPTIONS, "maxItems": MAX_OPTIONS, "description": "The available choices for this question. Must have 2-4 options. Each option should be a distinct, mutually exclusive choice (unless multiSelect is enabled). The 'Type something.' row is appended automatically — do NOT author it." },
-            "multiSelect": { "type": "boolean", "default": false, "description": "Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive." }
+            "question": { "type": "string", "description": "Unique, specific question ending in ?" },
+            "header": { "type": "string", "maxLength": MAX_HEADER_LENGTH, "description": "Short question tag" },
+            "options": { "type": "array", "items": option, "minItems": MIN_OPTIONS, "maxItems": MAX_OPTIONS, "description": "Distinct choices" },
+            "multiSelect": { "type": "boolean", "default": false, "description": "Allow multiple answers" }
         },
         "required": ["question", "header", "options"]
     });
     let mut properties = Map::new();
     properties.insert(
         "questions".into(),
-        json!({ "type": "array", "items": question, "minItems": 1, "maxItems": MAX_QUESTIONS, "description": "Questions to ask the user (1-4 questions)" }),
+        json!({ "type": "array", "items": question, "minItems": 1, "maxItems": MAX_QUESTIONS }),
     );
     json!({ "type": "object", "properties": properties, "required": ["questions"] })
 }

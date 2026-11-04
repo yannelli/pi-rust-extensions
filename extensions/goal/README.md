@@ -1,10 +1,12 @@
 # pi-ext-goal
 
-Created 2026-10-30. Last updated 2026-10-31.
+Created 2026-10-30. Last updated 2026-11-04.
 
 Persistent goals for pi. This is a Rust port of the `pi-goal-x` package (v0.34.1). It has guided drafting, a task tree, autonomous continuation turns, and a completion auditor. The tool names, the parameter names, and the command names are the same as upstream, so prompts written for pi-goal-x keep working. Run it as `pi-rust-ext goal`.
 
 ## Tools
+
+Tool descriptions and schemas use compact guidance. The `goal` section carries lifecycle policy, including audited completion, the three-turn blocker rule, and wait requirements. Drafting prompts retain the confirmation protocol and goal format.
 
 | Tool | Parameters | Behavior |
 | --- | --- | --- |

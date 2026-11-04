@@ -27,21 +27,14 @@ use crate::widget::WIDGET_KEY;
 
 pub const SCOPE_ENV: &str = "PI_TODO_SCOPE";
 
-const DESCRIPTION: &str = "Manage a task list for tracking multi-step progress. Actions: create (new task, or several independent tasks at once via tasks[]), update (change status/fields/dependencies), list (all tasks, optionally filtered by status), get (single task details), delete (tombstone), clear (reset all), move (reorder a task). Phases: add_phase, update_phase, set_goal, delete_phase group tasks into ordered phases with an optional goal. Status: pending → in_progress → completed, plus deleted tombstone. Use this to plan and track multi-step work like research, design, and implementation.";
+const DESCRIPTION: &str =
+    "Track tasks and phases for complex work with 3+ steps or a user-provided task list.";
 
-const SNIPPET: &str = "Manage a task list to track multi-step progress";
+const SNIPPET: &str = "Track multi-step work";
 
 const GUIDELINES: &[&str] = &[
-    "Use `todo` for complex work with 3+ steps, when the user gives you a list of tasks, or immediately after receiving new instructions to capture requirements. Skip it for single trivial tasks and purely conversational requests.",
-    "When starting a task from the todo list, mark it in_progress BEFORE beginning work. Mark it completed IMMEDIATELY when done — never batch completions. Exactly one task in_progress at a time.",
-    "Never mark a task completed if tests are failing, the implementation is partial, or you hit unresolved errors — keep it in_progress and create a new task for the blocker instead.",
-    "Task status is a 4-state machine: pending → in_progress → completed, plus deleted as a tombstone. Pass activeForm (present-continuous label, e.g. 'researching existing tool') when marking in_progress.",
-    "To change a task's status, call update with the task id and the target status, e.g. {\"action\":\"update\",\"id\":3,\"status\":\"completed\"} or {\"action\":\"update\",\"id\":3,\"status\":\"in_progress\",\"activeForm\":\"writing tests\"}. status is the field that changes the task; an update without a mutable field (status or another) is rejected.",
-    "Use blockedBy to express dependencies (A is blocked by B). On create, pass blockedBy as the initial set. On update, use addBlockedBy / removeBlockedBy (additive merge — do not resend the full array). Cycles are rejected.",
-    "To create several independent tasks at once, pass create with tasks: [{subject}, ...]. Do not also pass subject. tasks[] cannot blockedBy each other (ids do not exist until the call commits); create the prerequisite first, then the dependent with blockedBy. Dependency chains stay single-create.",
-    "list hides tombstoned (deleted) tasks by default; pass includeDeleted:true to see them. Pass status to filter by a single status.",
-    "Subject must be short and imperative (e.g. 'Research existing tool'); description is for long-form detail. activeForm is a present-continuous label shown while in_progress.",
-    "For larger plans, group tasks into ordered phases: add_phase {title, goal?} returns a phase id P<n>; pass phase:<n> on create (or on update to move a task). Mark a phase in_progress or completed with update_phase {phase, status}; set_goal {phase, goal} sets or clears its goal.",
+    "Capture new requirements in todo. Advance pending → in_progress before work → completed immediately when done; deleted is a tombstone. Keep exactly one in_progress, with activeForm. Leave partial, failing, or blocked work in_progress and add a blocker task.",
+    "Updates need a mutable field. Dependencies must be acyclic; create prerequisites before dependents. Use phases to group larger plans.",
 ];
 
 fn tool_spec(config: &Config) -> ToolSpec {

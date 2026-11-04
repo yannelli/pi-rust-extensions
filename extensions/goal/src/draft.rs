@@ -7,11 +7,11 @@ use crate::widget;
 
 pub fn flat_task_schema() -> Value {
     json!({ "type": "object", "required": ["id", "title"], "properties": {
-        "id": { "type": "string", "description": "Short stable slug e.g. 'task-1'" },
-        "title": { "type": "string", "description": "Human-readable task title" },
-        "parent_id": { "type": "string", "description": "Parent id; omit for roots." },
-        "verification_contract": { "type": "string", "description": "Required completion evidence." },
-        "lightweight_subtasks": { "type": "boolean", "description": "Children do not gate parent completion." }
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "parent_id": { "type": "string", "description": "Omit for roots" },
+        "verification_contract": { "type": "string", "description": "Required evidence" },
+        "lightweight_subtasks": { "type": "boolean", "description": "Children do not gate completion" }
     } })
 }
 
@@ -61,16 +61,9 @@ pub fn drafting_prompt(topic: &str, mode: DraftMode, current_objective: Option<&
     lines.extend([
         format!("Topic the user provided:\n<goal_topic>\n{safe_topic}\n</goal_topic>"),
         String::new(),
-        "Confirmation protocol:".into(),
-        "- Treat this as a lightweight conversation with the user, not a separate long-running runtime phase.".into(),
-        "- If the topic is vague, ask one focused question with a recommended default. Use goal_question or goal_questionnaire when a structured answer would help, but plain conversation is acceptable.".into(),
-        "- Targeted read-only research is allowed when it helps define a better goal contract; do not start implementation before confirmation.".into(),
-        "- If the topic is already concrete, you may proceed directly to propose_goal_draft.".into(),
-        "- The goal contract should make the objective, success criteria, boundaries, constraints, and blocker rule explicit.".into(),
-        "- If the objective naturally decomposes into trackable milestones, include the task list in the `tasks` parameter of `propose_goal_draft` so the user accepts goal and tasks in one confirmation.".into(),
-        "- propose_goal_draft opens the user's Confirm / Continue Chatting dialog. Confirm creates and focuses the goal; Continue Chatting means keep refining.".into(),
-        "- create_goal is not a shortcut. Direct create_goal calls are rejected so the user keeps explicit say in goal creation.".into(),
-        "- The user can stop drafting with /goal-cancel.".into(),
+        "Clarify vague topics with one focused question and a recommended default; use chat, goal_question, or goal_questionnaire. Concrete topics can go directly to propose_goal_draft.".into(),
+        "Targeted read-only research is allowed before confirmation. Include trackable milestones in propose_goal_draft.tasks for joint confirmation.".into(),
+        "Confirm creates and focuses the goal; Continue Chatting refines it. Direct create_goal is rejected during drafting. /goal-cancel stops drafting.".into(),
         String::new(),
     ]);
     let shape: &[&str] = match mode {

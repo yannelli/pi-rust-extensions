@@ -28,7 +28,7 @@ use serde::Deserialize;
 use registry::Registry;
 
 const POLICY_SECTION: &str = "pi_background_shell_policy";
-const POLICY: &str = "Background shell policy: start long-running commands (test suites, builds, dev servers, watchers) with bg_run instead of bash. bg_run returns at once; a <background-task-notification> reports the terminal state and starts a follow-up turn. Do not sleep or poll bg_status/bg_logs to wait. Stop tasks that are no longer needed with bg_kill.";
+const POLICY: &str = "Use bg_run for long commands. Continue independent work or end the turn; <background-task-notification> reports terminal state. Do not sleep or poll bg_status/bg_logs to wait. Tasks stop on session quit/switch.";
 
 pub fn main() -> ExitCode {
     extension().run()

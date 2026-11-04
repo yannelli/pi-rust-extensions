@@ -122,12 +122,44 @@ fn widget_compact_and_expanded() {
 }
 
 #[test]
+fn compact_tool_schema_keeps_lifecycle_fields_and_constraints() {
+    let tools = crate::specs::goal_tools();
+    let update = &tools[2];
+    let fields = &update.parameters["properties"];
+    assert_eq!(fields.as_object().unwrap().len(), 6);
+    assert_eq!(
+        fields["status"]["enum"],
+        json!(["complete", "blocked", "paused"])
+    );
+    let wait = &fields["continuation"]["anyOf"][1];
+    assert_eq!(wait["required"], json!(["kind", "reason", "deadline"]));
+    assert_eq!(wait["additionalProperties"], false);
+    assert_eq!(wait["properties"]["reason"]["maxLength"], 2000);
+    assert_eq!(
+        wait["properties"]["polling"]["properties"]["interval_seconds"]["minimum"],
+        1
+    );
+    assert_eq!(fields["attempted_actions"]["maxItems"], 8);
+    assert_eq!(fields["attempted_actions"]["items"]["maxLength"], 240);
+    assert_eq!(
+        tools[4].parameters["properties"]["evidence"]["maxLength"],
+        crate::tasks::MAX_EVIDENCE
+    );
+    let cost = update.description.chars().count() + update.parameters.to_string().chars().count();
+    assert!(cost <= 1_060, "lifecycle prompt grew: {cost}");
+}
+
+#[test]
 fn prompt_sections() {
     let goal = goal_with_tasks();
     let text = crate::prompts::goal_prompt(&goal, &Settings::default());
     assert!(text.starts_with(&format!("[PI GOAL ACTIVE goalId={}]", goal.id)));
     assert!(text.contains("<untrusted_objective>\nShip it\n</untrusted_objective>"));
     assert!(text.contains("[TASK LIST — 0/3 tasks complete]"));
+    assert!(text.contains("three consecutive goal turns"));
+    assert!(text.contains("strictExecutionContract"));
+    assert!(text.contains("reuse wait_id/deadline on recheck without polling"));
+    assert!(text.contains("auditor checks evidence"));
     assert!(crate::prompts::continuation_trigger("g1").len() <= 160);
     let next = crate::prompts::continuation_message(&goal, &Settings::default());
     assert!(next.contains("Remaining: 3 of 3 tasks: a: Task a; a1: Task a1; b: Task b"));

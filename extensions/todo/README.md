@@ -1,10 +1,12 @@
 # pi-ext-todo
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-11-04.
 
 A task list for pi, ported from `@juicesharp/rpiv-todo`, with ordered phases, subagent scopes, a widget above the editor, and a `/todos` panel. Run it with `pi-rust-ext todo`.
 
 ## Tool `todo`
+
+The built-in prompt uses compact schema descriptions and two guidelines covering progress, blockers, dependencies, and phases. Guidance overrides still replace the defaults.
 
 The six rpiv-todo actions keep their parameters, status machine, dependency checks, result text, and `details` snapshot:
 
@@ -62,8 +64,8 @@ Global `<agentDir>/ext/todo.json`, project `<cwd>/.pi/ext/todo.json`. The projec
 | `maxWidgetLines` | `12` (min 3) | Widget rows for the heading, goal, and todos |
 | `collapseKey` | `"ctrl+shift+t"` | Collapse shortcut; `"off"` disables it. Read at load. |
 | `defaultVisibility` | `"collapsed"` | Visibility of scopes without their own setting |
-| `guidance.promptSnippet` | rpiv-todo snippet | Tool prompt snippet. Read at load. |
-| `guidance.promptGuidelines` | rpiv-todo guidelines plus one for phases | Tool prompt guidelines. Read at load. |
+| `guidance.promptSnippet` | `Track multi-step work` | Tool prompt snippet. Read at load. |
+| `guidance.promptGuidelines` | 2 built-in guidelines | Tool prompt guidelines. Read at load. |
 
 ## Not ported
 

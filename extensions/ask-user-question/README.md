@@ -1,10 +1,12 @@
 # ask-user-question
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-11-04.
 
 Rust port of `@juicesharp/rpiv-ask-user-question`. The `ask_user_question` tool shows a tabbed questionnaire in a `ui.custom` panel and returns the answers to the model. Tool name, parameters, validation codes, result text, `details`, and `pi.events` channels match upstream, so prompts written for it keep working.
 
 ## Tool `ask_user_question`
+
+The built-in prompt keeps size limits in the schema, reserved labels in the label description, and one guideline for grouping questions, recommendations, and cancellation. Guidance overrides still replace the defaults.
 
 Parameters: `questions` (1 to 4), each `{ question, header (max 16), options (2 to 4) of { label (max 60), description, preview? }, multiSelect? }`. The panel appends a `Type something.` row to every question and a `Next` row to multi-select questions. The labels `Other`, `Type something.`, and `Next` are reserved.
 
@@ -58,7 +60,7 @@ Files, later ones win per key:
 | `notesKey` | `"n"` | one character as typed, or a key spec; navigation keys are rejected |
 | `guidance.description` | built-in | replaces the tool description; read at startup |
 | `guidance.promptSnippet` | built-in | replaces the system prompt snippet; read at startup |
-| `guidance.promptGuidelines` | 4 built-in guidelines | list of strings; read at startup |
+| `guidance.promptGuidelines` | 1 built-in guideline | list of strings; read at startup |
 
 `guidance` is read when the extension starts, from `$PI_CODING_AGENT_DIR` (or `~/.pi/agent`) and the process working directory. The keys are read each time the tool runs.
 

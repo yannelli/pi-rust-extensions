@@ -23,6 +23,27 @@ async fn tools_notify_and_shutdown_over_protocol() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     assert_eq!(tools, ["bg_run", "bg_status", "bg_logs", "bg_kill"]);
+    let run = &init["tools"][0];
+    assert_eq!(
+        run["parameters"]["required"],
+        json!(["name", "command", "isAgent"])
+    );
+    assert_eq!(
+        run["parameters"]["properties"]["surviveReload"]["default"],
+        true
+    );
+    let cost = run["description"].as_str().unwrap().chars().count()
+        + run["parameters"].to_string().chars().count()
+        + crate::POLICY.chars().count();
+    assert!(
+        cost <= 1_148,
+        "prompt grew beyond half the baseline: {cost}"
+    );
+    assert!(crate::POLICY.contains("Do not sleep or poll bg_status/bg_logs to wait"));
+    assert_eq!(
+        init["tools"][2]["parameters"]["properties"]["maxBytes"]["maximum"],
+        crate::tools::MAX_LOG_BYTES
+    );
     host.call(
         1,
         "event",

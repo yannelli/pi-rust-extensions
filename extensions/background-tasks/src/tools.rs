@@ -122,67 +122,59 @@ pub fn logs_text(task: &Task, max_bytes: u64, tail: bool) -> std::io::Result<Str
 fn run_spec() -> ToolSpec {
     ToolSpec::new(
         "bg_run",
-        "Start a named long-running shell command in the background and return at once with a task ID and output path. Completed, failed, or killed state arrives as a <background-task-notification> that starts a follow-up turn; do not sleep or poll to wait. Model-visible logs are bounded to 50KB.",
+        "Start a long-running shell command and return its task ID and output path immediately.",
     )
     .label("Background Run")
-    .prompt_snippet("Start long-running shell commands (tests, builds, servers, watchers) in the background")
-    .guideline("Use bg_run instead of bash for commands expected to run for a long time, such as test suites, dev servers, watchers, or builds.")
-    .guideline("Set name to a concise 2-6 word label for the task dock, not the raw command.")
-    .guideline("After bg_run, continue only independent work or end the turn; the terminal notification wakes you. Do not call sleep, bg_status, or bg_logs to wait.")
-    .guideline("Treat <background-task-notification> as terminal truth; call bg_logs only when the output is needed.")
     .parameters(json!({
         "type": "object",
         "properties": {
-            "name": { "type": "string", "description": "Short human-readable task name shown in the task dock. Use 2-6 words, not the raw command." },
-            "command": { "type": "string", "description": "Shell command to start in the background" },
-            "isAgent": { "type": "boolean", "description": "Set true only when the task launches an LLM/agent process such as a child `pi -p ...`; false for scripts, tests, servers, sleeps, and ordinary shell commands." },
-            "description": { "type": "string", "description": "Optional longer human-readable context for the task" },
-            "timeoutSeconds": { "type": "number", "description": "Optional timeout; the task is stopped and marked timed out when exceeded" },
-            "notifyOnCompletion": { "type": "boolean", "description": "Deliver the terminal notification. Default: true." },
-            "triggerOnCompletion": { "type": "boolean", "description": "Let that notification start a follow-up agent turn. Default: true; requires notifyOnCompletion." },
-            "surviveReload": { "type": "boolean", "description": "Keep the task running across /reload. Default: true. Tasks stop when the session quits or switches." }
+            "name": { "type": "string", "description": "2-6 word dock label" },
+            "command": { "type": "string" },
+            "isAgent": { "type": "boolean", "description": "True for LLM/agent processes" },
+            "description": { "type": "string" },
+            "timeoutSeconds": { "type": "number", "description": "Stop after this duration" },
+            "notifyOnCompletion": { "type": "boolean", "default": true },
+            "triggerOnCompletion": { "type": "boolean", "default": true, "description": "Notification starts a turn; requires notifyOnCompletion" },
+            "surviveReload": { "type": "boolean", "default": true }
         },
         "required": ["name", "command", "isAgent"]
     }))
 }
 
 fn status_spec() -> ToolSpec {
-    ToolSpec::new("bg_status", "Inspect one background task or list all running and recent background tasks. Point-in-time inspection, not a waiting primitive.")
+    ToolSpec::new("bg_status", "Inspect tasks when asked, notifications are off, or a task seems hung.")
         .label("Background Status")
-        .prompt_snippet("Inspect point-in-time status of background tasks; do not poll it as a wait loop")
-        .guideline("Use bg_status when the user asks for an update, notification was disabled, or a task looks hung.")
         .parameters(json!({
             "type": "object",
-            "properties": { "taskId": { "type": "string", "description": "Optional task ID or unambiguous prefix. Omit to list all tasks." } }
+            "properties": { "taskId": { "type": "string", "description": "ID/unique prefix; omit for all" } }
         }))
 }
 
 fn logs_spec() -> ToolSpec {
-    ToolSpec::new("bg_logs", "Read bounded output from a background task for deliberate inspection; not a waiting primitive. Output is capped at 50KB and points to the full output file when truncated.")
+    ToolSpec::new("bg_logs", "Read task output when needed; truncation includes the full file path.")
         .label("Background Logs")
-        .prompt_snippet("Read bounded task output when needed; do not tail it repeatedly to wait")
-        .guideline("Use bg_logs with a modest maxBytes value only when task output is needed.")
         .parameters(json!({
             "type": "object",
             "properties": {
-                "taskId": { "type": "string", "description": "Task ID or unambiguous prefix" },
-                "maxBytes": { "type": "number", "description": "Maximum bytes to return, capped at 50KB. Default: 50KB." },
-                "tail": { "type": "boolean", "description": "Read the tail of the log when true, the head when false. Default: true." }
+                "taskId": { "type": "string", "description": "ID/unique prefix" },
+                "maxBytes": { "type": "number", "maximum": MAX_LOG_BYTES, "default": DEFAULT_LOG_BYTES },
+                "tail": { "type": "boolean", "default": true, "description": "False reads head" }
             },
             "required": ["taskId"]
         }))
 }
 
 fn kill_spec() -> ToolSpec {
-    ToolSpec::new("bg_kill", "Stop a running background task by ID. Fails when the task is unknown or already finished.")
-        .label("Background Kill")
-        .prompt_snippet("Stop a running background task by ID")
-        .guideline("Use bg_kill when the user asks to stop a background task or a bg_run command is no longer needed.")
-        .parameters(json!({
-            "type": "object",
-            "properties": { "taskId": { "type": "string", "description": "Task ID or unambiguous prefix to stop" } },
-            "required": ["taskId"]
-        }))
+    ToolSpec::new(
+        "bg_kill",
+        "Stop a running task when requested or no longer needed.",
+    )
+    .label("Background Kill")
+    .parameters(json!({
+        "type": "object",
+        "properties": { "taskId": { "type": "string", "description": "ID/unique prefix" } },
+        "required": ["taskId"]
+    }))
 }
 
 pub fn register(ext: Extension, registry: Arc<Registry>) -> Extension {
