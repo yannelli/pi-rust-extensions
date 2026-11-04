@@ -301,6 +301,21 @@
       ]
     },
     {
+      "name": "workflows",
+      "displayName": "Workflows",
+      "description": "Fixed and dynamic multi-agent workflows with per-step models, tools, skills, MCP servers, subagent rules, and env; waits, loops, goals, and approvals; a TUI editor, the workflow tool, and skills.",
+      "version": "0.5.9",
+      "args": [
+        "workflows"
+      ],
+      "tags": [
+        "agents",
+        "workflow",
+        "tui",
+        "tool"
+      ]
+    },
+    {
       "name": "compactor",
       "displayName": "Compactor",
       "description": "Zero-LLM structured compaction summaries or LLM summaries with an active-work header, plus session recall and context budget tools.",
