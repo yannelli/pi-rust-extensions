@@ -18,15 +18,15 @@ pub const RPC_USAGE: &str = "router:rpc:usage";
 pub fn spec() -> ToolSpec {
     ToolSpec::new(
         "subscription_usage",
-        "Inspect subscription quota windows and the router's confirmed exhaustion blocks. Exhausted families are skipped by router/* models until they reset.",
+        "Show subscription quota and the model families router/* models skip as exhausted.",
     )
     .label("Subscription Usage")
-    .prompt_snippet("Inspect subscription quota before expensive subagent fan-out")
+    .prompt_snippet("Check subscription quota")
     .parameters(json!({
         "type": "object",
         "properties": {
-            "provider": { "type": "string", "description": "Provider to inspect. Omit for every relevant provider." },
-            "refresh": { "type": "boolean", "description": "Request a live refresh. Limited to once per minute." }
+            "provider": { "type": "string" },
+            "refresh": { "type": "boolean", "description": "Live, at most once a minute" }
         }
     }))
 }

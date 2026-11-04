@@ -103,29 +103,25 @@ fn list_plugins(env: &Env, args: PluginListArgs) -> anyhow::Result<ToolResult> {
 fn tool_specs() -> (ToolSpec, ToolSpec) {
     let list = ToolSpec::new(
         "pi_claude_marketplace_list",
-        "List configured Claude plugin marketplaces.",
+        "List Claude plugin marketplaces.",
     )
     .label("Claude Marketplace List")
-    .prompt_snippet(
-        "Use pi_claude_marketplace_list to inspect configured Claude plugin marketplaces.",
-    )
+    .prompt_snippet("List Claude plugin marketplaces")
     .parameters(json!({ "type": "object", "properties": {} }));
-    let flag = |text: &str| json!({ "type": "boolean", "description": text });
     let plugins = ToolSpec::new(
         "pi_claude_marketplace_plugin_list",
-        "List plugins in a Claude marketplace, showing compatibility and install status.",
+        "List Claude marketplace plugins with install status. Status flags filter; none lists all.",
     )
     .label("Marketplace Plugin List")
-    .prompt_snippet("Use pi_claude_marketplace_plugin_list to inspect plugins in a marketplace.")
+    .prompt_snippet("List Claude marketplace plugins")
     .parameters(json!({
         "type": "object",
         "properties": {
-            "marketplace": { "type": "string", "description": "Marketplace name to list plugins for." },
-            "scope": { "type": "string", "enum": ["user", "project"],
-                "description": "Scope to look in: \"user\" or \"project\". Default: both scopes." },
-            "installed": flag("Include plugins installed in state.json."),
-            "available": flag("Include manifest-declared plugins that are not installed but are installable."),
-            "unavailable": flag("Include manifest-declared plugins that are not installable on this system.")
+            "marketplace": { "type": "string", "description": "Default: all" },
+            "scope": { "type": "string", "enum": ["user", "project"], "description": "Default: both" },
+            "installed": { "type": "boolean" },
+            "available": { "type": "boolean" },
+            "unavailable": { "type": "boolean" }
         }
     }));
     (list, plugins)

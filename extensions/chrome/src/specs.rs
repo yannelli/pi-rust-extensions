@@ -23,8 +23,6 @@ pub const TOOL_NAMES: &[&str] = &[
     "chrome_upload_file",
 ];
 
-const BACKGROUND: &str = "Ignored while background mode is on. With /chrome background off, false brings the tab to the front.";
-
 pub(crate) fn s(description: &str) -> Value {
     json!({ "type": "string", "description": description })
 }
@@ -39,31 +37,19 @@ pub(crate) fn b(description: &str) -> Value {
 
 pub(crate) fn target_props() -> Vec<(&'static str, Value)> {
     vec![
-        (
-            "targetId",
-            s("CDP target id from chrome_tab list. Default: this session's own tab."),
-        ),
-        (
-            "urlIncludes",
-            s("Pick the tab whose URL contains this text."),
-        ),
-        (
-            "titleIncludes",
-            s("Pick the tab whose title contains this text."),
-        ),
-        ("background", b(BACKGROUND)),
+        ("targetId", json!({ "type": "string" })),
+        ("urlIncludes", json!({ "type": "string" })),
+        ("titleIncludes", json!({ "type": "string" })),
+        ("background", json!({ "type": "boolean" })),
     ]
 }
 
 pub(crate) fn point_props() -> Vec<(&'static str, Value)> {
     vec![
-        (
-            "uid",
-            s("Element uid from chrome_snapshot. Prefer it to selector."),
-        ),
-        ("selector", s("CSS selector.")),
-        ("x", n("Viewport x when uid and selector are not set.")),
-        ("y", n("Viewport y when uid and selector are not set.")),
+        ("uid", json!({ "type": "string" })),
+        ("selector", json!({ "type": "string" })),
+        ("x", json!({ "type": "number" })),
+        ("y", json!({ "type": "number" })),
     ]
 }
 
@@ -72,7 +58,11 @@ pub(crate) fn schema(props: Vec<(&'static str, Value)>, required: &[&str]) -> Va
     for (key, value) in props {
         properties.insert(key.to_owned(), value);
     }
-    json!({ "type": "object", "properties": properties, "required": required })
+    let mut schema = json!({ "type": "object", "properties": properties });
+    if !required.is_empty() {
+        schema["required"] = json!(required);
+    }
+    schema
 }
 
 pub(crate) fn tool(
@@ -98,21 +88,15 @@ pub fn specs() -> Vec<ToolSpec> {
         tool(
             "chrome_launch",
             "Chrome Launch",
-            "Connect to Chrome on the DevTools port, or start Chrome with the managed profile. Optionally open a URL in a new tab of this session.",
+            "Connect to Chrome on its DevTools port or start it with the managed profile; url opens in a new tab.",
             "Connect to or start Chrome for automation.",
             schema(
                 vec![
-                    ("port", n("DevTools port. Default from config (9222).")),
-                    ("url", s("URL to open in a new tab.")),
-                    (
-                        "userDataDir",
-                        s("Profile folder for a launched Chrome. Default: the managed profile."),
-                    ),
-                    (
-                        "useDefaultProfile",
-                        b("Not supported: Chrome blocks remote debugging of the default profile."),
-                    ),
-                    ("headless", b("Start the managed Chrome without a window.")),
+                    ("port", json!({ "type": "number" })),
+                    ("url", json!({ "type": "string" })),
+                    ("userDataDir", json!({ "type": "string" })),
+                    ("useDefaultProfile", b("Unsupported.")),
+                    ("headless", json!({ "type": "boolean" })),
                 ],
                 &[],
             ),
@@ -120,15 +104,15 @@ pub fn specs() -> Vec<ToolSpec> {
         tool(
             "chrome_tab",
             "Chrome Tab",
-            "List, open, activate, or close Chrome tabs, or show the Chrome version. New tabs belong to this session. Background mode keeps new tabs in the background and blocks activate.",
-            "List, open, activate, and close Chrome tabs.",
+            "Manage tabs or show the Chrome version. Background mode opens new tabs behind and blocks activate.",
+            "Manage Chrome tabs.",
             schema(
                 with_target(vec![
                     (
                         "action",
                         json!({ "type": "string", "enum": ["list", "new", "activate", "close", "version"] }),
                     ),
-                    ("url", s("URL for action=new.")),
+                    ("url", s("For new.")),
                 ]),
                 &["action"],
             ),
@@ -136,18 +120,18 @@ pub fn specs() -> Vec<ToolSpec> {
         tool(
             "chrome_snapshot",
             "Chrome Snapshot",
-            "Read the page: title, URL, visible elements with stable uids and coordinates, and page text. Use mode, query, or nearUid to narrow the output.",
+            "Read the page title, URL, text, and visible elements with uids and coordinates.",
             "Read a Chrome page with stable element uids.",
             schema(with_target(snapshot_props()), &[]),
         ),
         tool(
             "chrome_find",
             "Chrome Find",
-            "Find elements on the page that match a query. Returns ranked elements with uids.",
-            "Find Chrome page elements by text.",
+            "Find ranked page elements matching query.",
+            "Find Chrome page elements.",
             schema(
                 with_target(vec![
-                    ("query", s("What to find, for example 'search box'.")),
+                    ("query", json!({ "type": "string" })),
                     ("mode", json!({ "type": "string", "enum": MODES })),
                     (
                         "maxElements",
@@ -160,7 +144,7 @@ pub fn specs() -> Vec<ToolSpec> {
         tool(
             "chrome_navigate",
             "Chrome Navigate",
-            "Open a URL in a Chrome tab. With no target, it uses this session's own tab and does not replace the user's tabs.",
+            "Open a URL in a tab.",
             "Navigate a Chrome tab to a URL.",
             schema(
                 with_target(vec![
@@ -170,10 +154,7 @@ pub fn specs() -> Vec<ToolSpec> {
                         json!({ "type": "boolean", "default": true }),
                     ),
                     ("timeoutMs", json!({ "type": "number", "default": 15000 })),
-                    (
-                        "initScript",
-                        s("JavaScript that runs before page scripts on the next document."),
-                    ),
+                    ("initScript", s("Runs before page scripts.")),
                 ]),
                 &["url"],
             ),
@@ -181,8 +162,8 @@ pub fn specs() -> Vec<ToolSpec> {
         tool(
             "chrome_evaluate",
             "Chrome Evaluate",
-            "Run JavaScript in the page and return the JSON value.",
-            "Run JavaScript in a Chrome tab.",
+            "Run page JavaScript and return its JSON value.",
+            "Run JavaScript in Chrome.",
             schema(
                 with_target(vec![
                     ("expression", json!({ "type": "string" })),
@@ -197,15 +178,15 @@ pub fn specs() -> Vec<ToolSpec> {
         tool(
             "chrome_wait_for",
             "Chrome Wait For",
-            "Wait until a CSS selector exists or a JavaScript expression is truthy.",
-            "Wait for page state in Chrome.",
+            "Wait until a selector exists or an expression is truthy.",
+            "Wait for Chrome page state.",
             schema(
                 with_target(vec![
                     (
                         "kind",
                         json!({ "type": "string", "enum": ["selector", "expression"] }),
                     ),
-                    ("value", s("CSS selector or JavaScript expression.")),
+                    ("value", json!({ "type": "string" })),
                     ("timeoutMs", json!({ "type": "number", "default": 10000 })),
                     ("intervalMs", json!({ "type": "number", "default": 250 })),
                 ]),
@@ -215,26 +196,23 @@ pub fn specs() -> Vec<ToolSpec> {
         tool(
             "chrome_screenshot",
             "Chrome Screenshot",
-            "Capture the tab and save the image. Default folder: .pi/chrome-screenshots.",
+            "Save a screenshot of the tab.",
             "Save Chrome screenshots.",
             schema(
                 with_target(vec![
-                    (
-                        "path",
-                        s("Output path. Default .pi/chrome-screenshots/<time>.<format>."),
-                    ),
+                    ("path", s("Default .pi/chrome-screenshots/")),
                     (
                         "format",
                         json!({ "type": "string", "enum": ["png", "jpeg"] }),
                     ),
                     (
                         "quality",
-                        json!({ "type": "number", "minimum": 0, "maximum": 100, "description": "JPEG quality." }),
+                        json!({ "type": "number", "minimum": 0, "maximum": 100, "description": "JPEG" }),
                     ),
-                    ("fullPage", b("Capture the full page height.")),
+                    ("fullPage", json!({ "type": "boolean" })),
                     (
                         "retentionDays",
-                        json!({ "type": "number", "minimum": 0, "description": "Delete default-folder captures older than this. The newest 20 stay. Default 7; 0 keeps all." }),
+                        json!({ "type": "number", "minimum": 0, "description": "Default 7; 0 keeps all" }),
                     ),
                 ]),
                 &[],
@@ -243,16 +221,13 @@ pub fn specs() -> Vec<ToolSpec> {
         tool(
             "chrome_cdp",
             "Chrome CDP Call",
-            "Run one Chrome DevTools Protocol method on a tab, for example Network.getCookies. Put CDP fields in params. No method filter applies except that background mode blocks Page.bringToFront and Target.activateTarget. Results over 256 KiB are cut.",
+            "Run one CDP method with params. Background mode blocks Page.bringToFront and Target.activateTarget. Results over 256 KiB are cut.",
             "Run a raw CDP method on a Chrome tab.",
             schema(
                 with_target(vec![
-                    ("method", s("CDP method, for example Runtime.evaluate.")),
-                    (
-                        "params",
-                        json!({ "type": "object", "additionalProperties": true }),
-                    ),
-                    ("timeoutMs", n("Default 5000, maximum 120000.")),
+                    ("method", json!({ "type": "string" })),
+                    ("params", json!({ "type": "object" })),
+                    ("timeoutMs", n("Default 5000, max 120000")),
                 ]),
                 &["method"],
             ),

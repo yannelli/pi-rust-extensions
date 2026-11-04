@@ -47,9 +47,9 @@ pub fn spec() -> ToolSpec {
     let task = json!({
         "type": "object",
         "properties": {
-            "agent": { "type": "string", "description": "Agent name; defaults to the call's `agent`, else explore." },
+            "agent": { "type": "string" },
             "task": { "type": "string" },
-            "model": { "type": "string", "description": "provider/id for this task" },
+            "model": { "type": "string" },
             "thinking": { "type": "string" },
             "cwd": { "type": "string" }
         },
@@ -57,30 +57,25 @@ pub fn spec() -> ToolSpec {
     });
     ToolSpec::new(
         "subagent",
-        "Run a task in a child pi agent with its own context and tools. Agents: explore (read-only search), \
-build (full tools), advisor (read-only review), plus custom agents. Pass `tasks` for parallel runs and \
-`async: true` to run in the background; background results arrive as a message. Actions: run (default), \
-list (agents), status (runs, or one run by `id`), stop (`id`).",
+        "Run tasks in child pi agents. They do not see this conversation, so state each task's paths, goals, and \
+constraints. `tasks` run in parallel; `async: true` runs in the background and the result arrives as a message.",
     )
     .label("Subagent")
     .parameters(json!({
         "type": "object",
         "properties": {
             "action": { "type": "string", "enum": ["run", "list", "status", "stop"] },
-            "agent": { "type": "string", "description": "Agent name (default explore)" },
-            "task": { "type": "string", "description": "The full task with the context the agent needs" },
-            "tasks": { "type": "array", "items": task, "description": "Independent tasks to run in parallel" },
-            "async": { "type": "boolean", "description": "Run in the background and report on completion" },
-            "model": { "type": "string", "description": "provider/id; default: the agent's model, else this session's model" },
-            "thinking": { "type": "string", "description": "off, minimal, low, medium, high, xhigh, max" },
-            "cwd": { "type": "string", "description": "Working directory; default: the session cwd" },
-            "id": { "type": "string", "description": "Run id for status and stop" }
+            "agent": { "type": "string", "description": "Default explore" },
+            "task": { "type": "string" },
+            "tasks": { "type": "array", "items": task },
+            "async": { "type": "boolean" },
+            "model": { "type": "string", "description": "provider/id" },
+            "thinking": { "type": "string", "description": "off|minimal|low|medium|high|xhigh|max" },
+            "cwd": { "type": "string" },
+            "id": { "type": "string" }
         }
     }))
-    .prompt_snippet("Delegate tasks to child agents (explore, build, advisor, custom), in parallel or in the background")
-    .guideline("Use subagent explore for broad codebase searches and subagent advisor for a second opinion on a plan or change.")
-    .guideline("Subagents do not see this conversation: write each task with the paths, goals, and constraints it needs.")
-    .guideline("Run independent subagent tasks together with `tasks`; use `async: true` only when you can continue without the result.")
+    .prompt_snippet("Delegate tasks to child agents")
 }
 
 pub async fn execute(app: App, params: Params, ctx: ToolCtx) -> Result<ToolResult> {

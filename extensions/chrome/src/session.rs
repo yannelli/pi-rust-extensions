@@ -11,10 +11,11 @@ use crate::specs::TOOL_NAMES;
 use crate::state::Chrome;
 
 pub const PRIMER_KEY: &str = "chrome-profile-bridge";
-pub const PRIMER: &str = "Chrome control is authorized for this session through the chrome_* tools. \
-Use chrome_snapshot or chrome_find to read the page and get element uids, then act with chrome_click, \
-chrome_type, chrome_fill, chrome_key, chrome_scroll, and chrome_navigate. With no tab selector, the tools \
-use this session's own tab. Do not change the user's other tabs unless the user asks.";
+pub const PRIMER: &str = "The chrome_* tools are authorized for this session. Without targetId (from \
+chrome_tab list), urlIncludes, or titleIncludes, a tool uses this session's own tab; do not change the user's \
+other tabs unless the user asks. Get element uids with chrome_snapshot or chrome_find, then target elements by \
+uid (preferred), CSS selector, or viewport x/y. background=false brings the tab to the front when background \
+mode is off.";
 
 pub async fn apply_tools(host: &Host, authorized: bool) -> Result<()> {
     let active = host.active_tools().await?;

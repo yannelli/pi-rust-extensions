@@ -324,6 +324,13 @@ fn cwd_parameter_stays_inside_the_session_cwd() {
 #[tokio::test]
 async fn unknown_agent_and_prompt_section() {
     let d = dirs(&scripted_events("x"), 0);
+    let agents = d.agent.join("ext/subagents/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("seo.md"),
+        "---\ndescription: >\n  SEO analyst. Audits\n  pages.\ntools: read\n---\nAudit.",
+    )
+    .unwrap();
     let mut host = TestHost::start(pi_ext_subagents::extension());
     host.initialize(&d.agent, &d.cwd).await;
     let params = json!({ "agent": "nope", "task": "x" });
@@ -335,7 +342,7 @@ async fn unknown_agent_and_prompt_section() {
         response["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("Available: explore, build, advisor")
+            .contains("Available: explore, build, advisor, seo")
     );
     let event = json!({ "type": "before_agent_start", "prompt": "hi",
         "systemPromptOptions": { "sections": {}, "selectedTools": ["read", "subagent"] } });
@@ -353,6 +360,8 @@ async fn unknown_agent_and_prompt_section() {
         section.contains("`explore`") && section.contains("`advisor`"),
         "{section}"
     );
+    assert!(section.contains("- `seo`: SEO analyst.\n"), "{section}");
+    assert!(!section.contains("Audits"), "{section}");
     host.finish().await;
 }
 

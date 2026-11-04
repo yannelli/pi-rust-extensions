@@ -141,44 +141,26 @@ pub fn snapshot_props() -> Props {
     vec![
         (
             "mode",
-            json!({ "type": "string", "enum": MODES, "description": "auto (default), interactive, forms, pageMap, text, changes, or full." }),
+            json!({ "type": "string", "enum": MODES, "description": "Default auto" }),
         ),
         (
             "maxElements",
             json!({ "type": "number", "default": MAX_ELEMENTS }),
         ),
-        (
-            "query",
-            crate::specs::s("Rank elements that match this phrase, for example 'sign in button'."),
-        ),
-        (
-            "maxTextChars",
-            crate::specs::n("Maximum characters of page text."),
-        ),
-        (
-            "containingText",
-            crate::specs::s("Only elements whose label or value contains this text."),
-        ),
-        (
-            "roleFilter",
-            crate::specs::s("Only elements with this role or tag, for example button or textbox."),
-        ),
-        (
-            "nearUid",
-            crate::specs::s("Sort elements by distance from this uid."),
-        ),
+        ("query", crate::specs::s("Rank elements by this phrase")),
+        ("maxTextChars", json!({ "type": "number" })),
+        ("containingText", json!({ "type": "string" })),
+        ("roleFilter", crate::specs::s("Role or tag")),
+        ("nearUid", json!({ "type": "string" })),
     ]
 }
 
 pub fn include_snapshot() -> Props {
     vec![
-        (
-            "includeSnapshot",
-            crate::specs::b("Add a new snapshot after the action."),
-        ),
+        ("includeSnapshot", json!({ "type": "boolean" })),
         (
             "maxElements",
-            json!({ "type": "number", "default": MAX_ELEMENTS, "description": "Maximum elements in that snapshot." }),
+            json!({ "type": "number", "default": MAX_ELEMENTS }),
         ),
     ]
 }

@@ -30,16 +30,16 @@ pub struct UrlContextArgs {
 pub fn web_search_spec() -> ToolSpec {
     ToolSpec::new(
         WEB_SEARCH,
-        "Search the web using the current supported provider (Google Gemini, xAI Grok, OpenAI, Anthropic, DeepSeek, Ollama, or OpenCode Zen/Go) or a configured search API (Exa, Firecrawl, Brave, Tavily). Optionally include URLs to analyze alongside search results.",
+        "Search the web to answer a query, with cited sources.",
     )
     .label("Web Search")
     .parameters(json!({
         "type": "object",
         "properties": {
-            "query": { "type": "string", "description": "The search query or question to answer" },
+            "query": { "type": "string" },
             "urls": {
                 "type": "array", "items": { "type": "string" }, "maxItems": 20,
-                "description": "Additional URLs to analyze along with search (up to 20)"
+                "description": "Pages to read with the search"
             }
         },
         "required": ["query"]
@@ -49,17 +49,14 @@ pub fn web_search_spec() -> ToolSpec {
 pub fn url_context_spec() -> ToolSpec {
     ToolSpec::new(
         URL_CONTEXT,
-        "Analyze the content of up to 20 public URLs using provider-native URL retrieval (Gemini URL Context or Ollama web fetch) or a configured fetch API (Exa, Firecrawl, Tavily). Supports web pages and documents; images and YouTube videos need Gemini.",
+        "Read public URLs (pages, documents) and answer a query about them. Images and YouTube videos need a Gemini model.",
     )
     .label("URL Context")
     .parameters(json!({
         "type": "object",
         "properties": {
-            "query": { "type": "string", "description": "Question or task to perform on the URLs" },
-            "urls": {
-                "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 20,
-                "description": "Public URLs to analyze (web pages, documents, images, YouTube videos, etc)."
-            }
+            "query": { "type": "string" },
+            "urls": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 20 }
         },
         "required": ["query", "urls"]
     }))
