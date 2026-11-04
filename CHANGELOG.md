@@ -2,6 +2,12 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.13] - 2026-11-04
+
+### Added
+
+- **workflows:** live agent output in the run view and steering with m ([bcb7cf8](https://github.com/yannelli/pi-rust-extensions/commit/bcb7cf840bdf21fb9df32220948651ce1e10a9ed))
+
 ## [0.5.12] - 2026-11-04
 
 ### Added
