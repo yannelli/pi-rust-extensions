@@ -145,9 +145,13 @@ pub fn info(env: &Env, id: &str) -> Result<String> {
         lines.push("Not applied in pi:".into());
         lines.extend(dropped.iter().map(|l| format!("  {l}")));
     }
-    if !record.lsp.is_empty() {
+    if !record.lsp_keys.is_empty() {
+        let file = dirs.lens_lsp_file();
+        lines.push(format!("LSP servers (lens, {}):", file.display()));
+        lines.extend(record.lsp.iter().map(|l| format!("  {l}")));
+    } else if !record.lsp.is_empty() {
         lines.push(format!(
-            "LSP servers (not run; add them to lens.json by hand): {}",
+            "LSP servers (not staged; enable or reinstall the plugin): {}",
             record.lsp.join("; ")
         ));
     }

@@ -326,15 +326,10 @@ fn manifest_rules_lsp_conflicts_and_single_skill() {
     let kit = setup();
     let env = kit.fx.env(true);
     let text = install::install(&env, "lsp@kits", Scope::User).unwrap();
-    assert!(
-        text.contains("Not applied in pi: marketplace entry lspServers (pi runs no plugin LSP"),
-        "{text}"
-    );
+    assert!(text.contains("1 LSP server(s)"), "{text}");
     let info = cli::info(&env, "lsp@kits").unwrap();
-    assert!(
-        info.contains("LSP servers (not run; add them to lens.json by hand): go: gopls"),
-        "{info}"
-    );
+    assert!(info.contains("LSP servers (lens, "), "{info}");
+    assert!(info.contains("  plugin_lsp_go: gopls (.go)"), "{info}");
 
     let err = install::install(&env, "clash@kits", Scope::User).unwrap_err();
     assert!(

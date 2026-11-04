@@ -9,7 +9,7 @@ use crate::plugin::{self, Resolved};
 use crate::source::{PluginSource, contained, ensure_inside};
 use crate::stage::remove_path;
 use crate::state::{PluginRecord, State, plugin_id, split_id};
-use crate::{RELOAD, apply, fields, git, hooks, market, mcp, options, settings};
+use crate::{RELOAD, apply, fields, git, hooks, lsp, market, mcp, options, settings};
 
 /// Marketplaces a plugin of `scope` can come from: the same scope, then user.
 fn marketplace_scopes(scope: Scope) -> Vec<Scope> {
@@ -51,7 +51,7 @@ pub fn materialize(entry: &Entry, catalog: &Catalog, dirs: &Dirs) -> Result<Path
     }
 }
 
-/// Removes the staged files, hook groups, and MCP servers of a record.
+/// Removes the staged files, hook groups, MCP servers, and LSP servers of a record.
 pub fn unstage(record: &PluginRecord, dirs: &Dirs, id: &str) -> Result<()> {
     let bases = [
         dirs.prompts(),
@@ -68,6 +68,7 @@ pub fn unstage(record: &PluginRecord, dirs: &Dirs, id: &str) -> Result<()> {
         }
     }
     hooks::remove(&dirs.hooks_file(), id)?;
+    lsp::remove(&dirs.lens_lsp_file(), id)?;
     mcp::remove(&dirs.mcp_file(), id)
 }
 
@@ -293,7 +294,18 @@ pub fn uninstall(env: &Env, id: &str, scope: Option<Scope>) -> Result<String> {
     let mut config = Config::load(&dirs)?;
     config.remove_plugin(id)?;
     config.save()?;
-    Ok(format!("Uninstalled {id} [{scope}]. {RELOAD}"))
+    Ok(format!(
+        "Uninstalled {id} [{scope}].{} {RELOAD}",
+        lens_note(&record)
+    ))
+}
+
+/// Tells that lens drops the removed LSP servers without `/reload`.
+fn lens_note(record: &PluginRecord) -> &'static str {
+    match record.lsp_keys.is_empty() {
+        true => "",
+        false => " The lens extension drops its LSP servers from its next scan.",
+    }
 }
 
 pub fn set_enabled(env: &Env, id: &str, enabled: bool, scope: Option<Scope>) -> Result<String> {
@@ -314,12 +326,16 @@ pub fn set_enabled(env: &Env, id: &str, enabled: bool, scope: Option<Scope>) -> 
         entry.files.clear();
         entry.hooks = false;
         entry.mcp_keys.clear();
+        entry.lsp_keys.clear();
     }
     state.save(&dirs)?;
     let mut config = Config::load(&dirs)?;
     config.set_plugin(id, false)?;
     config.save()?;
-    Ok(format!("Disabled {id} [{scope}]. {RELOAD}"))
+    Ok(format!(
+        "Disabled {id} [{scope}].{} {RELOAD}",
+        lens_note(&record)
+    ))
 }
 
 /// Updates one plugin's marketplace and reinstalls it.

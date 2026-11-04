@@ -100,7 +100,7 @@ async fn registers_and_answers_resources_discover() {
     let text = result["content"][0]["text"].as_str().unwrap();
     assert_eq!(
         text,
-        "Marketplace acme (user)\n  [installed] fmt  1.0.0\n  [installed] lint  0.1.0  (unsupported: lspServers)"
+        "Marketplace acme (user)\n  [installed] fmt  1.0.0\n  [installed] lint  0.1.0"
     );
     assert_eq!(result["details"]["plugins"][1]["scope"], "project");
 

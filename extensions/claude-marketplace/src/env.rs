@@ -190,4 +190,9 @@ impl Dirs {
     pub fn mcp_file(&self) -> PathBuf {
         self.root.join("mcp.json")
     }
+
+    /// The lens LSP server file.
+    pub fn lens_lsp_file(&self) -> PathBuf {
+        self.root.join("ext").join("lens-lsp.json")
+    }
 }

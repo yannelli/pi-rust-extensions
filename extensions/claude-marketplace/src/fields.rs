@@ -21,7 +21,7 @@ impl Dropped {
 }
 
 /// Fields that the extension applies.
-pub const APPLIED: [&str; 14] = [
+pub const APPLIED: [&str; 15] = [
     "name",
     "version",
     "description",
@@ -30,6 +30,7 @@ pub const APPLIED: [&str; 14] = [
     "skills",
     "hooks",
     "mcpServers",
+    "lspServers",
     "outputStyles",
     "userConfig",
     "dependencies",
@@ -46,7 +47,6 @@ pub fn reason(field: &str) -> Option<&'static str> {
         return None;
     }
     Some(match field {
-        "lspServers" => "pi runs no plugin LSP servers; add them to lens.json by hand",
         "monitors" => "pi has no background monitors",
         "themes" => "pi themes use another format",
         "channels" => "pi has no message channels",
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn reports_fields_and_frontmatter() {
         let mut out = Vec::new();
-        let value = json!({ "name": "x", "author": {}, "lspServers": {}, "wat": 1,
+        let value = json!({ "name": "x", "author": {}, "monitors": {}, "wat": 1,
             "experimental": { "themes": "./t", "evals": "./e", "new": 1 } });
         manifest(&value, "plugin.json", &mut out);
         let whats: Vec<&str> = out.iter().map(|d| d.what.as_str()).collect();
@@ -271,7 +271,7 @@ mod tests {
             whats,
             [
                 "plugin.json author",
-                "plugin.json lspServers",
+                "plugin.json monitors",
                 "plugin.json wat",
                 "plugin.json experimental.themes",
                 "plugin.json experimental.evals",

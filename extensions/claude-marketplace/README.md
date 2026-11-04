@@ -2,7 +2,7 @@
 
 Created 2026-10-29. Last updated 2026-11-04.
 
-Installs Claude Code plugin marketplaces and plugins into pi. Port of `pi-claude-marketplace` v0.20.1. Commands become pi prompt templates, skills become pi skills, agents become `subagents` agent files, hooks go to the `hooks` extension, and MCP servers go to the pi MCP config. Output styles go into the system prompt, `bin/` executables go on the bash `PATH`, and `userConfig` options are asked for and substituted. [Claude Code parity](#claude-code-parity) lists each plugin component. Changes apply to pi after `/reload`.
+Installs Claude Code plugin marketplaces and plugins into pi. Port of `pi-claude-marketplace` v0.20.1. Commands become pi prompt templates, skills become pi skills, agents become `subagents` agent files, hooks go to the `hooks` extension, MCP servers go to the pi MCP config, and LSP servers go to the `lens` extension. Output styles go into the system prompt, `bin/` executables go on the bash `PATH`, and `userConfig` options are asked for and substituted. [Claude Code parity](#claude-code-parity) lists each plugin component. Changes apply to pi after `/reload`. LSP server changes apply on the next `lens` scan.
 
 ## Tools
 
@@ -25,11 +25,11 @@ Installs Claude Code plugin marketplaces and plugins into pi. Port of `pi-claude
 | `marketplace remove <mp>` | Uninstalls its plugins and deletes the clone. |
 | `marketplace autoupdate\|noautoupdate <mp>` | Sets `autoUpdate`. Auto-update marketplaces are updated at session start. |
 | `list [<mp>] [--installed] [--available] [--unavailable]` | Lists plugins. |
-| `info <p@mp>` | Shows status, root, the staged commands, skills, agents, and output styles, hooks, MCP keys, bin commands, user config (sensitive values masked), the effective `strict` and where it comes from, the argument indexing, the model and thinking of each agent with the rule that set them, everything not applied (with the reason), LSP servers, and the default agent. |
+| `info <p@mp>` | Shows status, root, the staged commands, skills, agents, and output styles, hooks, MCP keys, bin commands, user config (sensitive values masked), the effective `strict` and where it comes from, the argument indexing, the model and thinking of each agent with the rule that set them, everything not applied (with the reason), the LSP servers staged in lens, and the default agent. |
 | `install <p@mp> \| <source> [--scope user\|project]` | Installs (or reinstalls) a plugin and its missing dependencies. Reports every component and field that is not applied, with the reason, and missing required user config. With a UI, then asks for the user config options that have no value. A `<source>` (anything that is not `<plugin>@<marketplace>`) is added as a marketplace first, or the marketplace already added from it is used; its plugin is installed when it has exactly one. |
 | `reinstall <p@mp>` | Installs again in the same scope. |
 | `update [<p@mp>]` | One plugin: updates its marketplace and reinstalls it. No name: updates all marketplaces, reinstalls enabled plugins, then adds config marketplaces and installs enabled config plugins missing from the state. |
-| `uninstall <p@mp>` | Removes staged files, agents, hook groups, MCP servers, the plugin clone, and the plugin data dir. |
+| `uninstall <p@mp>` | Removes staged files, agents, hook groups, MCP servers, LSP servers, the plugin clone, and the plugin data dir. |
 | `enable` / `disable <p@mp>` | Disable removes the staged components and keeps the plugin in the state; enable stages it again. |
 | `config <p@mp> [KEY=VALUE ...]` | No values: shows the user config. With values: checks them against the option types, stores them, and reinstalls the plugin. `KEY=` clears a value. The browser action menu has **Configure** for the same. |
 | `style [<plugin>:<style> \| off] [--scope user\|project]` | No name: lists the installed output styles (`*` marks the active one). With a name: selects it in the config of the scope. `off` clears it. |
@@ -84,7 +84,7 @@ Desired state, user `<agentDir>/ext/claude-marketplace.json`, project `<cwd>/.pi
 | `argumentIndex` | `auto` | `auto`, `zero`, or `one`: how `$N` in commands counts (top level, `marketplaces.<name>`, `plugins.<p@mp>`). See [Arguments](#arguments). |
 | `env` | none | Extra env for the plugin: string values (top level, `marketplaces.<name>`, `plugins.<p@mp>`). See [Environment](#environment). |
 | `agentModels` | none | Rules that map agent `model` and `effort` (top level, `marketplaces.<name>`, `plugins.<p@mp>`). See [Agent models](#agent-models). |
-| `plugins.<p@mp>.paths.<kind>` | none | Replaces what the manifest declares for `commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, or `bin`, with the manifest rules (so `paths.commands` replaces `commands/`, and `paths.bin` replaces `bin/`). |
+| `plugins.<p@mp>.paths.<kind>` | none | Replaces what the manifest declares for `commands`, `agents`, `skills`, `hooks`, `mcpServers`, `lspServers`, `outputStyles`, or `bin`, with the manifest rules (so `paths.commands` replaces `commands/`, and `paths.bin` replaces `bin/`). |
 | `plugins.<p@mp>.extraPaths.<kind>` | none | Adds paths of the same kinds after the manifest rules, so the default folders stay. |
 
 Paths in `paths` and `extraPaths` are a string or a list. They must be relative, exist, and stay inside the plugin root; a bad path or an unknown kind fails the install with a message.
@@ -108,6 +108,7 @@ A body without placeholders gets `$ARGUMENTS` appended on its own line, as Claud
 The plugin env is `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, `CLAUDE_PROJECT_DIR` (project scope only), `CLAUDE_PLUGIN_OPTION_<KEY>` for each user config value, and the config `env`. It goes to:
 
 - Stdio MCP servers: added to `env` (values the plugin sets stay).
+- LSP servers: added to `env` (values the plugin sets stay).
 - http and sse MCP servers: `${NAME}` in the `url`, `headers`, and other values.
 - Prompt templates, skills, agents, and output styles: `${NAME}` is substituted. Sensitive user config values are left out of Markdown.
 - Bash commands that name a plugin bin file: the plugin env file `<root>/ext/claude-marketplace/env/<mp>/<plugin>.sh` (mode `0600`) is sourced first.
@@ -140,7 +141,7 @@ Scope root: user = agent dir, project = `<cwd>/.pi`.
 
 | Path | Content |
 | --- | --- |
-| `<root>/ext/claude-marketplace/state.json` | Marketplaces (source, clone URL, root) and installed plugins (version, scope, staged files, MCP keys) |
+| `<root>/ext/claude-marketplace/state.json` | Marketplaces (source, clone URL, root) and installed plugins (version, scope, staged files, MCP keys, LSP keys) |
 | `<root>/ext/claude-marketplace/sources/<mp>/` | Marketplace clones |
 | `<root>/ext/claude-marketplace/plugin-clones/<mp>/<plugin>/` | Clones of `github`, `url`, and `git-subdir` plugin sources |
 | `<root>/ext/claude-marketplace/data/<mp>/<plugin>/` | `${CLAUDE_PLUGIN_DATA}` |
@@ -151,15 +152,16 @@ Scope root: user = agent dir, project = `<cwd>/.pi`.
 | `<root>/ext/claude-marketplace/resources/skills/<plugin>-<skill>/` | Skills with all their files; `name:` set to the staged name (from the frontmatter `name`, else the dir name), prefix left out when the name is the plugin name or starts with `<plugin>-` |
 | `<root>/ext/subagents/agents/<plugin>-<agent>.md` | Agents in the Claude format. Subfolders join the name (`agents/review/audit.md` becomes `<plugin>-review-audit`). `tools` and `disallowedTools` mapped to pi names (`Bash` `bash`, `Read` `read`, `Edit` `edit`, `Write` `write`, `Grep` `grep`, `Glob` `find`, `LS` `ls`, `PowerShell` `powershell`, `WebFetch` `url_context`, `WebSearch` `web_search`; `Bash(...)` becomes `bash`; other names kept). `model` and `effort` as in [Agent models](#agent-models). |
 | `<root>/ext/hooks.json` | Matcher groups tagged `plugin: "<p@mp>"`, `pluginRoot`, `pluginData`, and `pluginEnv` (`CLAUDE_PLUGIN_OPTION_<KEY>` of each user config value); Claude event names and matchers kept. Other keys of the file are kept. |
+| `<root>/ext/lens-lsp.json` | `servers.plugin_<plugin>_<server>`, tagged `"plugin": "<p@mp>"`, in the `lens` server format. Servers get the plugin env as in [Environment](#environment). Other entries are kept; an existing key without the tag is not replaced. See [LSP servers](#lsp-servers). |
 | `<root>/mcp.json` | `mcpServers.plugin_<plugin>_<server>`, tagged `"claudePlugin": "<p@mp>"`. Servers get the plugin env as in [Environment](#environment). Other keys are kept; an existing key without the tag is not replaced. |
 
-Plugin layout: manifest `<pluginRoot>/.claude-plugin/plugin.json` or `<pluginRoot>/plugin.json`. Components come from the manifest, the marketplace entry, and the default `commands/`, `skills/`, `agents/`, `output-styles/`, `hooks/hooks.json`, `.mcp.json`, and `bin/`. A plugin without `skills/` and without a `skills` key, but with a root `SKILL.md`, is one skill. Component paths must be relative and stay inside the plugin root; a plugin with an escaping path or an invalid manifest is unavailable.
+Plugin layout: manifest `<pluginRoot>/.claude-plugin/plugin.json` or `<pluginRoot>/plugin.json`. Components come from the manifest, the marketplace entry, and the default `commands/`, `skills/`, `agents/`, `output-styles/`, `hooks/hooks.json`, `.mcp.json`, `.lsp.json`, and `bin/`. A plugin without `skills/` and without a `skills` key, but with a root `SKILL.md`, is one skill. Component paths must be relative and stay inside the plugin root; a plugin with an escaping path or an invalid manifest is unavailable.
 
 Manifest rules, as in Claude Code:
 
-- A `commands`, `agents`, or `outputStyles` key replaces its default folder (the install text says so). A `skills` key adds to `skills/`. Hooks and MCP servers merge with their default files.
+- A `commands`, `agents`, or `outputStyles` key replaces its default folder (the install text says so). A `skills` key adds to `skills/`. Hooks, MCP servers, and LSP servers merge with their default files.
 - `commands` can be an object: `{ "<name>": { "source" | "content", "description", "argumentHint", "model", "allowedTools" } }`.
-- `hooks` and `mcpServers` can be a path, an inline object, or an array of both. `.mcpb`, `.dxt`, and URL MCP entries are skipped with a note.
+- `hooks`, `mcpServers`, and `lspServers` can be a path, an inline object, or an array of both. `.mcpb`, `.dxt`, and URL MCP entries are skipped with a note.
 - Without a plugin.json, the marketplace entry is the manifest.
 - With a plugin.json and `strict` (the default), the entry's `commands`, `agents`, `skills`, and `outputStyles` are added. Its inline `hooks` replace the plugin's groups of the same event. Its `mcpServers`, `lspServers`, `userConfig`, and `channels` are ignored with a note.
 - With a plugin.json, an entry with `strict: false` that declares components conflicts, and the plugin is unavailable. The config `strict` key overrides the entry value.
@@ -167,9 +169,33 @@ Manifest rules, as in Claude Code:
 - Each plugin.json, marketplace entry, and marketplace.json field, and each frontmatter key of a staged command, skill, agent, or output style, is applied or reported with a reason by `install` and `info` (and `marketplace add` for marketplace.json). Unknown fields are reported as `unknown field`.
 - `dependencies` (`"name"`, `"name@marketplace"`, or `{ name, marketplace }`) are installed first in the same scope when they are not installed. Version ranges are ignored. Plugin sources: relative path (inside the marketplace, after `metadata.pluginRoot`), `{source:"github", repo, ref?, sha?}`, `{source:"url", url}`, `{source:"git-subdir", url (or owner/repo), path}`. `npm`, `archive`, and `command` sources are unavailable.
 
-Substitution (one pass, unknown `${...}` tokens kept): `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}` in prompts, skills, agents, output styles, hook `command`/`args`, and MCP server values; `${CLAUDE_SKILL_DIR}` (the staged skill dir) in `SKILL.md`; `${CLAUDE_PROJECT_DIR}` (the cwd) for the project scope only. `${CLAUDE_PLUGIN_OPTION_<KEY>}` and the names of the config `env` in the same places. `${user_config.KEY}` (the stored value, else the default) in MCP server values, hook `args`, prompts, skills, agents, and output styles. Sensitive values are substituted only in MCP server values and hook `args`; Markdown keeps the token. A hook `command` keeps user config tokens, as in Claude Code.
+Substitution (one pass, unknown `${...}` tokens kept): `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}` in prompts, skills, agents, output styles, hook `command`/`args`, MCP server values, and LSP server `command`, `args`, `env`, and `workspaceFolder`; `${CLAUDE_SKILL_DIR}` (the staged skill dir) in `SKILL.md`; `${CLAUDE_PROJECT_DIR}` (the cwd) for the project scope only. `${CLAUDE_PLUGIN_OPTION_<KEY>}` and the names of the config `env` in the same places. `${user_config.KEY}` (the stored value, else the default) in MCP server values, LSP server `command`, `args`, `env`, and `workspaceFolder`, hook `args`, prompts, skills, agents, and output styles. Sensitive values are substituted only in MCP and LSP server values and hook `args`; Markdown keeps the token. A hook `command` keeps user config tokens, as in Claude Code.
 
 User config: the `userConfig` options of a plugin (`type` `string`, `number`, `boolean`, `directory`, or `file`; `title`, `description`, `required`, `default`, `options`, `multiple`, `sensitive`, `min`, `max`). Values are stored in the options file of the scope, not in the OS credential store. Sensitive values are masked in `info`, `config`, and the input dialog. Changing a value reinstalls the plugin, so the new value is in the staged files.
+
+## LSP servers
+
+`install`, `enable`, `update`, `reinstall`, and `config` write the LSP servers of a plugin to `<root>/ext/lens-lsp.json`. `disable` and `uninstall` remove them. The `lens` extension reads this file and checks it before each scan, so a staged or removed server applies without `/reload`. The project file needs a trusted project, as for the other project components.
+
+A server needs `command` and `extensionToLanguage` with keys that start with `.`. A server without them, or with a value of the wrong type, is skipped and reported. An unknown field is left out and reported, where Claude Code rejects the server.
+
+| Field | Claude Code | In pi |
+| --- | --- | --- |
+| `command` | Required | Applied; variables substituted |
+| `extensionToLanguage` | Required | Applied: lens sends files with these extensions to the server, with the language ID |
+| `args` | Optional | Applied; variables substituted |
+| `env` | Optional | Applied; variables substituted; the plugin env added |
+| `workspaceFolder` | Optional | Applied as the server root; variables substituted. For a user-scope install, `${CLAUDE_PROJECT_DIR}` becomes `.`, the current directory |
+| `initializationOptions` | Optional | Applied in `initialize`, without substitution, as in Claude Code |
+| `settings` | Optional | Applied through `workspace/didChangeConfiguration` and `workspace/configuration`, without substitution |
+| `transport` | Optional | Applied: `stdio` and `socket` both run over stdio, as in Claude Code |
+| `startupTimeout` | Optional | Applied to the `initialize` response |
+| `requestTimeout` | Optional | Applied to each other response |
+| `shutdownTimeout` | Optional | Applied, at most 5 s. Without it, lens waits 0.5 s |
+| `diagnostics` | Optional | Applied: `false` keeps the server out of the checks after a write or an edit |
+| `restartOnCrash`, `maxRestarts` | Optional | Not applied, reported: lens starts a new server for each request, so a crash affects only that request |
+
+Lens also limits each server with its `timeoutMs` and `pipelineTimeoutMs`. Lens reports diagnostics only. It has no tools for definitions, references, or hover. When two servers claim one extension, lens runs both, where Claude Code uses the first.
 
 ## Claude Code parity
 
@@ -195,7 +221,7 @@ Checked against the Claude Code plugin reference on 2026-11-04.
 | Custom component paths | Manifest paths replace the default folders; config `paths` replaces and `extraPaths` adds | Added |
 | Metadata and other fields (`author`, `homepage`, `defaultEnabled`, `headers`, `renames`, and more) | Each one reported with a reason by `install`, `info`, or `marketplace add` | Reported |
 | Single skill or skills folder without a marketplace.json | A marketplace with one plugin, from `marketplace add` or `install <source>` | Added |
-| `.lsp.json`, `lspServers` | Shown in `info`; add them to `lens` by hand | Unsupported |
+| `.lsp.json`, `lspServers` (inline or paths) | `lens` server file; plugin env in `env`; see [LSP servers](#lsp-servers) for each field. `restartOnCrash` and `maxRestarts` are reported | Supported |
 | `settings.json`, `settings` (`agent`, `subagentStatusLine`) | The default agent is shown in `info`, not applied | Unsupported |
 | `monitors`, `channels`, `themes`, `workflows`, `evals`, `types` | Reported by `install`, `list`, and `info` | Unsupported |
 | `npm`, `archive`, `command` plugin sources | Plugin shown as unavailable | Unsupported |
@@ -204,7 +230,8 @@ Checked against the Claude Code plugin reference on 2026-11-04.
 ## Differences from upstream
 
 - Hooks run in the `hooks` extension; this extension only writes them to `ext/hooks.json`.
-- Not supported, reported by `install`, `list`, and `info`: `lspServers` (and `.lsp.json`), `monitors`, `themes`, `channels`, `workflows`, `settings` (and `settings.json`), `evals`, and `types`, also under `experimental`.
+- LSP servers run in the `lens` extension, which starts a new server for each diagnostics request and has no code navigation tools.
+- Not supported, reported by `install`, `list`, and `info`: `monitors`, `themes`, `channels`, `workflows`, `settings` (and `settings.json`), `evals`, and `types`, also under `experimental`.
 - `npm`, `archive`, and `command` plugin sources are shown as unavailable.
 - Uses the `git` binary (upstream uses isomorphic-git and git credential helpers; no device-flow login).
 - Not ported: `bootstrap`, `prune`, `fetch`, `--keep-data`, `--partial`, `--map-model` (use `agentModels`), `--local`, dependency version ranges, skill alias input rewriting, the agent `model` allowlist, and `.local.json` config overlays.

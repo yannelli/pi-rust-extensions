@@ -136,10 +136,7 @@ fn project_scope_needs_trust_and_substitutes_project_dir() {
 
     let env = fx.env(true);
     let text = install::install(&env, "lint@acme", Scope::Project).unwrap();
-    assert!(
-        text.contains("Not applied in pi: plugin.json lspServers (pi runs no plugin LSP servers"),
-        "{text}"
-    );
+    assert!(!text.contains("lspServers"), "{text}");
     let dirs = Dirs::new(&fx.project.join(".pi"));
     assert_eq!(names(&dirs.prompts()), ["lint:run.md"]);
     assert!(read(&dirs.skills().join("lint-rules/SKILL.md")).contains("name: lint-rules"));

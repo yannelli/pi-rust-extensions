@@ -72,9 +72,12 @@ pub struct PluginRecord {
     /// The `userConfig` schema.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub user_config: Map<String, Value>,
-    /// `<name>: <command>` of each LSP server (not run by pi).
+    /// `<key>: <command> (<extensions>)` of each LSP server staged in lens.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lsp: Vec<String>,
+    /// Keys of the staged servers in `ext/lens-lsp.json`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lsp_keys: Vec<String>,
     /// The plugin's default main agent (not applied by pi).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_agent: Option<String>,
