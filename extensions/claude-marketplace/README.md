@@ -54,7 +54,7 @@ Desired state, user `<agentDir>/ext/claude-marketplace.json`, project `<cwd>/.pi
   "argumentIndex": "auto",
   "env": { "TEAM": "core" },
   "agentModels": [
-    { "match": { "model": "opus*" }, "provider": "anthropic", "model": "claude-opus-4-1", "thinking": "high" },
+    { "match": { "model": "opus*" }, "provider": "anthropic", "model": "claude-opus-5-5", "thinking": "high" },
     { "match": { "plugin": "fmt", "agent": "fmt-review*" }, "model": "inherit" }
   ],
   "marketplaces": {
