@@ -39,4 +39,4 @@ The rows and the colors use pi's theme and follow theme changes. The extension d
 - `caret`: a full rounded box with inner padding, an accent `›` gutter, and an empty-draft placeholder.
 - `harbor`: the caret box with a blank line above, a plain border, and scroll position in the gutter.
 
-Caret and harbor follow the `@oxbit/agent` prompt box and need a pi-rust version with `promptLayout` support, available in the next pi-rust release. The border override also needs the next pi-rust release. Older hosts ignore these fields. `"editor": false` turns off editor styling for every layout.
+Caret and harbor follow the `@oxbit/agent` prompt box. `promptLayout` and the border override need pi-rust v0.12.10 or later; older hosts ignore them. `"editor": false` turns off editor styling for every layout.
