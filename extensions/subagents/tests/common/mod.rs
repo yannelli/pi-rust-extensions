@@ -19,6 +19,8 @@ pub struct TestHost {
     /// Every message the extension sent, in order.
     pub seen: Vec<Value>,
     pending_custom: Option<Value>,
+    /// Scripted answers per request method, used in order before the `null` default.
+    pub answers: std::collections::HashMap<String, std::collections::VecDeque<Value>>,
 }
 
 impl TestHost {
@@ -33,6 +35,7 @@ impl TestHost {
             server,
             seen: Vec::new(),
             pending_custom: None,
+            answers: Default::default(),
         }
     }
 
@@ -104,9 +107,20 @@ impl TestHost {
             .get("id")
             .filter(|_| message.get("method").is_some());
         if let Some(id) = id.cloned() {
-            self.send(json!({ "jsonrpc": "2.0", "id": id, "result": null }))
+            let method = message["method"].as_str().unwrap_or_default();
+            let queue = self.answers.get_mut(method);
+            let result = queue.and_then(|q| q.pop_front()).unwrap_or(Value::Null);
+            self.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
                 .await;
         }
+    }
+
+    /// Queues `result` as the next answer to a `method` request.
+    pub fn answer(&mut self, method: &str, result: Value) {
+        self.answers
+            .entry(method.into())
+            .or_default()
+            .push_back(result);
     }
 
     pub fn seen_of(&self, method: &str) -> Vec<Value> {

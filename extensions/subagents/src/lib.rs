@@ -7,8 +7,6 @@ use pi_ext_sdk::prelude::*;
 pub mod actions;
 pub mod active_work;
 pub mod agent;
-mod agents_edit;
-mod agents_menu;
 pub mod app;
 pub mod command;
 pub mod config;
@@ -25,6 +23,7 @@ pub mod runs_panel;
 pub mod store;
 pub mod stream;
 pub mod tool;
+pub mod ui;
 
 use app::App;
 
@@ -32,6 +31,7 @@ pub fn extension() -> Extension {
     let app = App::default();
     let tool_app = app.clone();
     let command_app = app.clone();
+    let complete_app = app.clone();
     let prompt_app = app.clone();
     let discover_app = app.clone();
     let surface_app = app.clone();
@@ -44,16 +44,20 @@ pub fn extension() -> Extension {
         })
         .command(
             "agents",
-            "Manage subagents: list, create, edit, model, tools, reset, delete; `/agents runs` for runs",
+            "Manage subagents in one panel: edit every field, new, copy, rename, move, delete or reset, and runs (`/agents runs`, `/agents list`, `/agents <name>`)",
             move |args: String, ctx: CommandCtx| agents_command(command_app.clone(), args, ctx),
         )
-        .completions("agents", |prefix: String, _host: Host| async move {
-            let items = ["runs", "list"]
-                .into_iter()
-                .filter(|item| item.starts_with(prefix.trim()))
-                .map(pi_ext_sdk::CompletionItem::new)
-                .collect();
-            Ok(Some(items))
+        .completions("agents", move |prefix: String, host: Host| {
+            let app = complete_app.clone();
+            async move {
+                let names = app.agents(&host).into_iter().map(|a| a.name);
+                let words = ["runs".to_owned(), "list".to_owned()].into_iter().chain(names);
+                let items = words
+                    .filter(|item| item.starts_with(prefix.trim()))
+                    .map(pi_ext_sdk::CompletionItem::new)
+                    .collect();
+                Ok(Some(items))
+            }
         })
         .on("before_agent_start", move |ev: EventCtx| {
             let app = prompt_app.clone();
@@ -95,10 +99,7 @@ pub fn main() -> ExitCode {
 async fn agents_command(app: App, args: String, ctx: CommandCtx) -> Result<()> {
     let host = ctx.host().clone();
     let sub = args.trim();
-    if sub == "runs" && host.has_ui() {
-        return runs_panel::open(app, host).await;
-    }
-    if sub == "list" || sub == "runs" || !host.has_ui() {
+    if sub == "list" || !host.has_ui() {
         let text = if sub == "runs" {
             let runs = app.runs.all();
             if runs.is_empty() {
@@ -115,7 +116,12 @@ async fn agents_command(app: App, args: String, ctx: CommandCtx) -> Result<()> {
         };
         return host.notify_info(text).await;
     }
-    agents_menu::open(app, host).await
+    let start = match sub {
+        "runs" => ui::Start::Runs,
+        "" => ui::Start::Agents(None),
+        name => ui::Start::Agents(Some(registry::sanitize_name(name))),
+    };
+    ui::open(app, host, start).await
 }
 
 /// Adds the `subagents` system prompt section when the `subagent` tool is active.
