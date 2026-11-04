@@ -67,19 +67,19 @@ pub async fn run(config: &Config, cwd: &Path, path: &Path, runner: &Runner) -> V
     if !config.enabled {
         return vec![];
     }
-    let Some(language) = detection::language(path) else {
+    let Some(language) = config.file_language(path) else {
         return vec![];
     };
-    if !config.language_enabled(language) {
+    if !config.language_enabled(&language) {
         return vec![];
     }
     let deadline = Instant::now() + Duration::from_millis(config.pipeline_timeout_ms);
     let Ok(Ok(_permit)) = timeout_at(deadline, runner.gate.acquire()).await else {
         return vec![skipped(path, "lens", config.pipeline_timeout_ms)];
     };
-    let root = detection::root(path, cwd, language);
+    let root = detection::root(path, cwd, &language);
     let mut tools = if config.auto_detect && config.trusted {
-        detection::detect(&root, language)
+        detection::detect(&root, &language)
     } else {
         vec![]
     };
@@ -115,36 +115,66 @@ pub async fn run(config: &Config, cwd: &Path, path: &Path, runner: &Runner) -> V
             Err(error) => findings.push(diagnostics::finding(path, &tool.name, "warning", &error)),
         }
     }
-    for server in config
-        .lsp
-        .servers
-        .iter()
-        .filter(|server| server.enabled && server.languages.iter().any(|item| item == language))
-    {
-        if let Some(skip) = runner.skip(path, &server.command) {
-            findings.push(skip);
-            continue;
-        }
-        let Some(limit) = budget(deadline, config.timeout_ms) else {
-            findings.push(skipped(path, &server.command, config.pipeline_timeout_ms));
-            continue;
-        };
-        match lsp_diagnostics(server, &root, path, limit, &runner.live).await {
-            Ok(items) => findings.extend(items),
-            Err(error) => {
-                if full_wait(config, limit) {
-                    runner.record(&server.command, &error);
+    let scan = Scan {
+        config,
+        cwd,
+        root: &root,
+        path,
+        language: &language,
+        deadline,
+    };
+    findings.extend(scan.servers(runner, true).await);
+    findings
+}
+
+/// One file to check with the LSP servers that handle it.
+pub struct Scan<'a> {
+    pub config: &'a Config,
+    pub cwd: &'a Path,
+    pub root: &'a Path,
+    pub path: &'a Path,
+    pub language: &'a str,
+    pub deadline: Instant,
+}
+
+impl Scan<'_> {
+    /// Findings of each enabled server for the file. After a write, `post_write` skips
+    /// servers with `diagnostics: false`. Errors and skips become warning findings.
+    pub async fn servers(&self, runner: &Runner, post_write: bool) -> Vec<Value> {
+        let (config, path) = (self.config, self.path);
+        let mut findings = vec![];
+        let servers = config.lsp.servers.iter().filter(|server| {
+            server.enabled
+                && (server.diagnostics || !post_write)
+                && server.handles(path, self.language)
+        });
+        for server in servers {
+            let label = server.label();
+            if let Some(skip) = runner.skip(path, label) {
+                findings.push(skip);
+                continue;
+            }
+            let Some(limit) = budget(self.deadline, config.timeout_ms) else {
+                findings.push(skipped(path, label, config.pipeline_timeout_ms));
+                continue;
+            };
+            let root = server.root(self.cwd, self.root);
+            match lsp_diagnostics(server, &root, path, limit, &runner.live).await {
+                Ok(items) => findings.extend(items),
+                Err(error) => {
+                    if full_wait(config, limit) {
+                        runner.record(label, &error);
+                    }
+                    let mut item = diagnostics::finding(path, label, "warning", &error);
+                    if !post_write {
+                        item["kind"] = serde_json::json!("lsp");
+                    }
+                    findings.push(item);
                 }
-                findings.push(diagnostics::finding(
-                    path,
-                    &server.command,
-                    "warning",
-                    &error,
-                ));
             }
         }
+        findings
     }
-    findings
 }
 
 /// `lsp::diagnostics` under a hard `limit`, with findings marked as LSP findings.
@@ -158,11 +188,11 @@ pub async fn lsp_diagnostics(
     let limit_ms = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX).max(1);
     let call = lsp::diagnostics(server, root, path, limit_ms, live);
     let items = timeout(
-        limit + lsp::SHUTDOWN_GRACE + Duration::from_millis(200),
+        limit + server.shutdown_grace() + Duration::from_millis(200),
         call,
     )
     .await
-    .unwrap_or_else(|_| Err(format!("{} timed out after {limit_ms} ms", server.command)))?;
+    .unwrap_or_else(|_| Err(format!("{} timed out after {limit_ms} ms", server.label())))?;
     Ok(items
         .into_iter()
         .map(|mut item| {

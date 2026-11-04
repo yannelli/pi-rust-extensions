@@ -50,7 +50,7 @@ For example, `pi install marketplace:todo`. You can also open `/extensions` in t
 | [`chrome`](extensions/chrome/README.md) | Control Chrome through the DevTools Protocol with session authorization. |
 | [`computer-use`](extensions/computer-use/README.md) | Observe desktop windows and send keyboard and pointer input. |
 | [`ssh`](extensions/ssh/README.md) | Reusable SSH profiles, shared connections, remote tools, and remote bash mode. |
-| [`lens`](extensions/lens/README.md) | Post-write formatters, linters, type checks, LSP diagnostics and a read-before-edit guard. |
+| [`lens`](extensions/lens/README.md) | Post-write formatters, linters, type checks, LSP diagnostics for any file extension, and a read-before-edit guard. |
 | [`typesafe`](extensions/typesafe/README.md) | Structured TypeSafe judgments with session controls and usage limits. |
 
 ### Providers

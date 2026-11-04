@@ -5,6 +5,7 @@ mod events;
 mod group;
 mod lsp;
 mod pipeline;
+mod servers;
 mod state;
 mod tools;
 mod tui;

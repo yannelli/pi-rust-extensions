@@ -86,6 +86,9 @@ pub(super) fn convert(diagnostic: &Value, path: &Path, default_source: &str) -> 
 }
 
 pub(super) fn language_id(server: &LspServer, path: &Path) -> String {
+    if let Some(language) = server.mapped_language(path) {
+        return language.to_owned();
+    }
     let ext = path
         .extension()
         .and_then(|e| e.to_str())

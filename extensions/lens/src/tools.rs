@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use tokio::time::Instant;
 
 use crate::config::Config;
-use crate::pipeline::{Runner, budget, lsp_diagnostics, skipped};
+use crate::pipeline::{Runner, Scan};
 use crate::{detection, diagnostics, state::State};
 
 pub(crate) fn bounded(mut text: String) -> String {
@@ -36,6 +36,7 @@ pub(crate) async fn get_diagnostics(
         .map(|path| diagnostics::normalize_path(&cwd, path))
         .collect();
     if args["source"] == "lsp" {
+        crate::events::refresh_if_changed(ctx.host(), &state).await;
         let (config, known, runner) = {
             let state = state.lock().await;
             let known: Vec<_> = state.findings.keys().cloned().collect();
@@ -101,38 +102,22 @@ async fn scan_lsp(
 ) {
     let deadline = Instant::now() + Duration::from_millis(config.pipeline_timeout_ms);
     for path in paths {
-        let Some(language) = detection::language(&path) else {
+        let Some(language) = config.file_language(&path) else {
             continue;
         };
-        if !config.language_enabled(language) || !diagnostics::within(cwd, &path) {
+        if !config.language_enabled(&language) || !diagnostics::within(cwd, &path) {
             continue;
         }
-        let root = detection::root(&path, cwd, language);
-        let mut findings = vec![];
-        for server in &config.lsp.servers {
-            if !server.enabled || !server.languages.iter().any(|item| item == language) {
-                continue;
-            }
-            if let Some(skip) = runner.skip(&path, &server.command) {
-                findings.push(skip);
-                continue;
-            }
-            let Some(limit) = budget(deadline, config.timeout_ms) else {
-                findings.push(skipped(&path, &server.command, config.pipeline_timeout_ms));
-                continue;
-            };
-            match lsp_diagnostics(server, &root, &path, limit, &runner.live).await {
-                Ok(items) => findings.extend(items),
-                Err(error) => {
-                    if crate::pipeline::full_wait(config, limit) {
-                        runner.record(&server.command, &error);
-                    }
-                    let mut item = diagnostics::finding(&path, &server.command, "warning", &error);
-                    item["kind"] = json!("lsp");
-                    findings.push(item);
-                }
-            }
-        }
+        let root = detection::root(&path, cwd, &language);
+        let scan = Scan {
+            config,
+            cwd,
+            root: &root,
+            path: &path,
+            language: &language,
+            deadline,
+        };
+        let findings = scan.servers(runner, false).await;
         let mut state = state.lock().await;
         let current = state.findings.entry(path).or_default();
         current.retain(|item| item["kind"] != "lsp");

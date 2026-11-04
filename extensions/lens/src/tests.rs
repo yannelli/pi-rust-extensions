@@ -266,6 +266,7 @@ async fn timeout_becomes_a_finding() {
         command: slow.to_string_lossy().into_owned(),
         args: vec![],
         enabled: true,
+        unknown: Default::default(),
     });
     let findings = crate::pipeline::run(&config, &project.0, &file, &Runner::default()).await;
     assert!(
@@ -287,3 +288,6 @@ mod hang;
 
 #[path = "guard_tests.rs"]
 mod guard;
+
+#[path = "servers_tests.rs"]
+mod servers;

@@ -24,13 +24,20 @@ pub async fn manage(host: &Host, state: Arc<Mutex<State>>) -> Result<()> {
         if action == "Status" {
             let text = {
                 let state = state.lock().await;
-                format!(
-                    "Lens enabled={} context={} readGuard={} findings={}",
+                let servers: Vec<&str> =
+                    state.config.lsp.servers.iter().map(|s| s.label()).collect();
+                let mut text = format!(
+                    "Lens enabled={} context={} readGuard={} findings={} lspServers=[{}]",
                     state.config.enabled,
                     state.config.context,
                     state.config.read_guard,
-                    state.all_findings().len()
-                )
+                    state.all_findings().len(),
+                    servers.join(", ")
+                );
+                for warning in &state.config.warnings {
+                    text.push_str(&format!("\n{warning}"));
+                }
+                text
             };
             host.notify_info(text).await?;
             continue;
@@ -53,10 +60,20 @@ pub async fn manage(host: &Host, state: Arc<Mutex<State>>) -> Result<()> {
             "Toggle context" => value["context"] = json!(!current.context),
             "Toggle read guard" => value["readGuard"] = json!(!current.read_guard),
             "Languages" => {
-                let Some(language) = host
-                    .select("Toggle language", &["rust", "javascript", "python", "go"])
-                    .await?
-                else {
+                let mut names: Vec<String> = ["rust", "javascript", "python", "go"]
+                    .map(str::to_owned)
+                    .into();
+                for server in &current.lsp.servers {
+                    names.extend(server.languages.iter().cloned());
+                    names.extend(server.extension_to_language.values().cloned());
+                }
+                let names: Vec<String> = names
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, name)| !names[..*index].contains(name))
+                    .map(|(_, name)| name.clone())
+                    .collect();
+                let Some(language) = host.select("Toggle language", &names).await? else {
                     continue;
                 };
                 *slot(&mut value, &["languages", &language, "enabled"])? =
