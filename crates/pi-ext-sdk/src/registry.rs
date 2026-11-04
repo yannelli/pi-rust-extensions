@@ -48,6 +48,8 @@ pub(crate) struct Registry {
     pub(crate) result_renderers: Vec<(String, RenderFn<ToolResultRender>)>,
     pub(crate) message_renderers: Vec<(String, RenderFn<MessageRender>)>,
     pub(crate) entry_renderers: Vec<(String, RenderFn<EntryRender>)>,
+    /// `toolResultExpander`: `{ detailsKey, maxHeight }` and its `render.toolResultExpanded` handler.
+    pub(crate) result_expander: Option<(Value, RenderFn<ToolResultRender>)>,
 }
 
 /// The entry of `key` in a `(key, value)` list; a later `put` replaces it.
@@ -198,6 +200,9 @@ impl Registry {
             if value.as_array().is_some_and(|items| !items.is_empty()) {
                 result.insert(key.into(), value);
             }
+        }
+        if let Some((settings, _)) = &self.result_expander {
+            result.insert("toolResultExpander".into(), settings.clone());
         }
         Value::Object(result)
     }

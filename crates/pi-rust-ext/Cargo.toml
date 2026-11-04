@@ -36,6 +36,7 @@ pi-ext-web-search = { path = "../../extensions/web-search" }
 pi-ext-chrome = { path = "../../extensions/chrome" }
 pi-ext-computer-use = { path = "../../extensions/computer-use" }
 pi-ext-compact-tui = { path = "../../extensions/compact-tui" }
+pi-ext-tool-results = { path = "../../extensions/tool-results" }
 
 [dev-dependencies]
 pi-ext-e2e = { path = "../pi-ext-e2e" }

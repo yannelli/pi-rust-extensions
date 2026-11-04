@@ -137,3 +137,52 @@ async fn theme_changes_and_working_indicator_calls_cross_the_protocol() {
     assert_eq!(seen, expected);
     host.finish().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_tool_result_expander_draws_claimed_results_and_takes_new_settings() {
+    let ext = Extension::new("expand")
+        .tool_result_expander("stored", 12, |request: ToolResultRender, _| async move {
+            let id = request.result["details"]["stored"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned();
+            Ok(Some(vec![format!(
+                "{id} {} {}",
+                request.width, request.options.max_height
+            )]))
+        })
+        .command("taller", "", |_, ctx: CommandCtx| async move {
+            ctx.host()
+                .set_tool_result_expander("stored", 40, false)
+                .await
+        });
+    let mut host = TestHost::start(ext);
+    let init = host.initialize().await;
+    assert_eq!(
+        init["toolResultExpander"],
+        json!({ "detailsKey": "stored", "maxHeight": 12 })
+    );
+    let params = json!({
+        "toolName": "bash", "toolCallId": "c1", "width": 50,
+        "result": { "content": [], "details": { "stored": "tr-1" } },
+        "options": { "expanded": true, "maxHeight": 12 }
+    });
+    host.request(1, "render.toolResultExpanded", params).await;
+    assert_eq!(
+        host.expect_response(1).await["result"],
+        json!({ "lines": ["tr-1 50 12"] })
+    );
+    host.request(
+        2,
+        "command.run",
+        json!({ "name": "taller", "args": "", "ctx": ctx() }),
+    )
+    .await;
+    let (id, params) = host.expect_request("register.toolResultExpander").await;
+    assert_eq!(
+        params,
+        json!({ "detailsKey": "stored", "maxHeight": 40, "enabled": false })
+    );
+    host.answer(&id, Value::Null).await;
+    host.expect_response(2).await;
+}

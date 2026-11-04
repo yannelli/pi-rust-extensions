@@ -47,6 +47,7 @@ pub(crate) async fn handle(
         "tool.prepare" => prepare(state, params)?,
         "render.toolCall" => render(state, params, "toolName", |r| &r.call_renderers)?,
         "render.toolResult" => render(state, params, "toolName", |r| &r.result_renderers)?,
+        "render.toolResultExpanded" => expanded(state, params)?,
         "render.message" => render(state, params, "customType", |r| &r.message_renderers)?,
         "render.entry" => render(state, params, "customType", |r| &r.entry_renderers)?,
         other => return Err(Error::method_not_found(other)),
@@ -272,6 +273,25 @@ fn render<T: DeserializeOwned + Send + 'static>(
         return Ok(Box::pin(std::future::ready(Ok(Value::Null))));
     };
     let request: T = serde_json::from_value(params).map_err(Error::invalid_params)?;
+    let lines = renderer(request, state.host.clone());
+    Ok(Box::pin(async move {
+        Ok(lines
+            .await?
+            .map_or(Value::Null, |rendered| rendered.to_value()))
+    }))
+}
+
+fn expanded(state: &State, params: Value) -> Result<BoxFuture<Value>> {
+    let registry = state.host.inner.registry.read().expect("registry lock");
+    let renderer = registry
+        .result_expander
+        .as_ref()
+        .map(|(_, render)| render.clone());
+    drop(registry);
+    let Some(renderer) = renderer else {
+        return Ok(Box::pin(std::future::ready(Ok(Value::Null))));
+    };
+    let request = serde_json::from_value(params).map_err(Error::invalid_params)?;
     let lines = renderer(request, state.host.clone());
     Ok(Box::pin(async move {
         Ok(lines

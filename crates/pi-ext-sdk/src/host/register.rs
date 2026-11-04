@@ -165,6 +165,24 @@ impl Host {
         self.call("register.entryRenderer", params).await.map(drop)
     }
 
+    /// New settings for the expander of [`crate::Extension::tool_result_expander`];
+    /// `enabled: false` turns it off.
+    pub async fn set_tool_result_expander(
+        &self,
+        details_key: &str,
+        max_height: usize,
+        enabled: bool,
+    ) -> Result<()> {
+        let settings =
+            json!({ "detailsKey": details_key, "maxHeight": max_height, "enabled": enabled });
+        if let Some((current, _)) = self.registry().result_expander.as_mut() {
+            *current = settings.clone();
+        }
+        self.call("register.toolResultExpander", settings)
+            .await
+            .map(drop)
+    }
+
     /// Registers a virtual model; pi sends `virtualModel.route` to `route` for each request.
     pub async fn register_virtual_model<F, Fut>(&self, definition: Value, route: F) -> Result<()>
     where

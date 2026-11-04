@@ -1,6 +1,6 @@
 # pi-ext-sdk
 
-Created 2026-10-29. Last updated 2026-11-02.
+Created 2026-10-29. Last updated 2026-11-04.
 
 Rust SDK for pi-rust native extensions. pi starts the extension as a child process and talks JSON-RPC 2.0 with it, one JSON object per line on stdin and stdout. The protocol is in `docs/extensions/native-protocol.md` in the pi-rust repo (protocol version 1). The SDK runs the protocol loop. You register tools, commands, and event handlers, and you call pi through a `Host` handle.
 
@@ -61,6 +61,7 @@ pub fn main() -> ExitCode {
 | `.prepare_arguments(tool, \|args: Value, host\| ...)` | Changes the raw arguments of a tool before pi validates them. Returns the new arguments. |
 | `.render_tool_call(tool, \|req: ToolCallRender, host\| ...)`, `.render_tool_result(tool, ...)` | Draws the call or result row of a tool. Return `Some(lines)` for `req.width` columns, `None` for no lines, or `Rendered::new(lines).refresh_after(ms)` to be asked again later. A tool that the extension does not add, such as the built-in `bash`, gets these rows while no other renderer draws it. `SPINNER` in a line shows pi's spinner frame. |
 | `.render_shell(tool, "self")` | The renderers of `tool` draw their own frame. |
+| `.tool_result_expander(details_key, max_height, \|req: ToolResultRender, host\| ...)` | Draws the body of an expanded row of any tool whose result `details` hold `details_key` (feature `toolResultExpander`). pi shows at most `max_height` lines (0: all) and scrolls them with the mouse wheel in fullscreen mode. `host.set_tool_result_expander(key, height, enabled)` changes the settings later. |
 | `.message_renderer(custom_type, ...)`, `.entry_renderer(custom_type, ...)` | Draws custom messages or custom session entries of one type. |
 | `.virtual_model(definition, \|req: RouteRequest, host\| ...)` | Declares a virtual model and its route handler. |
 | `.autocomplete(&["@"], \|req: AutocompleteRequest, host\| ...)` | Editor suggestions. Return `None` to keep the suggestions of pi. |
