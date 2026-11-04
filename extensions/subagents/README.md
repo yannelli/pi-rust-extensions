@@ -72,9 +72,21 @@ You review code...
 
 ## Command `/agents`
 
-- `/agents`: a menu with each agent. For an agent you can edit the prompt (in the editor), the description, model (session model, available models, or typed), thinking level, tools, and max turns. You can reset a built-in to its default (removes the override files) and delete a custom agent. The menu asks for the scope (global or project) when an agent has no file yet.
-- `/agents runs`: a panel with running and recent runs. `↑`/`↓` select, `enter` shows the task, the tool calls, the output, and the stderr of a failed run, `c` cancels, `esc` goes back, `q` closes.
-- `/agents list`, or `/agents` without UI: shows each agent with its source, description, tools, and model as a notification.
+`/agents` opens one panel. The header has two tabs, Agents and Runs (`tab` switches). `/agents runs` opens the Runs tab, and `/agents <name>` opens the form of that agent.
+
+The Agents tab shows the list on the left and the form of the selected agent on the right (stacked on terminals narrower than 100 columns). Each list row has the name, a source badge (`built-in`, `global`, `project`, or `plugin <name>` for an agent that `claude-marketplace` staged), `✎ <scope>` when a file in that scope overrides a built-in or a lower file, the model, and the exposure. The form shows every field: name, description, model, thinking, tools, denied tools (`disallowedTools`), max turns, prompt mode, exposure, and prompt. Below it are the file path, the layers, the line that the `subagents` system prompt section shows for the agent, and its recent runs.
+
+| Where | Keys |
+| --- | --- |
+| List | `↑`/`↓` move, `enter` edit, `n` new (from a template or as a copy), `c` copy, `r` rename, `m` move the file between global and project, `d` delete a custom agent or reset a built-in, `f` edit the raw file, `p` edit the prompt, `u` runs of this agent, `/` search, `q` close |
+| Form | `↑`/`↓` field, `enter` edit, `←`/`→` cycle thinking, prompt mode, and exposure, `x` set the field to its default (inherit, all tools, none), `p` prompt, `s` save, `esc` back to the list |
+| Model | type to search the available models (fuzzy), `enter` choose; text that matches no model is used as `provider/id` |
+| Tools | type to search, `space` toggle, `ctrl+a` toggle the shown tools, the `all tools` row inherits every tool, `enter` done |
+| Runs | `↑`/`↓` select, `enter` shows the task, the tool calls, the output, and the stderr of a failed run, `c` cancel, `a` all agents, `esc` back |
+
+Text fields are typed in the form row. The prompt and the raw file open in pi's editor, whose external editor key opens `$EDITOR`. Edits stay in the form until `s` saves them. Leaving the form with changes asks to save, discard, or keep editing. A save writes only the changed keys to the agent's top file through a temp file and a rename. A built-in without a file asks for the scope (global or project) at the first save. Errors (an empty description, a model that is not `provider/id`, a bad max turns) block the save. Warnings (unknown tools, no tools, an empty prompt) show in the status line. The panel refuses to rename, move, or delete plugin agents; copy them instead, or remove them with `/claude-plugins`.
+
+`/agents list`, and `/agents` without UI, show each agent with its source, description, tools, and model as a notification. `/agents runs` without UI shows the runs.
 
 The system prompt section `subagents` lists each agent with the first sentence of its description when the `subagent` tool is active. `action: list` gives the full descriptions, tools, and models. On a pi with context entries, the section lists only the agents that pi does not list (see below).
 

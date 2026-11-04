@@ -1,10 +1,7 @@
-//! `/agents runs`: a panel with running and recent runs, their output, and cancel.
-
-use std::time::Duration;
+//! The runs tab of `/agents`: running and recent runs, their output, and cancel.
 
 use pi_ext_sdk::prelude::*;
 
-use crate::app::App;
 use crate::render::detail_lines;
 use crate::runs::{Run, Status, first_line, format_duration};
 
@@ -131,45 +128,5 @@ impl RunsView {
             }));
         }
         lines
-    }
-}
-
-/// Newest runs first.
-fn ordered(app: &App) -> Vec<Run> {
-    let mut runs = app.runs.all();
-    runs.reverse();
-    runs
-}
-
-pub async fn open(app: App, host: Host) -> Result<()> {
-    let mut view = RunsView::default();
-    let width = |panel: &Panel| panel.width().unwrap_or(100);
-    let mut shown = view.render(&ordered(&app), 100);
-    let mut panel = host.panel(shown.clone()).open().await?;
-    loop {
-        let event = tokio::select! {
-            event = panel.next_event() => Some(event),
-            _ = tokio::time::sleep(Duration::from_millis(500)) => None,
-        };
-        let runs = ordered(&app);
-        match event {
-            Some(PanelEvent::Closed) => return Ok(()),
-            Some(PanelEvent::Key(key)) => match view.key(&key, &runs) {
-                Action::Close => {
-                    panel.close(Value::Null).await?;
-                    return Ok(());
-                }
-                Action::Cancel(id) => {
-                    app.runs.cancel(&id);
-                }
-                Action::Redraw => {}
-            },
-            Some(PanelEvent::Resize(_)) | None => {}
-        }
-        let lines = view.render(&ordered(&app), width(&panel));
-        if lines != shown {
-            panel.set_lines(lines.clone())?;
-            shown = lines;
-        }
     }
 }

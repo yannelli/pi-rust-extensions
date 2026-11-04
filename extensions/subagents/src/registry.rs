@@ -167,7 +167,19 @@ pub fn edit_file(
         );
     }
     edit(&mut fm);
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(&path, fm.render())?;
+    write_atomic(&path, &fm.render())?;
     Ok(path)
+}
+
+/// Writes `text` to a temp file next to `path` and renames it over `path`, so a reader never
+/// sees a partial agent file. Creates the parent directory.
+pub fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("agent");
+    let temp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text)?;
+    std::fs::rename(&temp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temp);
+    })
 }
