@@ -38,6 +38,8 @@ pi-ext-computer-use = { path = "../../extensions/computer-use" }
 pi-ext-compact-tui = { path = "../../extensions/compact-tui" }
 pi-ext-tool-results = { path = "../../extensions/tool-results" }
 pi-ext-workflows = { path = "../../extensions/workflows" }
+pi-ext-simple-goal = { path = "../../extensions/simple-goal" }
+pi-ext-timers = { path = "../../extensions/timers" }
 
 [dev-dependencies]
 pi-ext-e2e = { path = "../pi-ext-e2e" }

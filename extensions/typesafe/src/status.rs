@@ -50,12 +50,12 @@ pub fn status_text(state: &State) -> (String, NotifyType) {
         ),
     };
     let version = match state.backend_error.is_none() && !names_model {
-        true => format!("Model: {}.", backend.sent_model(state.model.as_deref())),
+        true => format!("Model: {}.", backend.sent_model(state.model().as_deref())),
         false => String::new(),
     };
     let model_hint = match backend.name == DEFAULT_BACKEND {
         true => String::new(),
-        false => format!("Set {MODEL_ENV} to send another model."),
+        false => format!("Run /typesafe models or set {MODEL_ENV} to send another model."),
     };
     let enabled = state.enabled();
     let parts = [

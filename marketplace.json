@@ -220,6 +220,19 @@
       ]
     },
     {
+      "name": "simple-goal",
+      "displayName": "Simple Goal",
+      "description": "One objective that keeps the agent working until a configurable evaluator agrees it is done.",
+      "version": "0.5.9",
+      "args": [
+        "simple-goal"
+      ],
+      "tags": [
+        "workflow",
+        "tool"
+      ]
+    },
+    {
       "name": "statusline",
       "displayName": "Status line",
       "description": "Configurable footer status line: builtin presets and themes, command scripts, Claude Code, Cursor, and Codex status lines, and the /statusline editor.",
@@ -243,6 +256,19 @@
       "tags": [
         "agents",
         "tui",
+        "tool"
+      ]
+    },
+    {
+      "name": "timers",
+      "displayName": "Timers",
+      "description": "Sleep, heartbeat watchdogs, and scheduled prompts that wake the agent.",
+      "version": "0.5.9",
+      "args": [
+        "timers"
+      ],
+      "tags": [
+        "workflow",
         "tool"
       ]
     },

@@ -11,6 +11,7 @@ use crate::backends::Backend;
 use crate::caps::{cap_label, caps_description, number};
 use crate::credentials::{Env, KeySituation, KeyStore};
 use crate::errors::{Code, TsError, TsResult};
+use crate::models::{ModelInfo, parse_models};
 use crate::result::valid_result;
 use crate::usage::{Blocked, Caps, Clock, DEFAULT_USD_PER_MTOK, Ledger, Today};
 use crate::validate::{MAX_INPUT_BYTES, check_bytes, prepare};
@@ -38,8 +39,10 @@ pub struct Spend {
 pub struct Client {
     http: reqwest::Client,
     pub backend: Backend,
-    key: String,
+    key: Option<String>,
     pub model: String,
+    /// USD per million input tokens for `model`, from the saved model choice.
+    price: Option<f64>,
     caps: Caps,
     ledger: Ledger,
     auth: AuthState,
@@ -72,6 +75,23 @@ impl Client {
                 situation => situation.key().unwrap_or_default().to_owned(),
             },
         };
+        Self::build(backend, Some(key), model, dir, env, caps, clock)
+    }
+
+    /// A client without a key, for model listings that are public.
+    pub fn anonymous(backend: Backend, dir: &Path, env: &Env, clock: Clock) -> TsResult<Client> {
+        Self::build(backend, None, None, dir, env, Caps::default(), clock)
+    }
+
+    fn build(
+        backend: Backend,
+        key: Option<String>,
+        model: Option<&str>,
+        dir: &Path,
+        env: &Env,
+        caps: Caps,
+        clock: Clock,
+    ) -> TsResult<Client> {
         let http = reqwest::Client::builder()
             .timeout(TIMEOUT)
             .user_agent(concat!("pi-ext-typesafe/", env!("CARGO_PKG_VERSION")))
@@ -83,6 +103,7 @@ impl Client {
             http,
             key,
             model,
+            price: None,
             caps: caps.lowest(Caps::from_env(env)),
             ledger,
             auth: AuthState::new(dir),
@@ -91,6 +112,14 @@ impl Client {
             verified: AtomicBool::new(false),
             last_failure: Mutex::new(None),
         })
+    }
+
+    /// Uses the price listed for a model when this client sends it; the backend registry still wins.
+    pub fn with_price(mut self, priced: Option<(&str, f64)>) -> Self {
+        self.price = priced
+            .filter(|(model, _)| self.backend.sent_model(Some(model)) == self.model)
+            .map(|(_, price)| price);
+        self
     }
 
     pub fn spend(&self) -> Spend {
@@ -117,9 +146,11 @@ impl Client {
         request: reqwest::RequestBuilder,
         cancel: &CancellationToken,
     ) -> TsResult<Value> {
-        let request = request
-            .bearer_auth(&self.key)
-            .header("Accept", "application/json");
+        let request = match &self.key {
+            Some(key) => request.bearer_auth(key),
+            None => request,
+        };
+        let request = request.header("Accept", "application/json");
         let exchange = async {
             let response = request.send().await.map_err(|e| match e.is_timeout() {
                 true => TsError::timeout(),
@@ -146,32 +177,20 @@ impl Client {
         }
     }
 
-    pub async fn list_models(&self, cancel: &CancellationToken) -> TsResult<Vec<String>> {
+    pub async fn list_model_info(&self, cancel: &CancellationToken) -> TsResult<Vec<ModelInfo>> {
         let wire = self
             .send(self.http.get(self.backend.models_url()), cancel)
             .await?;
-        let list = wire
-            .get(self.backend.models_field)
-            .and_then(Value::as_array)
-            .ok_or_else(|| {
-                TsError::new(
-                    Code::Response,
-                    "TypeSafe returned an unexpected model list.",
-                )
-            })?;
-        if self.backend.models_verify_key {
+        let models = parse_models(&self.backend, &wire)?;
+        if self.backend.models_verify_key && self.key.is_some() {
             self.record_verified();
         }
-        let id = |entry: &Value| {
-            let named = entry
-                .get(self.backend.models_id_field)
-                .or_else(|| entry.get("name"));
-            named
-                .and_then(Value::as_str)
-                .filter(|n| (1..=100).contains(&n.len()))
-                .map(str::to_owned)
-        };
-        Ok(list.iter().filter_map(id).collect())
+        Ok(models)
+    }
+
+    pub async fn list_models(&self, cancel: &CancellationToken) -> TsResult<Vec<String>> {
+        let models = self.list_model_info(cancel).await?;
+        Ok(models.into_iter().map(|m| m.id).collect())
     }
 
     /// Checks the session and daily caps and counts the attempt under one lock.
@@ -234,9 +253,11 @@ impl Client {
             Ok(mut result) => {
                 let tokens = |field: &str| result["usage"][field].as_u64().unwrap_or(0);
                 let (input, output) = (tokens("input_tokens"), tokens("output_tokens"));
+                let saved = self.price.filter(|_| sent_model == self.model);
                 let rate = self
                     .backend
                     .price(&sent_model)
+                    .or(saved)
                     .unwrap_or(DEFAULT_USD_PER_MTOK);
                 let cost = input as f64 * rate / 1e6;
                 {

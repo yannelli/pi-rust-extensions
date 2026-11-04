@@ -12,7 +12,7 @@ Runs tasks in child pi processes. Three built-in agents: `explore` (read-only se
 | `agent` | Agent name. Default `explore`. |
 | `task` | The full task. The child does not see the parent conversation. |
 | `tasks` | `[{ agent?, task, model?, thinking?, cwd? }]`: tasks that run in parallel (`maxParallel` at a time). |
-| `async` | `true` runs in the background. The tool returns the run ids at once. A `subagent-notify` message comes when the runs finish (`deliverAs: followUp`, `triggerTurn: true`). |
+| `async` | `true` runs in the background. The tool returns the run ids at once. A `subagent-notify` message comes when the runs finish (`deliverAs: followUp`, `triggerTurn: true`). When pi does not accept it (for example during `/reload`), the extension retries 6 times with backoff. After delivery it emits `agent:wake` on `pi.events`, which ends a running `sleep` of the `timers` extension. |
 | `model`, `thinking` | Override for this call. |
 | `cwd` | Child working directory, relative to the session cwd. A path that resolves outside the session cwd is refused. |
 
@@ -31,9 +31,17 @@ These are the fields of the `pi-subagents` result, so Paseo links each `subagent
 
 - Model and thinking level: the call override, else the agent's `model`, else the parent session's current model. When neither the call nor the agent sets a model, the child also gets the parent's thinking level, unless the agent or call sets one.
 - The pi binary: config `piBin`, else `$PI_BIN`, else the parent process when its file name starts with `pi`, else `pi` on `PATH`.
-- Env: `PI_TODO_SCOPE=<run id>`, `PI_SUBAGENT_RUN_ID=<run id>`, `PI_SUBAGENT_AGENT=<name>`.
+- Env: `PI_TODO_SCOPE=<run id>`, `PI_SUBAGENT_RUN_ID=<run id>`, `PI_SUBAGENT_AGENT=<name>`, and with `messaging` on, `PI_SUBAGENT_PARENT=<parent session id>`. An agent with a `tools` list also gets `agent_message`.
 - Todo scopes: each child `todo` tool result is sent on the `pi.events` channel `todo:scope` as `{ scope, label, status, state }`, with `status` `running`, `completed`, `failed`, or `cancelled` and `state` the child's todo `details` (or `null`). The `todo` extension shows these scopes.
 - Lifecycle: `subagents:start` `{ agentId, agentType }` when a run starts and `subagents:stop` `{ agentId, agentType, status, lastAssistantMessage }` when it ends, on `pi.events`. The `hooks` extension runs SubagentStart and SubagentStop hooks from them.
+
+## Tool `agent_message`
+
+Sends a message between the parent session and its subagent runs. Params: `to` (`parent` from a subagent, or the id of a running run) and `message`. A subagent can also message a running sibling by its run id.
+
+Each agent has a mailbox directory `<agentDir>/ext/subagents/mailbox/<address>/`: the session id for the parent, the run id for a run. The tool writes the message there as a JSON file with a temp-file rename. Each agent reads its mailbox every 500 ms and sends each message as a custom message `agent-message` (`deliverAs: steer`, `triggerTurn: true`), so a working agent sees it at its next step and an idle agent starts a turn. The file is removed only after pi accepts the message, so messages survive a failed send or a `/reload`. After delivery the extension emits `agent:wake`. A run removes its empty mailbox when it exits.
+
+The config key `messaging: false` removes the tool and stops mailbox delivery.
 
 ## Run directories
 
@@ -96,6 +104,7 @@ The extension publishes its running runs as the `[Active Work]` block `subagents
 | `advertise` | `true` | Add the `subagents` system prompt section |
 | `piBin` | unset | pi binary for children |
 | `extraArgs` | `[]` | Extra child arguments |
+| `messaging` | `true` | The `agent_message` tool and mailbox delivery between agents |
 
 ## Not ported from pi-subagents
 

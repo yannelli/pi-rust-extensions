@@ -6,7 +6,7 @@ mod usage;
 
 pub use agent::{ExecOutput, ExecRequest, LlmRequest, LlmResponse, ProviderAuth};
 pub use session::{CustomMessage, DeliverAs};
-pub use ui::{ChatStyle, InputOptions, NotifyType, Placement};
+pub use ui::{ChatStyle, InputOptions, NotifyType, Placement, PromptLayout};
 pub use usage::{ProviderUsage, UsageCredits, UsageWindow};
 
 use std::path::PathBuf;

@@ -1,5 +1,8 @@
 //! Opens the `/deferred` panel and applies its edits.
 
+use std::time::Instant;
+
+use pi_ext_sdk::list::{ListOverflow, ListScroll};
 use pi_ext_sdk::prelude::*;
 
 use super::rows::{self, Inventory, Sources};
@@ -52,13 +55,28 @@ pub(crate) async fn open(state: Shared, ctx: &CommandCtx) -> Result<()> {
     let trusted = project_trusted(host, snap).await;
     let repo = lock(&state).config.repo.clone();
     let mut view = View::new(trusted).with_repo(repo);
+    view.overflow = ListOverflow::read(host).await;
     let mut inv = inventory(&state, ctx).await;
     let mut width = snap.terminal_width.map_or(100, |w| w as usize);
     let mut height = panel_height(snap.terminal_height.map(|h| h as usize));
     let mut panel = host.panel(view.render(&inv, width, height)).open().await?;
     width = panel.width().unwrap_or(width);
+    view.scroll.reset(Instant::now());
+    let mut tick = tokio::time::interval(ListScroll::TICK);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        match panel.next_event().await {
+        let event = tokio::select! {
+            event = panel.next_event() => Some(event),
+            _ = tick.tick(), if view.overflow == ListOverflow::Scroll => None,
+        };
+        let Some(event) = event else {
+            let limit = view.scroll_limit(&inv, width);
+            if view.scroll.tick(Instant::now(), limit) {
+                panel.set_lines(view.render(&inv, width, height))?;
+            }
+            continue;
+        };
+        match event {
             PanelEvent::Closed => return Ok(()),
             PanelEvent::Resize(w) => {
                 width = w;
@@ -102,6 +120,7 @@ pub(crate) async fn open(state: Shared, ctx: &CommandCtx) -> Result<()> {
             },
         }
         view.clamp(&inv);
+        view.scroll.reset(Instant::now());
         panel.set_lines(view.render(&inv, width, height))?;
     }
 }

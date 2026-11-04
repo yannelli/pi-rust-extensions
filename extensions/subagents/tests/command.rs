@@ -28,6 +28,7 @@ fn args_of(
         program: Path::new("/bin/pi"),
         cwd: Path::new("/work"),
         extra_args: &["--offline".into()],
+        parent_address: None,
     })
 }
 
@@ -115,9 +116,37 @@ fn no_parent_model_passes_no_model_flag() {
         program: Path::new("pi"),
         cwd: Path::new("/"),
         extra_args: &[],
+        parent_address: None,
     });
     assert_eq!(flag(&spec.args, "--model"), None);
     assert_eq!(flag(&spec.args, "--thinking"), None);
+}
+
+#[test]
+fn messaging_passes_the_parent_address_and_keeps_agent_message_in_tool_lists() {
+    let explore = builtin_agents().remove(0);
+    let spec = command::build(ChildInput {
+        agent: &explore,
+        task: "t",
+        run_id: "r",
+        session_file: Path::new("/s.jsonl"),
+        parent: &Inherit::default(),
+        overrides: &Overrides::default(),
+        program: Path::new("pi"),
+        cwd: Path::new("/"),
+        extra_args: &[],
+        parent_address: Some("parent-session"),
+    });
+    assert!(
+        spec.env
+            .contains(&("PI_SUBAGENT_PARENT".into(), "parent-session".into()))
+    );
+    if let Some(tools) = flag(&spec.args, "--tools") {
+        assert!(
+            tools.split(',').any(|tool| tool == "agent_message"),
+            "{tools}"
+        );
+    }
 }
 
 #[test]

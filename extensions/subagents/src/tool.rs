@@ -214,6 +214,10 @@ async fn run(app: App, params: Params, ctx: ToolCtx) -> Result<ToolResult> {
             thinking: ctx.snapshot().thinking_level.clone(),
         },
         extra_args: config.extra_args.clone(),
+        parent_address: config
+            .messaging
+            .then(|| crate::messaging::own_address(&host))
+            .flatten(),
         runs_root,
         keep: config.max_recent_runs,
         limit: Arc::new(Semaphore::new(config.max_parallel)),
