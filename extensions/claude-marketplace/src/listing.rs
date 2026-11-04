@@ -132,9 +132,11 @@ pub fn plugins(
                                 row.reasons.push(reason.clone());
                             }
                             PluginSource::Path(rel) => {
+                                let settings = crate::settings::load(env, Scope::User, &id)
+                                    .unwrap_or_default();
                                 match catalog
                                     .local_root(rel)
-                                    .and_then(|root| plugin::resolve(entry, &root))
+                                    .and_then(|root| plugin::resolve_with(entry, &root, &settings))
                                 {
                                     Ok(resolved) => {
                                         row.version = row.version.or(resolved.version);

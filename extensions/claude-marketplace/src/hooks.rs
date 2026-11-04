@@ -5,28 +5,38 @@ use serde_json::{Map, Value, json};
 
 use crate::frontmatter::substitute;
 use crate::jsonfile;
+use crate::stage::Vars;
 
-fn substitute_handler(handler: &mut Value, vars: &[(&str, String)]) {
+/// Like Claude Code, `${user_config.*}` is substituted in exec-form `args` only, not in the
+/// shell `command`.
+fn substitute_handler(handler: &mut Value, vars: &Vars, arg_vars: &Vars) {
     if let Some(Value::String(command)) = handler.get_mut("command") {
         *command = substitute(command, vars);
     }
     if let Some(Value::Array(args)) = handler.get_mut("args") {
         for arg in args.iter_mut() {
             if let Some(text) = arg.as_str() {
-                *arg = json!(substitute(text, vars));
+                *arg = json!(substitute(text, arg_vars));
             }
         }
     }
 }
 
+/// What tags each group of one plugin.
+pub struct Tag<'a> {
+    pub plugin_id: &'a str,
+    pub root: &'a Path,
+    pub data: &'a Path,
+    /// Path variables, for `command`.
+    pub vars: Vars,
+    /// Path variables and user config, for `args`.
+    pub arg_vars: Vars,
+    /// `CLAUDE_PLUGIN_OPTION_<KEY>` values, written as `pluginEnv`.
+    pub env: Map<String, Value>,
+}
+
 /// Matcher groups for the pi-native hooks file, tagged with the plugin.
-pub fn tagged_groups(
-    configs: &[Map<String, Value>],
-    plugin_id: &str,
-    root: &Path,
-    data: &Path,
-    vars: &[(&str, String)],
-) -> Map<String, Value> {
+pub fn tagged_groups(configs: &[Map<String, Value>], tag: &Tag) -> Map<String, Value> {
     let mut out: Map<String, Value> = Map::new();
     for config in configs {
         for (event, groups) in config {
@@ -39,13 +49,16 @@ pub fn tagged_groups(
                     continue;
                 };
                 let mut group = group.clone();
-                group.insert("plugin".into(), json!(plugin_id));
-                group.insert("pluginRoot".into(), json!(root.display().to_string()));
-                group.insert("pluginData".into(), json!(data.display().to_string()));
+                group.insert("plugin".into(), json!(tag.plugin_id));
+                group.insert("pluginRoot".into(), json!(tag.root.display().to_string()));
+                group.insert("pluginData".into(), json!(tag.data.display().to_string()));
+                if !tag.env.is_empty() {
+                    group.insert("pluginEnv".into(), Value::Object(tag.env.clone()));
+                }
                 if let Some(Value::Array(handlers)) = group.get_mut("hooks") {
                     handlers
                         .iter_mut()
-                        .for_each(|handler| substitute_handler(handler, vars));
+                        .for_each(|handler| substitute_handler(handler, &tag.vars, &tag.arg_vars));
                 }
                 list.push(Value::Object(group));
             }

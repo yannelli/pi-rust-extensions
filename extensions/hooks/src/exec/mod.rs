@@ -90,6 +90,7 @@ pub fn hook_env(cx: &Context, def: &HookDef) -> Vec<(String, String)> {
             env.push(("CLAUDE_PLUGIN_DATA".into(), data.clone()));
             env.push(("PLUGIN_DATA".into(), data.clone()));
         }
+        env.extend(plugin.env.iter().cloned());
     }
     if matches!(
         &*def.event,

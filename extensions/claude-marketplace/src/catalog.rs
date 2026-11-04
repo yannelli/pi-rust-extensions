@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 use crate::source::{PluginSource, check_name, contained, parse_plugin};
+use crate::synthetic;
 
 /// A parsed `.claude-plugin/marketplace.json`.
 #[derive(Debug, Clone)]
@@ -12,6 +13,8 @@ pub struct Catalog {
     pub root: PathBuf,
     pub plugin_root: Option<String>,
     pub plugins: Vec<Entry>,
+    /// The whole marketplace.json.
+    pub raw: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -24,7 +27,27 @@ pub struct Entry {
 }
 
 impl Catalog {
+    /// Reads `manifest`; without it, a plugin or skill layout at `root` becomes a
+    /// marketplace with one plugin, named after `name` or the root dir.
+    pub fn read_named(manifest: &Path, root: &Path, name: Option<&str>) -> Result<Catalog> {
+        if !manifest.is_file() {
+            let dir = root.file_name().map(|n| n.to_string_lossy().into_owned());
+            let name = synthetic::name_from(name.or(dir.as_deref()).unwrap_or_default());
+            if let Some((value, _)) = synthetic::catalog(root, &name) {
+                return Catalog::from_value(&value, root);
+            }
+            anyhow::bail!(
+                "{} has no .claude-plugin/marketplace.json, plugin.json, or SKILL.md",
+                root.display()
+            );
+        }
+        Catalog::read(manifest, root)
+    }
+
     pub fn read(manifest: &Path, root: &Path) -> Result<Catalog> {
+        if !manifest.is_file() {
+            return Catalog::read_named(manifest, root, None);
+        }
         let text = std::fs::read_to_string(manifest)
             .with_context(|| format!("cannot read {}", manifest.display()))?;
         let value: Value = serde_json::from_str(&text)
@@ -70,6 +93,7 @@ impl Catalog {
             root: root.to_path_buf(),
             plugin_root,
             plugins,
+            raw: value.clone(),
         })
     }
 

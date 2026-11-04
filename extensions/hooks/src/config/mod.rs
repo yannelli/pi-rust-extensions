@@ -188,6 +188,19 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Prefix of the only variables a group's `pluginEnv` can set.
+pub const PLUGIN_OPTION_PREFIX: &str = "CLAUDE_PLUGIN_OPTION_";
+
+/// The string values of `pluginEnv` whose names start with [`PLUGIN_OPTION_PREFIX`].
+fn plugin_env(group: &Value) -> Vec<(String, String)> {
+    let map = group.get("pluginEnv").and_then(Value::as_object);
+    map.into_iter()
+        .flatten()
+        .filter(|(key, _)| key.starts_with(PLUGIN_OPTION_PREFIX))
+        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+        .collect()
+}
+
 /// Reads the Claude settings shape: event -> matcher groups -> handlers.
 pub fn parse_hooks(source: Source, scope: Scope, file: &Path, hooks: &Value) -> Vec<HookDef> {
     let Some(events) = hooks.as_object() else {
@@ -205,6 +218,7 @@ pub fn parse_hooks(source: Source, scope: Scope, file: &Path, hooks: &Value) -> 
                 id: field("plugin"),
                 root: field("pluginRoot"),
                 data: field("pluginData"),
+                env: plugin_env(group),
             };
             let has_plugin = plugin.id.is_some() || plugin.root.is_some() || plugin.data.is_some();
             for (handler_index, handler) in group

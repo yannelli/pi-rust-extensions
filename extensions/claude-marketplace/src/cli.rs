@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 
 use crate::env::{Env, Scope};
 use crate::listing;
-use crate::{import, install, market, reconcile};
+use crate::{import, install, market, options, reconcile, styles};
 
 pub const HELP: &str = "\
 /claude-plugins                      open the plugin browser
@@ -13,11 +13,13 @@ pub const HELP: &str = "\
 /claude-plugins marketplace autoupdate|noautoupdate <marketplace>
 /claude-plugins list [<marketplace>] [--installed] [--available] [--unavailable]
 /claude-plugins info <plugin>@<marketplace>
-/claude-plugins install <plugin>@<marketplace> [--scope user|project]
+/claude-plugins install <plugin>@<marketplace> | <source> [--scope user|project]
 /claude-plugins update [<plugin>@<marketplace>]
 /claude-plugins uninstall <plugin>@<marketplace> [--scope user|project]
 /claude-plugins enable|disable <plugin>@<marketplace>
 /claude-plugins import [--scope user|project]
+/claude-plugins config <plugin>@<marketplace> [KEY=VALUE ...]
+/claude-plugins style [<plugin>:<style> | off] [--scope user|project]
 Changes apply to pi after /reload.";
 
 #[derive(Debug, Default, PartialEq)]
@@ -84,17 +86,88 @@ pub fn info(env: &Env, id: &str) -> Result<String> {
     };
     let mut lines = vec![format!("{id} [{}]", row.scope), listing::plugin_line(row)];
     lines.extend(row.description.clone());
-    if let Ok((_, record)) = install::find(env, id, None) {
-        lines.push(format!("Root: {}", record.plugin_root.display()));
-        lines.push(format!("Files: {}", record.files.len()));
-        if !record.mcp_keys.is_empty() {
-            lines.push(format!("MCP servers: {}", record.mcp_keys.join(", ")));
-        }
-        if record.hooks {
-            lines.push("Hooks: yes".into());
+    let Ok((scope, record)) = install::find(env, id, None) else {
+        return Ok(lines.join("\n"));
+    };
+    let dirs = env.dirs(scope);
+    lines.push(format!("Root: {}", record.plugin_root.display()));
+    let kinds = [
+        ("Commands", dirs.prompts()),
+        ("Skills", dirs.skills()),
+        ("Agents", dirs.agents()),
+        ("Output styles", dirs.output_styles()),
+    ];
+    for (label, base) in kinds {
+        let mut names: Vec<String> = record
+            .files
+            .iter()
+            .filter(|f| f.parent() == Some(base.as_path()))
+            .filter_map(|f| f.file_name()?.to_str())
+            .map(|n| n.strip_suffix(".md").unwrap_or(n).to_owned())
+            .collect();
+        names.sort();
+        if !names.is_empty() {
+            lines.push(format!("{label}: {}", names.join(", ")));
         }
     }
+    if record.hooks {
+        lines.push(format!("Hooks: yes ({})", dirs.hooks_file().display()));
+    }
+    if !record.mcp_keys.is_empty() {
+        lines.push(format!("MCP servers: {}", record.mcp_keys.join(", ")));
+    }
+    let bin_names: Vec<&str> = record
+        .bins
+        .iter()
+        .flat_map(|b| b.names.iter().map(String::as_str))
+        .collect();
+    if !bin_names.is_empty() {
+        lines.push(format!("Bin (bash PATH): {}", bin_names.join(", ")));
+    }
+    let opts = options::schema(&record.user_config);
+    if !opts.is_empty() {
+        let file = dirs.plugin_options(&record.marketplace, &record.plugin)?;
+        lines.push("User config:".into());
+        lines.extend(options::lines(&opts, &options::load(&file)?));
+    }
+    if !record.strict.is_empty() {
+        lines.push(format!("Strict: {}", record.strict));
+    }
+    if !record.arguments.is_empty() {
+        lines.push(format!("Argument indexing: {}", record.arguments));
+    }
+    if !record.agent_models.is_empty() {
+        lines.push("Agent models:".into());
+        lines.extend(record.agent_models.iter().map(|l| format!("  {l}")));
+    }
+    let dropped = crate::fields::summary(&record.dropped);
+    if !dropped.is_empty() {
+        lines.push("Not applied in pi:".into());
+        lines.extend(dropped.iter().map(|l| format!("  {l}")));
+    }
+    if !record.lsp.is_empty() {
+        lines.push(format!(
+            "LSP servers (not run; add them to lens.json by hand): {}",
+            record.lsp.join("; ")
+        ));
+    }
+    if let Some(agent) = &record.default_agent {
+        lines.push(format!("Default agent (not applied): {agent}"));
+    }
     Ok(lines.join("\n"))
+}
+
+fn config_cmd(env: &Env, args: &Args) -> Result<String> {
+    let id = need(&args.words, 1, "plugin")?;
+    let mut updates = Vec::new();
+    for word in &args.words[2..] {
+        let Some((key, value)) = word.split_once('=') else {
+            bail!("expected KEY=VALUE, got \"{word}\"");
+        };
+        let value = Some(value.to_owned()).filter(|v| !v.is_empty());
+        updates.push((key.to_owned(), value));
+    }
+    install::configure(env, id, args.scope, &updates)
 }
 
 fn marketplace_cmd(env: &Env, args: &Args) -> Result<String> {
@@ -144,11 +217,14 @@ pub fn run(env: &Env, text: &str) -> Result<String> {
         "marketplace" | "mp" => marketplace_cmd(env, &args),
         "list" | "browse" => list_text(env, &args),
         "info" => info(env, need(words, 1, "plugin")?),
-        "install" => install::install(
-            env,
-            need(words, 1, "plugin")?,
-            args.scope.unwrap_or(Scope::User),
-        ),
+        "install" => {
+            let target = need(words, 1, "plugin or source")?;
+            let scope = args.scope.unwrap_or(Scope::User);
+            match crate::state::split_id(target) {
+                Ok(_) => install::install(env, target, scope),
+                Err(_) => install::install_source(env, target, scope),
+            }
+        }
         "reinstall" => {
             let id = need(words, 1, "plugin")?;
             let scope = match args.scope {
@@ -165,6 +241,8 @@ pub fn run(env: &Env, text: &str) -> Result<String> {
         "enable" => install::set_enabled(env, need(words, 1, "plugin")?, true, args.scope),
         "disable" => install::set_enabled(env, need(words, 1, "plugin")?, false, args.scope),
         "import" => import::import(env, args.scope),
+        "config" => config_cmd(env, &args),
+        "style" => styles::command(env, words.get(1).map(String::as_str), args.scope),
         other => bail!("unknown subcommand \"{other}\". Try /claude-plugins help"),
     }
 }

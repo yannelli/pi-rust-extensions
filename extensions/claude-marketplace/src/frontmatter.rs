@@ -51,6 +51,18 @@ impl Doc {
         end
     }
 
+    /// The top-level keys, in order.
+    pub fn keys(&self) -> Vec<String> {
+        let front = self.front.as_deref().unwrap_or_default();
+        front
+            .iter()
+            .filter(|line| !line.starts_with([' ', '\t', '#', '-']))
+            .filter_map(|line| line.split_once(':'))
+            .map(|(key, _)| key.trim().to_owned())
+            .filter(|key| !key.is_empty())
+            .collect()
+    }
+
     pub fn get(&self, key: &str) -> Option<String> {
         let index = self.key_line(key)?;
         let line = &self.front.as_ref()?[index];
@@ -128,7 +140,7 @@ fn unquote(value: &str) -> &str {
 }
 
 /// Replaces `${NAME}` tokens found in `vars` in one pass; other tokens stay.
-pub fn substitute(text: &str, vars: &[(&str, String)]) -> String {
+pub fn substitute<K: AsRef<str>>(text: &str, vars: &[(K, String)]) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("${") {
@@ -136,7 +148,7 @@ pub fn substitute(text: &str, vars: &[(&str, String)]) -> String {
         let after = &rest[start + 2..];
         let replaced = after.find('}').and_then(|end| {
             let name = &after[..end];
-            let value = vars.iter().find(|(key, _)| *key == name)?;
+            let value = vars.iter().find(|(key, _)| key.as_ref() == name)?;
             Some((value.1.as_str(), end))
         });
         match replaced {

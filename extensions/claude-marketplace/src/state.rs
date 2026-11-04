@@ -3,8 +3,10 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::env::{Dirs, Scope};
+use crate::fields::Dropped;
 use crate::jsonfile;
 use crate::source::check_name;
 
@@ -49,6 +51,39 @@ pub struct PluginRecord {
     pub mcp_keys: Vec<String>,
     #[serde(default)]
     pub unsupported: Vec<String>,
+    /// Bin dirs, added to the bash `PATH` for commands that name their files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bins: Vec<BinDir>,
+    /// The env file that bash commands naming a bin file source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_file: Option<PathBuf>,
+    /// Components and fields that are not applied, with the reason.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped: Vec<Dropped>,
+    /// The effective `strict` and where it comes from.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub strict: String,
+    /// The argument indexing and where it comes from.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub arguments: String,
+    /// One line per agent: the Claude model and effort, the pi values, and the rule.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_models: Vec<String>,
+    /// The `userConfig` schema.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub user_config: Map<String, Value>,
+    /// `<name>: <command>` of each LSP server (not run by pi).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lsp: Vec<String>,
+    /// The plugin's default main agent (not applied by pi).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_agent: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BinDir {
+    pub dir: PathBuf,
+    pub names: Vec<String>,
 }
 
 impl State {

@@ -54,6 +54,8 @@ pub struct Plugin {
     pub id: Option<String>,
     pub root: Option<String>,
     pub data: Option<String>,
+    /// `pluginEnv`: user config values as `CLAUDE_PLUGIN_OPTION_<KEY>` variables.
+    pub env: Vec<(String, String)>,
 }
 
 /// One handler of one matcher group of one config file.

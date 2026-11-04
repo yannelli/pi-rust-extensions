@@ -7,9 +7,9 @@ use crate::config::Config;
 use crate::env::{Dirs, Env, Scope};
 use crate::plugin::{self, Resolved};
 use crate::source::{PluginSource, contained, ensure_inside};
-use crate::stage::{Target, remove_path, stage_commands, stage_skills};
-use crate::state::{PluginRecord, State, split_id};
-use crate::{RELOAD, agents, git, hooks, market, mcp};
+use crate::stage::remove_path;
+use crate::state::{PluginRecord, State, plugin_id, split_id};
+use crate::{RELOAD, apply, fields, git, hooks, market, mcp, options, settings};
 
 /// Marketplaces a plugin of `scope` can come from: the same scope, then user.
 fn marketplace_scopes(scope: Scope) -> Vec<Scope> {
@@ -53,7 +53,13 @@ pub fn materialize(entry: &Entry, catalog: &Catalog, dirs: &Dirs) -> Result<Path
 
 /// Removes the staged files, hook groups, and MCP servers of a record.
 pub fn unstage(record: &PluginRecord, dirs: &Dirs, id: &str) -> Result<()> {
-    let bases = [dirs.prompts(), dirs.skills(), dirs.agents()];
+    let bases = [
+        dirs.prompts(),
+        dirs.skills(),
+        dirs.agents(),
+        dirs.output_styles(),
+        dirs.env_files(),
+    ];
     for file in &record.files {
         if bases.iter().any(|base| ensure_inside(base, file).is_ok()) {
             remove_path(file)?;
@@ -65,86 +71,82 @@ pub fn unstage(record: &PluginRecord, dirs: &Dirs, id: &str) -> Result<()> {
     mcp::remove(&dirs.mcp_file(), id)
 }
 
-struct Staged {
-    record: PluginRecord,
-    counts: Vec<String>,
-    notes: Vec<String>,
+/// Installs or reinstalls `plugin@marketplace` in `scope`, with its missing dependencies.
+pub fn install(env: &Env, id: &str, scope: Scope) -> Result<String> {
+    install_with(env, id, scope, &mut Vec::new())
 }
 
-fn stage_all(
+/// `install <source>`: adds the source as a marketplace (or finds the one added from it) and
+/// installs its plugin when it has exactly one.
+pub fn install_source(env: &Env, raw: &str, scope: Scope) -> Result<String> {
+    let mp_scopes = marketplace_scopes(scope);
+    let existing = mp_scopes.iter().find_map(|&s| {
+        let state = State::load(&env.dirs(s)).ok()?;
+        let source = crate::source::parse_marketplace(raw, &env.cwd, &env.home).ok()?;
+        let wanted = match source {
+            crate::source::MarketplaceSource::Git { url } => url,
+            crate::source::MarketplaceSource::Local { root, manifest } => {
+                match manifest.is_file() {
+                    true => manifest.display().to_string(),
+                    false => root.display().to_string(),
+                }
+            }
+        };
+        state.marketplaces.into_values().find(|r| {
+            r.git_url.as_deref() == Some(wanted.as_str())
+                || r.source == wanted
+                || r.source == raw.trim()
+        })
+    });
+    let (name, mut lines) = match existing {
+        Some(record) => (record.name, Vec::new()),
+        None => {
+            let (name, text) = market::add_named(env, raw, scope)?;
+            (name, vec![text])
+        }
+    };
+    let located = market::find_in(env, &name, &mp_scopes)?;
+    let catalog = located.catalog()?;
+    match catalog.plugins.as_slice() {
+        [one] => lines.push(install(env, &plugin_id(&one.name, &name), scope)?),
+        plugins => lines.push(format!(
+            "Marketplace {name} has {} plugins; install one with /claude-plugins install <plugin>@{name}.",
+            plugins.len()
+        )),
+    }
+    Ok(lines.join("\n"))
+}
+
+fn install_dependencies(
     env: &Env,
-    scope: Scope,
-    mp_scope: Scope,
     resolved: &Resolved,
-    id: &str,
     mp: &str,
-) -> Result<Staged> {
-    let dirs = env.dirs(scope);
-    let data_dir = dirs.plugin_data(mp, &resolved.name)?;
-    std::fs::create_dir_all(&data_dir)?;
-    let target = Target {
-        dirs: &dirs,
-        plugin: &resolved.name,
-        id: id.to_owned(),
-        root: resolved.root.clone(),
-        data_dir: data_dir.clone(),
-        project_dir: (scope == Scope::Project).then(|| env.cwd.clone()),
-    };
-    let mut record = PluginRecord {
-        plugin: resolved.name.clone(),
-        marketplace: mp.to_owned(),
-        marketplace_scope: mp_scope,
-        version: resolved.version.clone(),
-        description: resolved.description.clone(),
-        enabled: true,
-        plugin_root: resolved.root.clone(),
-        files: Vec::new(),
-        hooks: false,
-        mcp_keys: Vec::new(),
-        unsupported: resolved.unsupported.clone(),
-    };
-    let mut notes = resolved.notes.clone();
-    let mut run = |record: &mut PluginRecord| -> Result<Vec<String>> {
-        let commands = stage_commands(&target, &resolved.commands, &mut record.files)?;
-        let skills = stage_skills(&target, &resolved.skills, &mut record.files)?;
-        let agents = agents::stage_agents(&target, &resolved.agents, &mut record.files)?;
-        let vars = target.vars(None);
-        let groups = hooks::tagged_groups(&resolved.hooks, id, &resolved.root, &data_dir, &vars);
-        let hook_count: usize = groups
-            .values()
-            .filter_map(|g| g.as_array())
-            .map(Vec::len)
-            .sum();
-        record.hooks = hook_count > 0;
-        hooks::write(&dirs.hooks_file(), id, groups)?;
-        let (keys, mcp_notes) =
-            mcp::write(&dirs.mcp_file(), id, &resolved.name, &resolved.mcp, &vars)?;
-        notes.extend(mcp_notes);
-        record.mcp_keys = keys;
-        Ok(vec![
-            format!("{commands} command(s)"),
-            format!("{skills} skill(s)"),
-            format!("{agents} agent(s)"),
-            format!("{hook_count} hook group(s)"),
-            format!("{} MCP server(s)", record.mcp_keys.len()),
-        ])
-    };
-    match run(&mut record) {
-        Ok(counts) => Ok(Staged {
-            record,
-            counts,
-            notes,
-        }),
-        Err(err) => {
-            unstage(&record, &dirs, id)?;
-            Err(err)
+    scope: Scope,
+    seen: &mut Vec<String>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for dep in &resolved.dependencies {
+        let dep_id = match dep.contains('@') {
+            true => dep.clone(),
+            false => plugin_id(dep, mp),
+        };
+        if seen.contains(&dep_id) || find(env, &dep_id, None).is_ok() {
+            continue;
+        }
+        match install_with(env, &dep_id, scope, seen) {
+            Ok(text) => lines.push(format!(
+                "Dependency: {}",
+                text.replace(&format!(" {RELOAD}"), "")
+            )),
+            Err(err) => lines.push(format!("Cannot install dependency {dep_id}: {err:#}.")),
         }
     }
+    lines
 }
 
-/// Installs or reinstalls `plugin@marketplace` in `scope`.
-pub fn install(env: &Env, id: &str, scope: Scope) -> Result<String> {
+fn install_with(env: &Env, id: &str, scope: Scope, seen: &mut Vec<String>) -> Result<String> {
     env.require(scope)?;
+    seen.push(id.to_owned());
     let (plugin, mp) = split_id(id)?;
     let located = market::find_in(env, mp, &marketplace_scopes(scope))?;
     let catalog = located.catalog()?;
@@ -153,14 +155,22 @@ pub fn install(env: &Env, id: &str, scope: Scope) -> Result<String> {
     };
     let dirs = env.dirs(scope);
     let root = materialize(entry, &catalog, &dirs)?;
-    let resolved =
-        plugin::resolve(entry, &root).map_err(|e| anyhow!("{plugin} is unavailable: {e}"))?;
+    let settings = settings::load(env, scope, id)?;
+    let resolved = plugin::resolve_with(entry, &root, &settings)
+        .map_err(|e| anyhow!("{plugin} is unavailable: {e}"))?;
+    let dependencies = install_dependencies(env, &resolved, mp, scope, seen);
     let mut state = State::load(&dirs)?;
     if let Some(old) = state.plugins.remove(id) {
         unstage(&old, &dirs, id)?;
         state.save(&dirs)?;
     }
-    let staged = stage_all(env, scope, located.scope, &resolved, id, mp)?;
+    let plan = apply::Plan {
+        scope,
+        mp_scope: located.scope,
+        id,
+        mp,
+    };
+    let staged = apply::stage_all(env, &plan, &resolved, &settings)?;
     state.plugins.insert(id.to_owned(), staged.record.clone());
     state.save(&dirs)?;
     let mut config = Config::load(&dirs)?;
@@ -176,17 +186,80 @@ pub fn install(env: &Env, id: &str, scope: Scope) -> Result<String> {
         "Installed {id}{version} [{scope}]: {}.",
         staged.counts.join(", ")
     );
-    if !staged.record.unsupported.is_empty() {
-        text.push_str(&format!(
-            " Not supported in pi: {}.",
-            staged.record.unsupported.join(", ")
-        ));
+    let dropped = fields::summary(&staged.record.dropped);
+    if !dropped.is_empty() {
+        text.push_str(&format!(" Not applied in pi: {}.", dropped.join("; ")));
     }
     for note in &staged.notes {
         text.push_str(&format!(" {note}."));
     }
+    for line in dependencies {
+        text.push_str(&format!("\n{line}"));
+    }
     text.push_str(&format!(" {RELOAD}"));
     Ok(text)
+}
+
+/// The options of an installed plugin and their stored values.
+pub fn user_options(
+    env: &Env,
+    id: &str,
+    scope: Option<Scope>,
+) -> Result<(
+    Scope,
+    Vec<options::Opt>,
+    serde_json::Map<String, serde_json::Value>,
+)> {
+    let (scope, record) = find(env, id, scope)?;
+    let file = env
+        .dirs(scope)
+        .plugin_options(&record.marketplace, &record.plugin)?;
+    Ok((
+        scope,
+        options::schema(&record.user_config),
+        options::load(&file)?,
+    ))
+}
+
+/// Sets (`Some`) or clears (`None`) user config values, then reinstalls an enabled plugin.
+pub fn configure(
+    env: &Env,
+    id: &str,
+    scope: Option<Scope>,
+    updates: &[(String, Option<String>)],
+) -> Result<String> {
+    let (scope, record) = find(env, id, scope)?;
+    let opts = options::schema(&record.user_config);
+    let file = env
+        .dirs(scope)
+        .plugin_options(&record.marketplace, &record.plugin)?;
+    let mut stored = options::load(&file)?;
+    if updates.is_empty() {
+        if opts.is_empty() {
+            return Ok(format!("{id} has no user config."));
+        }
+        let mut lines = vec![format!("User config of {id} [{scope}]:")];
+        lines.extend(options::lines(&opts, &stored));
+        lines.push(format!(
+            "Set with /claude-plugins config {id} KEY=VALUE; KEY= clears a value."
+        ));
+        return Ok(lines.join("\n"));
+    }
+    env.require(scope)?;
+    for (key, value) in updates {
+        let Some(opt) = opts.iter().find(|o| &o.key == key) else {
+            bail!("{id} has no user config option \"{key}\"");
+        };
+        match value {
+            Some(text) => stored.insert(key.clone(), options::parse(opt, text)?),
+            None => stored.shift_remove(key),
+        };
+    }
+    options::save(&file, &stored)?;
+    if !record.enabled {
+        return Ok(format!("Saved the user config of {id} [{scope}]."));
+    }
+    install(env, id, scope).map(|text| text.replacen("Installed", "Configured", 1))
 }
 
 /// The scope and record of an installed plugin.
@@ -213,6 +286,7 @@ pub fn uninstall(env: &Env, id: &str, scope: Option<Scope>) -> Result<String> {
     unstage(&record, &dirs, id)?;
     remove_path(&dirs.plugin_clone(&record.marketplace, &record.plugin)?)?;
     remove_path(&dirs.plugin_data(&record.marketplace, &record.plugin)?)?;
+    remove_path(&dirs.plugin_options(&record.marketplace, &record.plugin)?)?;
     let mut state = State::load(&dirs)?;
     state.plugins.remove(id);
     state.save(&dirs)?;

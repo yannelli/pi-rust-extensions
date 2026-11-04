@@ -90,8 +90,11 @@ pub fn local_marketplace(path: &Path) -> Result<MarketplaceSource> {
         });
     }
     let manifest = path.join(".claude-plugin").join("marketplace.json");
-    if !manifest.is_file() {
-        bail!("{} has no .claude-plugin/marketplace.json", path.display());
+    if !manifest.is_file() && crate::synthetic::detect(&path).is_none() {
+        bail!(
+            "{} has no .claude-plugin/marketplace.json, plugin.json, or SKILL.md",
+            path.display()
+        );
     }
     Ok(MarketplaceSource::Local {
         root: path,
@@ -133,10 +136,18 @@ pub fn parse_plugin(source: &Value) -> PluginSource {
         "github" => git(text(source, "repo").map(|r| github_url(&r)), None),
         "url" | "git" => git(text(source, "url"), None),
         "git-subdir" => match text(source, "path") {
-            Some(path) => git(text(source, "url"), Some(path)),
+            Some(path) => {
+                let url = text(source, "url").map(|url| match is_owner_repo(&url) {
+                    true => github_url(&url),
+                    false => url,
+                });
+                git(url, Some(path))
+            }
             None => PluginSource::Unsupported("git-subdir source without a path".into()),
         },
-        "npm" => PluginSource::Unsupported("npm plugin sources are not supported".into()),
+        "npm" | "archive" | "command" => {
+            PluginSource::Unsupported(format!("{kind} plugin sources are not supported"))
+        }
         other => PluginSource::Unsupported(format!("unknown plugin source \"{other}\"")),
     }
 }
@@ -200,4 +211,25 @@ pub fn check_name(kind: &str, name: &str) -> Result<()> {
         bail!("invalid {kind} name \"{name}\"");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn plugin_source_forms() {
+        let subdir = json!({ "source": "git-subdir", "url": "acme/mono", "path": "plugins/x" });
+        let PluginSource::Git { url, subdir, .. } = parse_plugin(&subdir) else {
+            panic!("git-subdir is a git source");
+        };
+        assert_eq!(url, "https://github.com/acme/mono.git");
+        assert_eq!(subdir.as_deref(), Some("plugins/x"));
+        let archive = parse_plugin(&json!({ "source": "archive", "url": "https://x/p.zip" }));
+        assert_eq!(
+            archive,
+            PluginSource::Unsupported("archive plugin sources are not supported".into())
+        );
+    }
 }

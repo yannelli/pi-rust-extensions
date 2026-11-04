@@ -51,7 +51,11 @@ fn install_and_uninstall_user_scope() {
     let root = fx.repo.join("plugins/fmt");
     assert_eq!(names(&dirs.prompts()), ["fmt:build:web.md", "fmt:hello.md"]);
     let web = read(&dirs.prompts().join("fmt:build:web.md"));
-    assert_eq!(web, format!("Build with {}/web\n", root.display()));
+    let appended = "\n$ARGUMENTS\n";
+    assert_eq!(
+        web,
+        format!("Build with {}/web\n{appended}", root.display())
+    );
     assert_eq!(names(&dirs.skills()), ["fmt-check", "fmt-style"]);
     let skill = read(&dirs.skills().join("fmt-check/SKILL.md"));
     let skill_dir = dirs.skills().join("fmt-check");
@@ -69,7 +73,7 @@ fn install_and_uninstall_user_scope() {
     let agent = read(&fx.agent.join("ext/subagents/agents/fmt-reviewer.md"));
     assert!(agent.contains("name: fmt-reviewer\n"), "{agent}");
     assert!(
-        agent.contains("tools: bash, read, find, WebFetch\n"),
+        agent.contains("tools: bash, read, find, url_context\n"),
         "{agent}"
     );
     assert!(
@@ -132,7 +136,10 @@ fn project_scope_needs_trust_and_substitutes_project_dir() {
 
     let env = fx.env(true);
     let text = install::install(&env, "lint@acme", Scope::Project).unwrap();
-    assert!(text.contains("Not supported in pi: lspServers"), "{text}");
+    assert!(
+        text.contains("Not applied in pi: plugin.json lspServers (pi runs no plugin LSP servers"),
+        "{text}"
+    );
     let dirs = Dirs::new(&fx.project.join(".pi"));
     assert_eq!(names(&dirs.prompts()), ["lint:run.md"]);
     assert!(read(&dirs.skills().join("lint-rules/SKILL.md")).contains("name: lint-rules"));
@@ -183,8 +190,15 @@ fn update_after_new_commit_reinstalls() {
     let text = cli::run(&env, "update").unwrap();
     assert!(text.contains("Updated marketplace acme [user]"), "{text}");
     assert!(text.contains("Installed fmt@acme"), "{text}");
-    assert_eq!(read(&dirs.prompts().join("fmt:hello.md")), "Hi again\n");
-    assert_eq!(read(&dirs.prompts().join("fmt:bye.md")), "Bye\n");
+    let appended = "\n$ARGUMENTS\n";
+    assert_eq!(
+        read(&dirs.prompts().join("fmt:hello.md")),
+        format!("Hi again\n{appended}")
+    );
+    assert_eq!(
+        read(&dirs.prompts().join("fmt:bye.md")),
+        format!("Bye\n{appended}")
+    );
     let hooks = read_json(&dirs.hooks_file());
     assert_eq!(hooks["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
     assert_eq!(
