@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
 use pi_ext_sdk::prelude::*;
-use pi_ext_sdk::{ChatStyle, ToolCallRender, ToolResultRender};
-use serde::Deserialize;
+use pi_ext_sdk::{ChatStyle, PromptLayout, ToolCallRender, ToolResultRender};
+use serde::{Deserialize, Deserializer};
 
 use paint::{Paint, working_frames};
 use rows::Look;
@@ -44,6 +44,11 @@ pub struct Config {
     pub thinking: bool,
     /// Rounded editor corners and side bars.
     pub editor: bool,
+    /// `thinking`, a theme color token, or `#rrggbb`.
+    #[serde(rename = "borderColor", deserialize_with = "border_color")]
+    pub border_color: String,
+    #[serde(rename = "promptLayout", deserialize_with = "prompt_layout")]
+    pub prompt_layout: PromptLayout,
 }
 
 impl Default for Config {
@@ -57,8 +62,38 @@ impl Default for Config {
             markers: true,
             thinking: true,
             editor: true,
+            border_color: "thinking".into(),
+            prompt_layout: PromptLayout::Frame,
         }
     }
+}
+
+fn border_color<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<String, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    match value.as_str() {
+        Some(color) => Ok(color.to_owned()),
+        None => {
+            pi_ext_sdk::warn!("invalid compact-tui borderColor {value}; using thinking");
+            Ok("thinking".into())
+        }
+    }
+}
+
+fn prompt_layout<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<PromptLayout, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    Ok(match value.as_str() {
+        Some("frame") => PromptLayout::Frame,
+        Some("caret") => PromptLayout::Caret,
+        Some("harbor") => PromptLayout::Harbor,
+        _ => {
+            pi_ext_sdk::warn!("invalid compact-tui promptLayout {value}; using frame");
+            PromptLayout::Frame
+        }
+    })
 }
 
 impl Config {
@@ -174,7 +209,7 @@ impl State {
         Ok(())
     }
 
-    /// The message markers, the folded thinking label, and the rounded editor.
+    /// The message markers, the folded thinking label, and the editor styling.
     async fn apply_chat_style(&self, host: &Host) -> Result<()> {
         let config = &self.config;
         if !self.chat_style.load(Ordering::Relaxed)
@@ -193,6 +228,11 @@ impl State {
             assistant_prefix: marker("●"),
             collapse_thinking: config.thinking,
             rounded_editor: config.editor,
+            editor_border_color: config
+                .editor
+                .then(|| paint.border_color(&config.border_color))
+                .flatten(),
+            prompt_layout: config.editor.then_some(config.prompt_layout),
         };
         host.set_chat_style(&style).await?;
         if config.thinking {

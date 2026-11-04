@@ -286,6 +286,92 @@ fn render_fits_the_width_and_shows_the_acp_chrome() {
 }
 
 #[test]
+fn wrapped_list_keeps_the_selected_row_and_its_continuations_visible() {
+    let mut inv = inventory(setting(), None);
+    let mut row = inv.rows[0].clone();
+    row.why = Why::Default;
+    row.description = "a description that continues onto another line SELECTED-END".into();
+    inv.rows = (0..12)
+        .map(|i| {
+            let mut row = row.clone();
+            row.name = format!("item_{i:02}");
+            row
+        })
+        .collect();
+    let mut view = View::new(false);
+    view.overflow = ListOverflow::Wrap;
+    for selected in [0, 6, 11] {
+        view.selected = selected;
+        let lines = view.render(&inv, 40, Some(16));
+        assert!(lines.len() <= 16);
+        assert!(lines.iter().all(|line| style::visible_width(line) <= 40));
+        let plain: Vec<String> = lines.iter().map(|line| style::strip(line)).collect();
+        let start = plain
+            .iter()
+            .position(|line| line.starts_with("→ "))
+            .unwrap();
+        assert!(
+            plain[start].contains(&format!("item_{selected:02}")),
+            "{plain:?}"
+        );
+        let end = plain[start..]
+            .iter()
+            .position(|line| line.contains("SELECTED-END"))
+            .unwrap()
+            + start;
+        assert!(end > start, "{plain:?}");
+        assert!(
+            plain[start + 1..=end]
+                .iter()
+                .all(|line| line.starts_with("    ")),
+            "{plain:?}"
+        );
+        assert!(
+            plain[start..=end].iter().all(|line| !line.contains('…')),
+            "{plain:?}"
+        );
+    }
+    view.overflow = ListOverflow::Truncate;
+    let lines = view.render(&inv, 40, Some(16));
+    let selected = lines
+        .iter()
+        .map(|line| style::strip(line))
+        .find(|line| line.starts_with("→ "))
+        .unwrap();
+    assert!(selected.ends_with('…'), "{selected}");
+    assert!(
+        !lines
+            .iter()
+            .any(|line| style::strip(line).contains("SELECTED-END"))
+    );
+}
+
+#[test]
+fn scrolling_moves_selected_text_and_keeps_other_rows_truncated() {
+    let mut inv = inventory(setting(), None);
+    for row in &mut inv.rows {
+        row.description = "abcdefghijklmnopqrstuvwxyz-END".into();
+    }
+    let mut view = View::new(false);
+    view.overflow = ListOverflow::Scroll;
+    view.scroll.offset = view.scroll_limit(&inv, 30);
+    assert!(view.scroll.offset > 0);
+    let lines: Vec<String> = view
+        .render(&inv, 30, None)
+        .iter()
+        .map(|line| style::strip(line))
+        .collect();
+    let selected = lines.iter().find(|line| line.starts_with("→ ")).unwrap();
+    assert!(selected.ends_with("-END"), "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("  ◐ ") && line.ends_with('…')),
+        "{lines:?}"
+    );
+}
+
+#[test]
 fn undeclared_mcp_tools_can_be_turned_off_one_by_one() {
     let inv = inventory(json!({}), None);
     let mut view = View::new(false);

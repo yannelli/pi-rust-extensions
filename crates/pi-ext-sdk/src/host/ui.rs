@@ -22,6 +22,16 @@ pub enum Placement {
     BelowEditor,
 }
 
+/// The editor's prompt box layout.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PromptLayout {
+    #[default]
+    Frame,
+    Caret,
+    Harbor,
+}
+
 /// How chat messages and the editor look (`ui.setChatStyle`, feature `ui.chatStyle`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +46,11 @@ pub struct ChatStyle {
     pub collapse_thinking: bool,
     /// Rounded editor corners, and side bars in the editor padding.
     pub rounded_editor: bool,
+    /// A theme color token or `#rrggbb`; absent follows the thinking level and bash mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editor_border_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_layout: Option<PromptLayout>,
 }
 
 /// `ui.*` requests. Dialogs fail with `Error::is_no_ui` when pi has no UI.
@@ -169,7 +184,7 @@ impl Host {
             .map(drop)
     }
 
-    /// Message prefixes, collapsed thinking, and the rounded editor; replaces the last style.
+    /// Message prefixes, collapsed thinking, and editor styling; replaces the last style.
     pub async fn set_chat_style(&self, style: &ChatStyle) -> Result<()> {
         let params = serde_json::to_value(style).unwrap_or_default();
         self.call("ui.setChatStyle", params).await.map(drop)
@@ -232,6 +247,30 @@ impl InputOptions {
 #[cfg(test)]
 mod input_tests {
     use super::*;
+
+    #[test]
+    fn chat_style_omits_optional_fields_and_serializes_layouts() {
+        assert_eq!(
+            serde_json::to_value(ChatStyle::default()).unwrap(),
+            json!({ "collapseThinking": false, "roundedEditor": false })
+        );
+        for (layout, name) in [
+            (PromptLayout::Frame, "frame"),
+            (PromptLayout::Caret, "caret"),
+            (PromptLayout::Harbor, "harbor"),
+        ] {
+            let style = ChatStyle {
+                editor_border_color: Some("borderMuted".into()),
+                prompt_layout: Some(layout),
+                ..ChatStyle::default()
+            };
+            assert_eq!(
+                serde_json::to_value(style).unwrap(),
+                json!({ "collapseThinking": false, "roundedEditor": false,
+                    "editorBorderColor": "borderMuted", "promptLayout": name })
+            );
+        }
+    }
 
     #[test]
     fn input_params_carry_prefill_and_secret() {

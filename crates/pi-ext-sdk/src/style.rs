@@ -68,7 +68,7 @@ pub fn bg(color: Color, text: &str) -> String {
 }
 
 /// Splits text into escape sequences (`true`) and plain characters (`false`).
-fn tokens(text: &str) -> impl Iterator<Item = (&str, bool)> {
+pub(crate) fn tokens(text: &str) -> impl Iterator<Item = (&str, bool)> {
     let mut rest = text;
     std::iter::from_fn(move || {
         let first = rest.chars().next()?;

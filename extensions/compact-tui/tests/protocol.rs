@@ -17,7 +17,7 @@ fn host_answer(method: &str) -> Value {
     match method {
         "ui.getTheme" => json!({
             "name": "dark", "appearance": "dark", "mode": "truecolor",
-            "fg": { "accent": ACCENT, "success": "\u{1b}[38;2;0;200;0m", "muted": "\u{1b}[38;5;245m" },
+            "fg": { "accent": ACCENT, "borderMuted": "\u{1b}[38;5;240m", "success": "\u{1b}[38;2;0;200;0m", "muted": "\u{1b}[38;5;245m" },
             "bg": { "toolSuccessBg": "\u{1b}[48;2;0;40;0m" }, "dim": []
         }),
         "keybindings.get" => json!({ "app.tools.expand": "ctrl+e", "app.interrupt": "escape" }),
@@ -26,7 +26,11 @@ fn host_answer(method: &str) -> Value {
 }
 
 async fn start() -> TestHost {
-    let mut host = TestHost::start(extension(Config::default(), Some("/home/me".into())));
+    start_with(Config::default()).await.0
+}
+
+async fn start_with(config: Config) -> (TestHost, Value) {
+    let mut host = TestHost::start(extension(config.clone(), Some("/home/me".into())));
     let params = json!({
         "protocolVersion": 1, "piVersion": "0.13.0", "cwd": "/work/app", "agentDir": "/nonexistent",
         "extensionPath": "native:test/compact-tui", "platform": "linux", "mode": "tui", "hasUI": true,
@@ -80,9 +84,15 @@ async fn start() -> TestHost {
             .starts_with(ACCENT),
         "{style}"
     );
+    assert_eq!(style["collapseThinking"], json!(true));
+    assert_eq!(style["roundedEditor"], json!(config.editor));
     assert_eq!(
-        (&style["collapseThinking"], &style["roundedEditor"]),
-        (&json!(true), &json!(true))
+        style["promptLayout"],
+        if config.editor {
+            serde_json::to_value(config.prompt_layout).unwrap()
+        } else {
+            Value::Null
+        }
     );
     assert_eq!(params(label)["label"], "∴ Thought · ctrl+t to show");
     let probe = json!({ "toolName": "bash", "result": { "content": [{ "type": "text", "text": "a\nb\nc\nd\ne\nf\ng\nh" }] },
@@ -94,7 +104,44 @@ async fn start() -> TestHost {
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    host
+    (host, style)
+}
+
+#[tokio::test]
+async fn editor_layout_and_border_config_reach_chat_style() {
+    for (color, expected) in [
+        ("thinking", None),
+        ("accent", Some("accent")),
+        ("borderMuted", Some("borderMuted")),
+        ("#12abEF", Some("#12abEF")),
+        ("noSuchToken", None),
+        ("#abc", None),
+        ("#gg0000", None),
+        ("", None),
+    ] {
+        for layout in ["frame", "caret", "harbor"] {
+            let config: Config = serde_json::from_value(json!({
+                "borderColor": color, "promptLayout": layout
+            }))
+            .unwrap();
+            let (host, style) = start_with(config).await;
+            assert_eq!(
+                style.get("editorBorderColor").and_then(Value::as_str),
+                expected
+            );
+            assert_eq!(style["promptLayout"], layout);
+            host.finish().await.unwrap();
+        }
+    }
+    let config = serde_json::from_value(json!({
+        "editor": false, "borderColor": "accent", "promptLayout": "harbor"
+    }))
+    .unwrap();
+    let (host, style) = start_with(config).await;
+    assert!(style.get("editorBorderColor").is_none());
+    assert!(style.get("promptLayout").is_none());
+    assert_eq!(style["roundedEditor"], false);
+    host.finish().await.unwrap();
 }
 
 async fn render(host: &mut TestHost, id: u64, method: &str, params: Value) -> Value {

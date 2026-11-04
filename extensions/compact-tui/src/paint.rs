@@ -43,6 +43,21 @@ impl Paint {
         }
     }
 
+    pub fn border_color(&self, color: &str) -> Option<String> {
+        if color == "thinking" {
+            return None;
+        }
+        let hex = color.strip_prefix('#').is_some_and(|value| {
+            value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        });
+        if hex || self.known(color).is_some() || self.has_bg(color) {
+            Some(color.to_owned())
+        } else {
+            pi_ext_sdk::warn!("invalid compact-tui borderColor {color:?}; using thinking");
+            None
+        }
+    }
+
     pub fn has_bg(&self, token: &str) -> bool {
         self.theme
             .as_ref()
