@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use common::http::{MockHttp, Reply};
 use common::{TestHost, codex_jwt, ctx, now_ms, temp_dir};
+use pi_ext_subscription_router::family::Family;
+use pi_ext_subscription_router::providers::provider_config;
 use pi_ext_subscription_router::state::State;
 use pi_ext_subscription_router::usage::Urls;
 use serde_json::{Value, json};
@@ -101,6 +103,81 @@ async fn initialize_declares_tool_commands_and_virtual_models() {
 }
 
 #[tokio::test]
+async fn initialize_declares_cached_slots_with_the_live_registration_config() {
+    let mock = MockHttp::start(vec![]).await;
+    let accounts = json!({ "version": 1, "accounts": {
+        "anthropic-2": { "type": "pi" },
+        "anthropic-3": { "type": "oauth", "access": "legacy-access", "refresh": "r",
+            "expires": now_ms() + 3_600_000 },
+        "openai-codex-2": { "type": "pi" }
+    } });
+    let dir = agent_dir("init-slots", Some(accounts));
+    let anthropic = vec![model("anthropic", "claude-opus-5-5")];
+    let codex = vec![model("openai-codex", "gpt-5.5")];
+    std::fs::write(
+        dir.join("ext/subscription-router/models.json"),
+        json!({ "version": 1, "families": {
+            "anthropic": anthropic, "openai-codex": codex
+        } })
+        .to_string(),
+    )
+    .unwrap();
+    let mut host = host_for(&dir, &mock);
+    let init = host.initialize(dir.to_str().unwrap()).await;
+    assert_eq!(init["providers"].as_array().unwrap().len(), 3);
+    for (name, family, slot, models, token) in [
+        ("anthropic-2", Family::Anthropic, 2, &anthropic, None),
+        (
+            "anthropic-3",
+            Family::Anthropic,
+            3,
+            &anthropic,
+            Some("legacy-access"),
+        ),
+        ("openai-codex-2", Family::Codex, 2, &codex, None),
+    ] {
+        let declared = init["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == name)
+            .unwrap();
+        assert_eq!(
+            declared["config"],
+            provider_config(family, slot, models, token).unwrap()
+        );
+    }
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn initialize_skips_accounts_without_cached_family_models() {
+    let mock = MockHttp::start(vec![]).await;
+    let accounts = json!({ "version": 1, "accounts": {
+        "anthropic-2": { "type": "pi" }, "openai-codex-2": { "type": "pi" }
+    } });
+    let dir = agent_dir("init-no-cache", Some(accounts));
+    let mut host = host_for(&dir, &mock);
+    let init = host.initialize(dir.to_str().unwrap()).await;
+    assert!(init.get("providers").is_none());
+    host.finish().await.unwrap();
+
+    std::fs::write(
+        dir.join("ext/subscription-router/models.json"),
+        json!({ "version": 1, "families": {
+            "anthropic": [model("anthropic", "claude-opus-5-5")]
+        } })
+        .to_string(),
+    )
+    .unwrap();
+    let mut host = host_for(&dir, &mock);
+    let init = host.initialize(dir.to_str().unwrap()).await;
+    assert_eq!(init["providers"].as_array().unwrap().len(), 1);
+    assert_eq!(init["providers"][0]["name"], "anthropic-2");
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
 async fn retry_route_after_confirmed_429_returns_next_chain_model() {
     let reset = now_ms() / 1000 + 7200;
     let exhausted = json!({ "rate_limit": { "primary_window": { "used_percent": 100, "limit_window_seconds": 18000, "reset_at": reset } } });
@@ -155,8 +232,22 @@ async fn slot_registration_and_message_end_failover() {
     let accounts = json!({ "version": 1, "accounts": { "openai-codex-2": {
         "type": "oauth", "access": access, "refresh": "r", "expires": now_ms() + 3_600_000, "accountId": "acct-2" } } });
     let dir = agent_dir("slots", Some(accounts));
+    std::fs::write(
+        dir.join("ext/subscription-router/models.json"),
+        json!({ "version": 1, "families": {
+            "openai-codex": [model("openai-codex", "cached-old-model")]
+        } })
+        .to_string(),
+    )
+    .unwrap();
     let mut host = host_for(&dir, &mock);
-    host.initialize(dir.to_str().unwrap()).await;
+    let init = host.initialize(dir.to_str().unwrap()).await;
+    assert_eq!(init["providers"][0]["name"], "openai-codex-2");
+    assert_eq!(
+        init["providers"][0]["config"]["models"][0]["id"],
+        "cached-old-model"
+    );
+    assert_eq!(init["providers"][0]["config"]["apiKey"], access);
     let start = json!({ "name": "session_start", "event": { "type": "session_start", "reason": "startup" }, "ctx": ctx(Some(("openai-codex-2", "gpt-5.5"))) });
     host.request(1, "event", start).await;
     let mut registered = None;
@@ -182,6 +273,7 @@ async fn slot_registration_and_message_end_failover() {
     assert_eq!(config["apiKey"], access);
     assert_eq!(config["models"].as_array().unwrap().len(), 1);
     assert_eq!(config["models"][0]["provider"], "openai-codex-2");
+    assert_eq!(config["models"][0]["id"], "gpt-5.5");
     assert!(config.get("oauth").is_none());
 
     let slot_ctx = ctx(Some(("openai-codex-2", "gpt-5.5")));
@@ -255,6 +347,14 @@ async fn router_add_logs_in_through_pi_and_keeps_no_token() {
     let file = std::fs::read_to_string(dir.join("ext/subscription-router/accounts.json")).unwrap();
     let file: Value = serde_json::from_str(&file).unwrap();
     assert_eq!(file["accounts"]["anthropic-2"], json!({ "type": "pi" }));
+    let cache = std::fs::read_to_string(dir.join("ext/subscription-router/models.json")).unwrap();
+    let cache: Value = serde_json::from_str(&cache).unwrap();
+    assert_eq!(cache["version"], 1);
+    assert_eq!(
+        cache["families"]["anthropic"],
+        json!([model("anthropic", "claude-sonnet-5")])
+    );
+    assert!(cache.get("accounts").is_none());
 }
 
 #[tokio::test]

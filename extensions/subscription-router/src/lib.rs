@@ -11,6 +11,7 @@ pub mod filelock;
 pub mod fsutil;
 pub mod login;
 pub mod menu;
+mod model_cache;
 pub mod oauth;
 pub mod providers;
 pub mod router;
@@ -68,6 +69,18 @@ async fn start(host: Host, state: Arc<State>) -> Result<()> {
 /// The extension with every handler; `main` serves it on stdio, tests on a duplex.
 pub fn extension(state: Arc<State>) -> Extension {
     let mut ext = Extension::new("subscription-router");
+    let cache = model_cache::ModelCache::load(&state.agent_dir);
+    for account in state.accounts.list() {
+        let token = account.credential.as_ref().map(|c| c.access.as_str());
+        if let Some(config) = providers::provider_config(
+            account.family,
+            account.slot,
+            cache.models(account.family),
+            token,
+        ) {
+            ext = ext.provider(&account.provider, config);
+        }
+    }
     for profile in state.config().profiles {
         let s = state.clone();
         ext = ext.virtual_model(routing::definition(&profile), move |request, host| {
