@@ -1,6 +1,6 @@
 # pi-ext-subscription-router
 
-Created 2026-10-30. Last updated 2026-10-31.
+Created 2026-10-30. Last updated 2026-11-04.
 
 Native pi-rust extension that combines `@nredd/pi-subscription-router` and `@henryqw/pi-multi-codex`:
 
@@ -30,7 +30,8 @@ Native pi-rust extension that combines `@nredd/pi-subscription-router` and `@hen
 ## Events
 
 - `session_start`: shows a config error, sets the status, reads cold usage caches in the background.
-- First `session_start`: registers the stored slots with `provider.register`, refreshes tokens that expire within 5 minutes (checked every minute), serves the RPC channels.
+- `initialize`: declares stored slots whose family has cached base models, so `--model` and saved default models resolve before the first session starts. Both Anthropic and ChatGPT Codex use the cache; accounts without cached models wait for the first `session_start`.
+- First `session_start`: re-registers the stored slots with fresh base models through `provider.register`, refreshes tokens that expire within 5 minutes (checked every minute), serves the RPC channels. Each successful registration updates the family's model cache; a cache write failure is logged without undoing registration.
 - `before_agent_start`: sets the `subscription_usage` system prompt section from cached data in 25% buckets. On the first prompt, or when the current slot hit its five-hour limit, moves to the fresh slot with the most quota (unless the user picked the model).
 - `virtualModel.route` for `router/<profile>`: see "Routing".
 - `after_provider_response` and `message_end`: a 429 on a slot model switches to the next eligible slot with `model.set` and returns `{ message }` with `errorMessage` `HTTP 429: ...`, so pi retries on the new slot. When no slot is left, the error says so.
@@ -81,6 +82,7 @@ Native pi-rust extension that combines `@nredd/pi-subscription-router` and `@hen
 
 | Path | Content |
 | --- | --- |
+| `<agentDir>/ext/subscription-router/models.json` | Base model lists by built-in provider: `{ "version": 1, "families": { "anthropic": [<models>], "openai-codex": [<models>] } }`. Mode 0600, atomic writes under a `models.json.lock` directory lock, with new directories mode 0700. Re-read under the lock before updating a family. Missing, malformed, or unsupported-version caches declare no startup slots and are replaced after successful registration. Contains model definitions, without account credentials. |
 | `<agentDir>/ext/subscription-router/accounts.json` | Slots 2..n: `{ "type": "pi" }` when pi stores the login, else the router's own `access`, `refresh`, `expires`, `accountId`. Mode 0600, atomic writes under an `accounts.json.lock` directory lock. Re-read before each refresh and save. A malformed file blocks saves until it is fixed. |
 | `<agentDir>/ext/subscription-router/usage.json` | Usage snapshots per provider, mode 0600, atomic writes under an `accounts.json.lock` directory lock. Re-read before each refresh and save. A malformed file blocks saves until it is fixed. |
 

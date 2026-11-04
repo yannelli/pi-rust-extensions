@@ -112,26 +112,26 @@ pub async fn login(
     let previous = state.accounts.get(&account.provider);
     // pi merges a new provider config over the old one, which would keep an old `apiKey`.
     let _ = host.unregister_provider(&account.provider).await;
-    if let Err(err) = providers::register(host, &account).await {
-        restore(host, &account.provider, previous).await;
+    if let Err(err) = providers::register(host, state, &account).await {
+        restore(host, state, &account.provider, previous).await;
         return Err(err.to_string());
     }
     match host.login(&account.provider).await {
         Ok(true) => {}
         Ok(false) => {
-            restore(host, &account.provider, previous).await;
+            restore(host, state, &account.provider, previous).await;
             return Ok(None);
         }
         Err(err) if err.code() == code::METHOD_NOT_FOUND => {
             let _ = host.unregister_provider(&account.provider).await;
             let result = own_login(host, state, family, slot).await;
             if result.is_err() {
-                restore(host, &account.provider, previous).await;
+                restore(host, state, &account.provider, previous).await;
             }
             return result.map(Some);
         }
         Err(err) => {
-            restore(host, &account.provider, previous).await;
+            restore(host, state, &account.provider, previous).await;
             return Err(err.to_string());
         }
     }
@@ -145,10 +145,10 @@ pub async fn login(
 }
 
 /// Registers the slot as it was before a login that did not finish; removes a new slot.
-async fn restore(host: &Host, provider: &str, previous: Option<Account>) {
+async fn restore(host: &Host, state: &State, provider: &str, previous: Option<Account>) {
     let _ = host.unregister_provider(provider).await;
     let Some(previous) = previous else { return };
-    if let Err(err) = providers::register(host, &previous).await {
+    if let Err(err) = providers::register(host, state, &previous).await {
         pi_ext_sdk::warn!("cannot register {provider} again: {err}");
     }
 }
@@ -172,7 +172,7 @@ async fn own_login(
         .await
         .map_err(|e| e.to_string())?;
     state.usage().forget(&account.provider);
-    providers::register(host, &account)
+    providers::register(host, state, &account)
         .await
         .map_err(|e| e.to_string())?;
     Ok(account)

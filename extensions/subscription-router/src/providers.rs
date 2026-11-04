@@ -11,6 +11,7 @@ use pi_ext_sdk::prelude::*;
 use crate::accounts::Account;
 use crate::family::Family;
 use crate::fsutil::now_ms;
+use crate::model_cache::ModelCache;
 use crate::oauth::{Credential, anthropic, codex};
 use crate::state::State;
 
@@ -60,7 +61,7 @@ pub fn provider_config(
     Some(config)
 }
 
-pub async fn register(host: &Host, account: &Account) -> Result<()> {
+pub async fn register(host: &Host, state: &State, account: &Account) -> Result<()> {
     let models = base_models(host, account.family).await?;
     let token = account.credential.as_ref().map(|c| c.access.as_str());
     let config = provider_config(account.family, account.slot, &models, token);
@@ -71,7 +72,11 @@ pub async fn register(host: &Host, account: &Account) -> Result<()> {
             account.provider
         );
     };
-    host.register_provider(&account.provider, config).await
+    host.register_provider(&account.provider, config).await?;
+    if let Err(err) = ModelCache::save(&state.agent_dir, account.family, models).await {
+        pi_ext_sdk::warn!("cannot cache {} models: {err}", account.family.base());
+    }
+    Ok(())
 }
 
 pub async fn refresh_credential(state: &State, account: &Account) -> Result<Credential, String> {
@@ -108,7 +113,7 @@ pub async fn ensure_fresh(host: &Host, state: &State, account: Account) -> Resul
     if let Some(err) = &refreshed.save_error {
         pi_ext_sdk::warn!("cannot save refreshed {}: {err}", account.provider);
     }
-    register(host, &refreshed.account).await?;
+    register(host, state, &refreshed.account).await?;
     Ok(refreshed.account)
 }
 
@@ -133,11 +138,11 @@ pub async fn start(host: Host, state: Arc<State>) -> Result<()> {
                 Ok(_) => Ok(()),
                 Err(err) => {
                     pi_ext_sdk::warn!("cannot refresh {provider}: {err}");
-                    register(&host, &account).await
+                    register(&host, &state, &account).await
                 }
             }
         } else {
-            register(&host, &account).await
+            register(&host, &state, &account).await
         };
         if let Err(err) = registered {
             pi_ext_sdk::warn!("cannot register {provider}: {err}");
