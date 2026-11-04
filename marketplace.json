@@ -7,7 +7,7 @@
       "name": "ask-user-question",
       "displayName": "Ask User Question",
       "description": "Tabbed questionnaire tool (ask_user_question) for structured answers from the user.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "ask-user-question"
       ],
@@ -20,7 +20,7 @@
       "name": "background-tasks",
       "displayName": "Background Tasks",
       "description": "Durable background shell jobs with output and task management.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "background-tasks"
       ],
@@ -33,7 +33,7 @@
       "name": "chrome",
       "displayName": "Chrome",
       "description": "Control Chrome through the DevTools Protocol with session authorization.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "chrome"
       ],
@@ -46,7 +46,7 @@
       "name": "claude-marketplace",
       "displayName": "Claude Marketplace",
       "description": "Add Claude Code plugin marketplaces and install their commands, skills, agents, hooks, MCP servers, output styles, bin executables, and user config into pi.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "claude-marketplace"
       ],
@@ -60,7 +60,7 @@
       "name": "compact-tui",
       "displayName": "Compact TUI",
       "description": "Compact animated tool rows for the built-in tools, a working indicator that names each step, a busy title, and a summary after each run.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "compact-tui"
       ],
@@ -73,7 +73,7 @@
       "name": "computer-use",
       "displayName": "Computer Use",
       "description": "Observe desktop windows and send keyboard and pointer input.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "computer-use"
       ],
@@ -86,7 +86,7 @@
       "name": "context-include",
       "displayName": "Context Include",
       "description": "Expand @path.md lines in AGENTS.md context files into an extra system prompt section.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "context-include"
       ],
@@ -98,7 +98,7 @@
       "name": "deferred",
       "displayName": "Deferred",
       "description": "Deferred loading, name-only listing, and disabling of tools, MCP tools, skills, context files, and prompt sections, with a deferred_search tool that loads them on demand.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "deferred"
       ],
@@ -111,7 +111,7 @@
       "name": "goal",
       "displayName": "Goal",
       "description": "Persistent goals, task trees, autonomous continuation, and completion audits.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "goal"
       ],
@@ -124,7 +124,7 @@
       "name": "hooks",
       "displayName": "Hooks",
       "description": "Run Claude Code and Codex hooks (PreToolUse, PostToolUse, Stop, and more) from pi, with per-hook trust.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "hooks"
       ],
@@ -139,7 +139,7 @@
       "name": "iterm2",
       "displayName": "iTerm2",
       "description": "iTerm2 integration: tab color follows the agent state, session badge, status bar user variables, attention requests, and /terminal-setup.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "iterm2"
       ],
@@ -152,7 +152,7 @@
       "name": "lens",
       "displayName": "Lens",
       "description": "Post-write formatters, linters, type checks, LSP diagnostics and a read-before-edit guard.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "lens"
       ],
@@ -167,7 +167,7 @@
       "name": "ollama",
       "displayName": "Ollama",
       "description": "Discovers models from a local Ollama, registers the ollama provider, and manages models with /ollama.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "ollama"
       ],
@@ -181,7 +181,7 @@
       "name": "permissions",
       "displayName": "Permissions",
       "description": "Allow, ask, and deny rules for pi tool calls, loaded from Claude Code settings, Codex rules files, and pi's own rules, with /permissions to pick sources and scope.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "permissions"
       ],
@@ -196,7 +196,7 @@
       "name": "rewind",
       "displayName": "Rewind",
       "description": "Per-turn shadow git checkpoints and conversation restoration.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "rewind"
       ],
@@ -209,7 +209,7 @@
       "name": "ssh",
       "displayName": "SSH",
       "description": "Reusable SSH profiles, shared connections, remote tools, and remote bash mode.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "ssh"
       ],
@@ -223,7 +223,7 @@
       "name": "simple-goal",
       "displayName": "Simple Goal",
       "description": "One objective that keeps the agent working until a configurable evaluator agrees it is done.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "simple-goal"
       ],
@@ -236,7 +236,7 @@
       "name": "statusline",
       "displayName": "Status line",
       "description": "Configurable footer status line: builtin presets and themes, command scripts, Claude Code, Cursor, and Codex status lines, and the /statusline editor.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "statusline"
       ],
@@ -249,7 +249,7 @@
       "name": "subagents",
       "displayName": "Subagents",
       "description": "Delegate tasks to child pi agents (explore, build, advisor, custom) in the foreground, background, or in parallel.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "subagents"
       ],
@@ -263,7 +263,7 @@
       "name": "timers",
       "displayName": "Timers",
       "description": "Sleep, heartbeat watchdogs, and scheduled prompts that wake the agent.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "timers"
       ],
@@ -276,7 +276,7 @@
       "name": "todo",
       "displayName": "Todo",
       "description": "Phased todo plans with dependencies, per-subagent scopes, a widget above the editor, and /todos.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "todo"
       ],
@@ -289,7 +289,7 @@
       "name": "tool-results",
       "displayName": "Tool Results",
       "description": "Shrinks tool results before the model reads them: terminal cleanup, JSON to TOON or tables, and large results stored behind tool_result_get, with per-tool rules and /tool-results.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "tool-results"
       ],
@@ -303,7 +303,7 @@
       "name": "typesafe",
       "displayName": "TypeSafe",
       "description": "Structured TypeSafe judgments with session controls and usage limits.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "typesafe"
       ],
@@ -317,7 +317,7 @@
       "name": "web-search",
       "displayName": "Web Search",
       "description": "Search the web and read URLs with model-native and search providers.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "web-search"
       ],
@@ -330,7 +330,7 @@
       "name": "workflows",
       "displayName": "Workflows",
       "description": "Fixed and dynamic multi-agent workflows with per-step models, tools, skills, MCP servers, subagent rules, and env; waits, loops, goals, and approvals; a TUI editor, the workflow tool, and skills.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "workflows"
       ],
@@ -345,7 +345,7 @@
       "name": "compactor",
       "displayName": "Compactor",
       "description": "Zero-LLM structured compaction summaries or LLM summaries with an active-work header, plus session recall and context budget tools.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "compactor"
       ],
@@ -358,7 +358,7 @@
       "name": "observational-memory",
       "displayName": "Observational Memory",
       "description": "Records observations and reflections during a session, uses them as the compaction summary, and adds a recall tool.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "observational-memory"
       ],
@@ -371,7 +371,7 @@
       "name": "subscription-router",
       "displayName": "Subscription Router",
       "description": "Several ChatGPT Codex and Anthropic subscription accounts as provider slots, quota-aware slot selection, 429 failover, and router/<profile> virtual models.",
-      "version": "0.5.11",
+      "version": "0.5.12",
       "args": [
         "subscription-router"
       ],

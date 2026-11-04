@@ -2,6 +2,14 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.12] - 2026-11-04
+
+### Added
+
+- **subagents:** rework the /agents panel ([10be225](https://github.com/yannelli/pi-rust-extensions/commit/10be2254c89cbb8605f685dc0dfa3ace74824a1a))
+- **claude-marketplace:** install LSP servers of Claude plugins into lens ([76e6fae](https://github.com/yannelli/pi-rust-extensions/commit/76e6faea4e0ad564bbf0b2b1262f53fd51bdcb99))
+- **lens:** run LSP servers for any file extension from server files ([f3ba3eb](https://github.com/yannelli/pi-rust-extensions/commit/f3ba3eb1243f23158f44f0888eb3c2a4e175924b))
+
 ## [0.5.11] - 2026-11-04
 
 ### Added
