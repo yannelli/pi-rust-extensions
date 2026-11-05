@@ -11,6 +11,7 @@ pub mod failover;
 pub mod family;
 pub mod filelock;
 pub mod fsutil;
+pub mod headless;
 pub mod login;
 pub mod menu;
 mod model_cache;

@@ -14,7 +14,7 @@ use crate::slots::status_line;
 use crate::state::{HostEnv, HostTokens, State, current_model, lock};
 use crate::usage::{GetOptions, format};
 
-pub const ACTIONS: [(&str, &str); 10] = [
+pub const ACTIONS: [(&str, &str); 12] = [
     (
         "status",
         "cached usage, each profile's pick, and recent decisions",
@@ -34,6 +34,14 @@ pub const ACTIONS: [(&str, &str); 10] = [
         "how a provider picks accounts, falls back, and uses resets",
     ),
     ("resets", "banked Codex usage resets; resets <n> spends one"),
+    (
+        "login",
+        "add an account without dialogs: login start <claude|codex>, then login finish <id> <code>",
+    ),
+    (
+        "remove",
+        "remove an account without dialogs: remove <provider> --yes",
+    ),
 ];
 
 pub fn completions(prefix: &str) -> Option<Vec<CompletionItem>> {
@@ -121,6 +129,13 @@ pub async fn status_report(host: &Host, state: &Arc<State>, refresh: bool) -> St
 pub async fn router(state: Arc<State>, args: String, ctx: CommandCtx) -> Result<()> {
     let host = ctx.host();
     let (action, rest) = args.trim().split_once(' ').unwrap_or((args.trim(), ""));
+    if crate::headless::handles(action, rest) {
+        return match action {
+            "login" => crate::headless::login(host, &state, rest).await,
+            "remove" => crate::headless::remove(host, &state, rest).await,
+            _ => crate::headless::resets(host, &state, rest).await,
+        };
+    }
     match action {
         "use" => crate::menu::policy::use_account(host, &state, rest).await,
         "policy" => crate::menu::policy::policy(host, &state, rest).await,

@@ -26,6 +26,10 @@ Native pi-rust extension that combines `@nredd/pi-subscription-router` and `@hen
 | `/router use [claude\|codex] [<n>\|auto]` | The account of this session for a provider; `auto` returns to the policy. Without arguments, a menu. |
 | `/router policy [claude\|codex]` | Menu of the provider's [account policy](#accounts); each change is saved to the config file. |
 | `/router resets [<n>]` | Banked usage resets of each Codex account; with a number, spends one on that account after a confirmation. |
+| `/router login start <claude\|codex>` | Starts a login without dialogs and answers `{ id, provider, name, url, paste }` as one JSON notice. Sign in at `url`. |
+| `/router login finish <id> <pasted>` | Finishes it with the `code#state` Anthropic shows, or the redirect URL of a Codex login, and answers `{ provider, name }`. The router keeps and refreshes the token. A started login expires after 30 minutes. |
+| `/router remove <provider> --yes` | Removes an account without a dialog; answers `{ removed, provider }`. |
+| `/router resets --json`, `/router resets <n> --yes` | The Codex reset list as `{ accounts: [{ provider, available, credits \| error }] }`, or spends one without a dialog and answers `{ provider, reset }`. |
 | `/router add` | Pick Codex or Anthropic, log in, and register the next free slot. |
 | `/router profiles` | Create, edit (chain entries, order, thinking level, strategy, exhaustion policy, max wait, name), and delete profiles. Changes go to the config file and to pi at once. |
 | `/codex-status` | One line per Codex slot: percent of the seven-day quota left, reset countdown, measured or stale. |
@@ -132,6 +136,7 @@ Usage resets: the Codex CLI's `rate-limit-reset-credits` endpoints, next to the 
 | --- | --- |
 | `<agentDir>/ext/subscription-router/models.json` | Base model lists by built-in provider: `{ "version": 1, "families": { "anthropic": [<models>], "openai-codex": [<models>] } }`. Mode 0600, atomic writes under a `models.json.lock` directory lock, with new directories mode 0700. Re-read under the lock before updating a family. Missing, malformed, or unsupported-version caches declare no startup slots and are replaced after successful registration. Contains model definitions, without account credentials. |
 | `<agentDir>/ext/subscription-router/accounts.json` | Slots 2..n: `{ "type": "pi" }` when pi stores the login, else the router's own `access`, `refresh`, `expires`, `accountId`. Mode 0600, atomic writes under an `accounts.json.lock` directory lock. Re-read before each refresh and save. A malformed file blocks saves until it is fixed. |
+| `<agentDir>/ext/subscription-router/logins/<id>.json` | A login started with `/router login start`: provider, account, PKCE verifier, and state. Mode 0600; removed when it finishes or after 30 minutes. |
 | `<agentDir>/ext/subscription-router/usage.json` | Usage snapshots per provider, mode 0600, atomic writes under an `accounts.json.lock` directory lock. Re-read before each refresh and save. A malformed file blocks saves until it is fixed. |
 
 | Variable | Default |
