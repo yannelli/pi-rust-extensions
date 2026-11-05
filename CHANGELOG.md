@@ -2,6 +2,13 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.14] - 2026-11-04
+
+### Added
+
+- read project config from the main checkout in git worktrees ([727fb55](https://github.com/yannelli/pi-rust-extensions/commit/727fb550409561914466a11f90ea4f9714a72591))
+- **typesafe:** review and block tool calls against custom rules ([401d176](https://github.com/yannelli/pi-rust-extensions/commit/401d176de2ad174a35ad9957021e9f00e09989c3))
+
 ## [0.5.13] - 2026-11-04
 
 ### Added
