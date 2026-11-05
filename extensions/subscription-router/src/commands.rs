@@ -14,7 +14,7 @@ use crate::slots::status_line;
 use crate::state::{HostEnv, HostTokens, State, current_model, lock};
 use crate::usage::{GetOptions, format};
 
-pub const ACTIONS: [(&str, &str); 7] = [
+pub const ACTIONS: [(&str, &str); 10] = [
     (
         "status",
         "cached usage, each profile's pick, and recent decisions",
@@ -25,6 +25,15 @@ pub const ACTIONS: [(&str, &str); 7] = [
     ("accounts", "list, add, log in, remove, or switch slots"),
     ("profiles", "create, edit, or delete router profiles"),
     ("add", "add a Codex or Anthropic account and log in"),
+    (
+        "use",
+        "the account of this session: use [claude|codex] [<n>|auto]",
+    ),
+    (
+        "policy",
+        "how a provider picks accounts, falls back, and uses resets",
+    ),
+    ("resets", "banked Codex usage resets; resets <n> spends one"),
 ];
 
 pub fn completions(prefix: &str) -> Option<Vec<CompletionItem>> {
@@ -39,7 +48,7 @@ pub fn completions(prefix: &str) -> Option<Vec<CompletionItem>> {
 /// The `/router status` text: usage per provider, profile forecasts, and the last decisions.
 pub async fn status_report(host: &Host, state: &Arc<State>, refresh: bool) -> String {
     let providers = state.session_providers(current_model(host).map(|m| m.provider).as_deref());
-    let mut lines = Vec::new();
+    let mut lines = crate::menu::policy::accounts_report(state);
     let tokens = HostTokens { host, state };
     for provider in &providers {
         let snapshot = if refresh {
@@ -111,7 +120,18 @@ pub async fn status_report(host: &Host, state: &Arc<State>, refresh: bool) -> St
 
 pub async fn router(state: Arc<State>, args: String, ctx: CommandCtx) -> Result<()> {
     let host = ctx.host();
-    match args.trim() {
+    let (action, rest) = args.trim().split_once(' ').unwrap_or((args.trim(), ""));
+    match action {
+        "use" => crate::menu::policy::use_account(host, &state, rest).await,
+        "policy" => crate::menu::policy::policy(host, &state, rest).await,
+        "resets" => crate::menu::policy::resets(host, &state, rest).await,
+        _ => router_action(&state, host, args.trim()).await,
+    }
+}
+
+async fn router_action(state: &Arc<State>, host: &Host, action: &str) -> Result<()> {
+    let state = state.clone();
+    match action {
         "" | "status" => {
             host.notify_info(status_report(host, &state, false).await)
                 .await
@@ -155,8 +175,17 @@ pub async fn codex_status(state: Arc<State>, _args: String, ctx: CommandCtx) -> 
         .await
 }
 
-/// Moves the current model of `family` to another slot of that family.
+/// Moves the current model of `family` to another slot of that family; with accounts, pins an
+/// account for the session instead.
 pub async fn switch_slot(host: &Host, state: &Arc<State>, family: Option<Family>) -> Result<()> {
+    if crate::pick::enabled(state) {
+        let args = match family {
+            Some(Family::Codex) => "codex",
+            Some(Family::Anthropic) => "claude",
+            None => "",
+        };
+        return crate::menu::policy::use_account(host, state, args).await;
+    }
     let current = current_model(host);
     let parsed = current.as_ref().and_then(|m| parse_provider(&m.provider));
     let Some((current, (current_family, _))) = current

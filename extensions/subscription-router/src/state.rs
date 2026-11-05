@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use pi_ext_sdk::Host;
@@ -39,6 +40,9 @@ pub struct State {
     pub registered: Mutex<HashSet<String>>,
     /// Chain models recovered at a settle boundary during the current prompt.
     pub recovered: Mutex<HashSet<String>>,
+    /// pi has `before_provider_auth`: accounts are logins of one provider, not providers.
+    pub accounts_mode: AtomicBool,
+    pub picks: Mutex<crate::pick::Picks>,
 }
 
 impl State {
@@ -65,6 +69,8 @@ impl State {
             persisted: Mutex::new(HashMap::new()),
             failover: Mutex::new(Failover::default()),
             recovered: Mutex::new(HashSet::new()),
+            accounts_mode: AtomicBool::new(false),
+            picks: Mutex::new(crate::pick::Picks::default()),
         }
     }
 
@@ -195,7 +201,7 @@ impl HostEnv {
     pub async fn build(host: &Host, state: &Arc<State>, models: &[ModelRef]) -> Self {
         let mut available = HashSet::new();
         for model in models {
-            if model_available(host, model).await {
+            if chain_model_available(host, state, model).await {
                 available.insert(model.key());
             }
         }
@@ -204,6 +210,20 @@ impl HostEnv {
             state: state.clone(),
             available,
         }
+    }
+}
+
+/// Whether a router chain model can run. With accounts, `anthropic-2/x` is model `anthropic/x`
+/// on account 2: the base model and a stored account.
+async fn chain_model_available(host: &Host, state: &State, model: &ModelRef) -> bool {
+    let account = parse_provider(&model.provider).filter(|(_, slot)| *slot > 1);
+    match account {
+        Some((family, slot)) if state.accounts_mode.load(Ordering::Relaxed) => {
+            let base = ModelRef::new(family.base(), &model.id);
+            crate::pick::account_ids(state, family).contains(&slot)
+                && model_available(host, &base).await
+        }
+        _ => model_available(host, model).await,
     }
 }
 

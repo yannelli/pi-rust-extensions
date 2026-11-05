@@ -136,6 +136,13 @@ async fn view(
 }
 
 async fn switch(host: &Host, state: &Arc<State>, family: Family, slot: u32) -> Result<()> {
+    if crate::pick::enabled(state) {
+        let family = match family {
+            Family::Codex => "codex",
+            Family::Anthropic => "claude",
+        };
+        return crate::menu::policy::use_account(host, state, &format!("{family} {slot}")).await;
+    }
     let provider = family.provider(slot);
     let Some(current) = current_model(host)
         .filter(|m| crate::family::parse_provider(&m.provider).is_some_and(|(f, _)| f == family))

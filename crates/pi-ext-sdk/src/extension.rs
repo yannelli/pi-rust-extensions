@@ -228,6 +228,16 @@ impl Extension {
         self
     }
 
+    /// Declares providers at `initialize` from its params, for configs that depend on the host,
+    /// such as its `piVersion` or `features`. They follow the providers of [`Self::provider`].
+    pub fn providers_with<F>(mut self, factory: F) -> Self
+    where
+        F: Fn(&crate::snapshot::InitParams) -> Vec<(String, Value)> + Send + Sync + 'static,
+    {
+        self.registry.provider_factory = Some(std::sync::Arc::new(factory));
+        self
+    }
+
     /// Declares a virtual model; `definition` needs `provider` and `id`.
     pub fn virtual_model<F, Fut>(mut self, definition: Value, route: F) -> Self
     where

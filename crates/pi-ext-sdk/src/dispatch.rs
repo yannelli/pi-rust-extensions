@@ -57,14 +57,14 @@ pub(crate) async fn handle(
 
 fn initialize(state: &State, params: Value) -> Result<Value> {
     let init: InitParams = serde_json::from_value(params).map_err(Error::invalid_params)?;
+    let mut registry = state.host.inner.registry.write().expect("registry lock");
+    if let Some(factory) = registry.provider_factory.clone() {
+        registry.init_providers = factory(&init);
+    }
+    let result = registry.initialize_result();
+    drop(registry);
     state.host.set_init(init);
-    Ok(state
-        .host
-        .inner
-        .registry
-        .read()
-        .expect("registry lock")
-        .initialize_result())
+    Ok(result)
 }
 
 fn base(state: &State, params: &Value, cancel: CancellationToken) -> Base {

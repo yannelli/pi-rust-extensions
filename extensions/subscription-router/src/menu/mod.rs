@@ -1,6 +1,7 @@
 //! The `/router manage` menu.
 
 pub mod accounts;
+pub mod policy;
 pub mod profiles;
 
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use pi_ext_sdk::prelude::*;
 use crate::commands::{status_report, switch_slot};
 use crate::state::State;
 
-const ITEMS: [&str; 7] = [
+const ITEMS: [&str; 9] = [
     "Status",
     "Refresh usage",
     "Reset confirmed blocks",
@@ -18,6 +19,8 @@ const ITEMS: [&str; 7] = [
     "Add account",
     "Switch slot",
     "Profiles",
+    "Account policy",
+    "Usage resets",
 ];
 
 /// Index of `choice` in `options`; `None` when the dialog was dismissed.
@@ -47,7 +50,9 @@ pub async fn open(host: &Host, state: &Arc<State>) -> Result<()> {
             Some(3) => accounts::list(host, state).await?,
             Some(4) => accounts::add(host, state).await?,
             Some(5) => switch_slot(host, state, None).await?,
-            Some(_) => profiles::list(host, state).await?,
+            Some(6) => profiles::list(host, state).await?,
+            Some(7) => policy::policy(host, state, "").await?,
+            Some(_) => policy::resets(host, state, "").await?,
         }
     }
 }
