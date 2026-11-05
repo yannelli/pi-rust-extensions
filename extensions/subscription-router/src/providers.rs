@@ -1,6 +1,8 @@
-//! `provider.register` for extension slots: the built-in provider's models under the slot id. pi
-//! logs in and refreshes a slot through `oauth: { builtin }`; slots of older versions send their
-//! own access token as `apiKey` and refresh it here.
+//! `provider.register` for extension slots. With pi's `providerAuth` feature a slot is an account:
+//! a login of the built-in provider with no models, which `before_provider_auth` picks per
+//! request. Older pi gets the built-in provider's models under the slot id. pi logs in and
+//! refreshes a slot through `oauth: { builtin }`; slots of older versions send their own access
+//! token as `apiKey` and refresh it here.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +27,20 @@ pub async fn base_models(host: &Host, family: Family) -> Result<Vec<Value>> {
         .into_iter()
         .filter(|m| m.get("provider").and_then(Value::as_str) == Some(family.base()))
         .collect())
+}
+
+/// The config of an account: a login of the base provider with no models of its own.
+pub fn account_config(family: Family, slot: u32, token: Option<&str>) -> Value {
+    let oauth = OAuthSpec::builtin(family.base()).name(family.slot_name(slot));
+    let mut config = json!({
+        "name": family.slot_name(slot),
+        "oauth": oauth.to_value(),
+        "models": [],
+    });
+    if let Some(token) = token {
+        config["apiKey"] = json!(token);
+    }
+    config
 }
 
 /// The `provider.register` config of a slot; `None` when pi lists no base models. Without a
@@ -62,8 +78,13 @@ pub fn provider_config(
 }
 
 pub async fn register(host: &Host, state: &State, account: &Account) -> Result<()> {
-    let models = base_models(host, account.family).await?;
     let token = account.credential.as_ref().map(|c| c.access.as_str());
+    if crate::pick::enabled(state) {
+        let config = account_config(account.family, account.slot, token);
+        host.register_provider(&account.provider, config).await?;
+        return Ok(());
+    }
+    let models = base_models(host, account.family).await?;
     let config = provider_config(account.family, account.slot, &models, token);
     let Some(config) = config else {
         bail!(

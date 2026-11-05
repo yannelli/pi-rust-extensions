@@ -1,5 +1,7 @@
-//! subscription-router: several ChatGPT Codex and Anthropic subscription accounts as provider
-//! slots, quota-aware slot selection, HTTP 429 failover, and `router/<profile>` virtual models.
+//! subscription-router: several ChatGPT Codex and Anthropic subscription accounts, picked per
+//! request by a policy (manual, fill, threshold, balance) with failover, usage resets, and
+//! fallback to other providers, and `router/<profile>` virtual models. On pi without the
+//! `providerAuth` feature the accounts are provider slots (`anthropic-2`) with copied models.
 
 pub mod accounts;
 pub mod commands;
@@ -13,7 +15,9 @@ pub mod login;
 pub mod menu;
 mod model_cache;
 pub mod oauth;
+pub mod pick;
 pub mod providers;
+pub mod resets;
 pub mod router;
 pub mod routing;
 pub mod selection;
@@ -29,6 +33,9 @@ use std::sync::Arc;
 use pi_ext_sdk::prelude::*;
 
 use crate::state::{State, current_model, lock, warm};
+
+/// The `initialize` feature of pi that sends `before_provider_auth`.
+pub const PROVIDER_AUTH: &str = "providerAuth";
 
 pub fn main() -> ExitCode {
     let state = Arc::new(State::new(&pi_ext_sdk::paths::agent_dir()));
@@ -53,6 +60,12 @@ async fn session_start(host: Host, state: Arc<State>) -> Result<()> {
 }
 
 async fn start(host: Host, state: Arc<State>) -> Result<()> {
+    let accounts = host
+        .init()
+        .is_some_and(|init| init.has_feature(PROVIDER_AUTH));
+    state
+        .accounts_mode
+        .store(accounts, std::sync::atomic::Ordering::Relaxed);
     for channel in [tool::RPC_ADMIT, tool::RPC_USAGE] {
         let (host, state) = (host.clone(), state.clone());
         tokio::spawn(async move {
@@ -70,17 +83,36 @@ async fn start(host: Host, state: Arc<State>) -> Result<()> {
 pub fn extension(state: Arc<State>) -> Extension {
     let mut ext = Extension::new("subscription-router");
     let cache = model_cache::ModelCache::load(&state.agent_dir);
-    for account in state.accounts.list() {
-        let token = account.credential.as_ref().map(|c| c.access.as_str());
-        if let Some(config) = providers::provider_config(
-            account.family,
-            account.slot,
-            cache.models(account.family),
-            token,
-        ) {
-            ext = ext.provider(&account.provider, config);
-        }
-    }
+    let declared = state.clone();
+    ext = ext.providers_with(move |init| {
+        let accounts = init.has_feature(PROVIDER_AUTH);
+        declared
+            .accounts_mode
+            .store(accounts, std::sync::atomic::Ordering::Relaxed);
+        declared
+            .accounts
+            .list()
+            .into_iter()
+            .filter_map(|account| {
+                let token = account.credential.as_ref().map(|c| c.access.as_str());
+                let config = if accounts {
+                    Some(providers::account_config(
+                        account.family,
+                        account.slot,
+                        token,
+                    ))
+                } else {
+                    providers::provider_config(
+                        account.family,
+                        account.slot,
+                        cache.models(account.family),
+                        token,
+                    )
+                };
+                Some((account.provider.clone(), config?))
+            })
+            .collect()
+    });
     for profile in state.config().profiles {
         let s = state.clone();
         ext = ext.virtual_model(routing::definition(&profile), move |request, host| {
@@ -96,6 +128,7 @@ pub fn extension(state: Arc<State>) -> Extension {
         state.clone(),
     );
     let s13 = state.clone();
+    let s14 = state.clone();
     let (s7, s8, s9, s10, s11, s12) = (
         state.clone(),
         state.clone(),
@@ -146,8 +179,18 @@ pub fn extension(state: Arc<State>) -> Extension {
             Ok(())
         }
     })
+    .on("before_provider_auth", move |ev: EventCtx| {
+        pick::on_auth(ev.host().clone(), s14.clone(), ev.event().clone())
+    })
     .on("message_end", move |ev: EventCtx| {
-        failover::on_message_end(ev.host().clone(), s9.clone(), ev.event().clone())
+        let (host, state, event) = (ev.host().clone(), s9.clone(), ev.event().clone());
+        async move {
+            if pick::enabled(&state) {
+                pick::on_message_end(host, state, event).await
+            } else {
+                failover::on_message_end(host, state, event).await
+            }
+        }
     })
     .on("agent_before_settle", move |ev: EventCtx| {
         routing::on_before_settle(ev.host().clone(), s10.clone(), ev.event().clone())
@@ -164,11 +207,15 @@ pub fn extension(state: Arc<State>) -> Extension {
         let state = s12.clone();
         async move {
             let host = ev.host().clone();
-            {
+            let by_user = {
                 let mut failover = lock(&state.failover);
                 if !failover.selecting {
                     failover.explicit_choice = true;
                 }
+                !failover.selecting
+            };
+            if by_user {
+                pick::user_selected(&state);
             }
             crate::status::update(&host, &state).await;
             warm(

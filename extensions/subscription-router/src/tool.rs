@@ -106,7 +106,11 @@ pub fn prompt_section(state: &State, current: Option<&str>) -> Option<String> {
 pub async fn before_agent_start(host: Host, state: Arc<State>) -> Result<EventReply> {
     lock(&state.recovered).clear();
     lock(&state.failover).tried.clear();
-    crate::failover::pick_slot(&host, &state).await;
+    if crate::pick::enabled(&state) {
+        crate::pick::on_prompt_start(&host, &state).await;
+    } else {
+        crate::failover::pick_slot(&host, &state).await;
+    }
     let current = current_provider(&host);
     warm(&host, &state, state.session_providers(current.as_deref()));
     Ok(match prompt_section(&state, current.as_deref()) {

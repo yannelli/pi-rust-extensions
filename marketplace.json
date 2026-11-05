@@ -370,7 +370,7 @@
     {
       "name": "subscription-router",
       "displayName": "Subscription Router",
-      "description": "Several ChatGPT Codex and Anthropic subscription accounts as provider slots, quota-aware slot selection, 429 failover, and router/<profile> virtual models.",
+      "description": "Several ChatGPT Codex and Anthropic subscription accounts behind one provider, picked per request (manual, fill, threshold, or balance), with failover, Codex usage resets, fallback to other providers, and router/<profile> virtual models.",
       "version": "0.5.13",
       "args": [
         "subscription-router"

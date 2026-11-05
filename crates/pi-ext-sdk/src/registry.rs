@@ -26,6 +26,10 @@ impl VirtualModel {
     }
 }
 
+/// Providers to declare, from the `initialize` params.
+pub(crate) type ProviderFactory =
+    std::sync::Arc<dyn Fn(&crate::snapshot::InitParams) -> Vec<(String, Value)> + Send + Sync>;
+
 /// Everything the extension registered, shared between the builder, `Host`, and dispatch.
 #[derive(Default)]
 pub(crate) struct Registry {
@@ -35,6 +39,10 @@ pub(crate) struct Registry {
     pub(crate) flags: Vec<FlagSpec>,
     pub(crate) events: Vec<(String, EventFn)>,
     pub(crate) providers: Vec<(String, Value)>,
+    /// Builds more providers from the `initialize` params, when a config depends on the host.
+    pub(crate) provider_factory: Option<ProviderFactory>,
+    /// What `provider_factory` built at `initialize`.
+    pub(crate) init_providers: Vec<(String, Value)>,
     pub(crate) virtual_models: Vec<VirtualModel>,
     pub(crate) autocomplete: Vec<(Vec<String>, AutocompleteFn)>,
     pub(crate) on_start: Vec<HostFn>,
@@ -175,6 +183,7 @@ impl Registry {
         let providers: Vec<Value> = self
             .providers
             .iter()
+            .chain(&self.init_providers)
             .map(|(name, config)| json!({ "name": name, "config": config }))
             .collect();
         let models: Vec<&Value> = self.virtual_models.iter().map(|m| &m.definition).collect();

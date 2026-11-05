@@ -49,8 +49,14 @@ pub async fn route(state: Arc<State>, request: RouteRequest, host: Host) -> Resu
         match state.router.route(&profile, &input, &env).await {
             Ok(routed) => {
                 record(&host, &state, &routed).await;
+                let mut model = routed.entry.model.clone();
+                // With accounts, `anthropic-2/x` runs as `anthropic/x` on account 2.
+                let account = crate::family::parse_provider(&model.provider);
+                if let Some((family, slot)) = account.filter(|_| crate::pick::enabled(&state)) {
+                    lock(&state.picks).routed = Some((family, model.id.clone(), slot));
+                    model.provider = family.base().to_owned();
+                }
                 crate::status::update(&host, &state).await;
-                let model = &routed.entry.model;
                 let route = json!({
                     "model": { "provider": model.provider, "id": model.id },
                     "thinkingLevel": routed.thinking_level,

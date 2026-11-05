@@ -115,6 +115,11 @@ impl UsageService {
     }
 
     /// Cached snapshot without a network read; expired data comes back `stale`.
+    /// The Codex usage endpoint; the reset endpoints sit beside it.
+    pub fn codex_url(&self) -> &str {
+        &self.urls.codex
+    }
+
     pub fn peek(&self, provider: &str) -> Option<UsageSnapshot> {
         let cached = self.lock().cache.get(provider).cloned()?;
         let now = now_ms();

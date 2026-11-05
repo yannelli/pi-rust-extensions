@@ -1,11 +1,14 @@
-//! `<agentDir>/ext/subscription-router.json`: router profiles (upstream schema) and `autoSwitchOn429`.
+//! `<agentDir>/ext/subscription-router.json`: router profiles (upstream schema), `autoSwitchOn429`,
+//! and the account policies of each subscription provider.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+
+use crate::family::{Family, parse_provider};
 
 pub const ROUTER_PROVIDER: &str = "router";
 pub const CONFIG_ENV: &str = "PI_ROUTER_CONFIG";
@@ -98,10 +101,114 @@ impl Profile {
     }
 }
 
+/// How the router picks among the accounts of one subscription provider.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AccountStrategy {
+    /// Always the chosen `account`.
+    Manual,
+    /// Stay on an account until it is full, then move to the next one.
+    Fill,
+    /// Like `fill`, with an account counting as full at `switchAt` percent.
+    Threshold,
+    /// The account with the most quota left for the time left, with some stickiness.
+    #[default]
+    Balance,
+}
+
+impl AccountStrategy {
+    pub const ALL: [AccountStrategy; 4] =
+        [Self::Manual, Self::Fill, Self::Threshold, Self::Balance];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Fill => "fill",
+            Self::Threshold => "threshold",
+            Self::Balance => "balance",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.as_str() == text)
+    }
+}
+
+/// When the router spends a banked usage reset of an account (Codex only).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ResetUse {
+    #[default]
+    Off,
+    /// As soon as the account in use is full.
+    WhenFull,
+    /// Only when every account of the provider is full, before falling back.
+    WhenAllFull,
+}
+
+impl ResetUse {
+    pub const ALL: [ResetUse; 3] = [Self::Off, Self::WhenFull, Self::WhenAllFull];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::WhenFull => "when-full",
+            Self::WhenAllFull => "when-all-full",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.as_str() == text)
+    }
+}
+
+pub const DEFAULT_RESET_MIN_WAIT_MINUTES: f64 = 60.0;
+
+/// The account policy of one subscription provider (`accounts.<provider>`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AccountPolicy {
+    pub strategy: AccountStrategy,
+    /// The account of `manual`; 1 is pi's own login.
+    pub account: u32,
+    /// Percent used at which `threshold` treats an account as full.
+    pub switch_at: f64,
+    /// Models of other providers to use when every account is full, in order.
+    pub fallback: Vec<ChainEntry>,
+    /// Go back to this provider when one of its accounts has room again.
+    pub return_when_available: bool,
+    pub use_resets: ResetUse,
+    /// A full window that resets sooner than this is waited out instead of reset.
+    pub reset_min_wait_minutes: f64,
+}
+
+impl Default for AccountPolicy {
+    fn default() -> Self {
+        Self {
+            strategy: AccountStrategy::default(),
+            account: 1,
+            switch_at: 90.0,
+            fallback: Vec::new(),
+            return_when_available: true,
+            use_resets: ResetUse::Off,
+            reset_min_wait_minutes: DEFAULT_RESET_MIN_WAIT_MINUTES,
+        }
+    }
+}
+
+impl AccountPolicy {
+    /// Percent used at which an account counts as full.
+    pub fn full_at(&self) -> f64 {
+        match self.strategy {
+            AccountStrategy::Threshold => self.switch_at,
+            _ => 100.0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub profiles: Vec<Profile>,
     pub auto_switch_on_429: bool,
+    /// Account policies by subscription provider; a missing one is the default.
+    pub accounts: BTreeMap<&'static str, AccountPolicy>,
 }
 
 impl Default for Config {
@@ -109,6 +216,7 @@ impl Default for Config {
         Self {
             profiles: Vec::new(),
             auto_switch_on_429: true,
+            accounts: BTreeMap::new(),
         }
     }
 }
@@ -116,6 +224,13 @@ impl Default for Config {
 impl Config {
     pub fn profile(&self, id: &str) -> Option<&Profile> {
         self.profiles.iter().find(|p| p.id == id)
+    }
+
+    pub fn policy(&self, family: Family) -> AccountPolicy {
+        self.accounts
+            .get(family.base())
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -132,7 +247,23 @@ fn parse_entry(raw: &Value, where_: &str) -> Result<ChainEntry, String> {
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(bad_model)?;
-    let model = ModelRef::parse(model).ok_or_else(bad_model)?;
+    let mut model = ModelRef::parse(model).ok_or_else(bad_model)?;
+    // `{ model: "anthropic/x", account: 2 }` is model x on account 2, kept as `anthropic-2/x`.
+    match raw.get("account") {
+        None => {}
+        Some(value) => {
+            let account = value.as_u64().filter(|n| (1..=99).contains(n));
+            let account = account
+                .ok_or_else(|| format!("{where_}.account: expected a number from 1 to 99"))?;
+            let family = parse_provider(&model.provider).filter(|(_, slot)| *slot == 1);
+            let Some((family, _)) = family else {
+                return Err(format!(
+                    "{where_}.account: only anthropic and openai-codex models have accounts"
+                ));
+            };
+            model.provider = family.provider(account as u32);
+        }
+    }
     if model.provider == ROUTER_PROVIDER {
         return Err(format!(
             "{where_}.model: a chain cannot name another router model"
@@ -236,19 +367,90 @@ pub fn parse_config(raw: &Value) -> Result<Config, String> {
         Some(_) => return Err("autoSwitchOn429: expected a boolean".into()),
     };
     let profiles = match root.get("profiles") {
-        None if root.contains_key("autoSwitchOn429") => Vec::new(),
+        None if root.contains_key("autoSwitchOn429") || root.contains_key("accounts") => Vec::new(),
         Some(Value::Object(profiles)) => profiles
             .iter()
             .map(|(id, value)| parse_profile(id, value))
             .collect::<Result<_, _>>()?,
         _ => return Err("profiles: expected an object of id -> profile".into()),
     };
+    let accounts = match root.get("accounts") {
+        None => BTreeMap::new(),
+        Some(Value::Object(accounts)) => accounts
+            .iter()
+            .map(|(provider, value)| parse_policy(provider, value))
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err("accounts: expected an object of provider -> policy".into()),
+    };
     Ok(Config {
         profiles,
         auto_switch_on_429,
+        accounts,
     })
+}
+
+fn parse_policy(provider: &str, value: &Value) -> Result<(&'static str, AccountPolicy), String> {
+    let where_ = format!("accounts.{provider}");
+    let family = Family::ALL.into_iter().find(|f| f.base() == provider);
+    let family = family.ok_or_else(|| format!("{where_}: expected anthropic or openai-codex"))?;
+    let raw = object(value, &where_)?;
+    let mut policy = AccountPolicy::default();
+    if let Some(value) = raw.get("strategy") {
+        let strategy = value.as_str().and_then(AccountStrategy::parse);
+        policy.strategy = strategy.ok_or_else(|| {
+            format!("{where_}.strategy: expected manual, fill, threshold, or balance")
+        })?;
+    }
+    if let Some(value) = raw.get("account") {
+        let account = value.as_u64().filter(|n| (1..=99).contains(n));
+        policy.account = account
+            .ok_or_else(|| format!("{where_}.account: expected a number from 1 to 99"))?
+            as u32;
+    }
+    if let Some(value) = raw.get("switchAt") {
+        let percent = value.as_f64().filter(|p| *p > 0.0 && *p <= 100.0);
+        policy.switch_at = percent
+            .ok_or_else(|| format!("{where_}.switchAt: expected a percent above 0, at most 100"))?;
+    }
+    if let Some(value) = raw.get("fallback") {
+        let entries = value
+            .as_array()
+            .ok_or_else(|| format!("{where_}.fallback: expected an array"))?;
+        policy.fallback = entries
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| parse_entry(entry, &format!("{where_}.fallback[{i}]")))
+            .collect::<Result<_, _>>()?;
+        if let Some(own) = policy
+            .fallback
+            .iter()
+            .find(|e| parse_provider(&e.model.provider).is_some_and(|(f, _)| f == family))
+        {
+            return Err(format!(
+                "{where_}.fallback: {} is a model of {provider} itself",
+                own.model.key()
+            ));
+        }
+    }
+    if let Some(value) = raw.get("returnWhenAvailable") {
+        policy.return_when_available = value
+            .as_bool()
+            .ok_or_else(|| format!("{where_}.returnWhenAvailable: expected a boolean"))?;
+    }
+    if let Some(value) = raw.get("useResets") {
+        let reset = value.as_str().and_then(ResetUse::parse);
+        policy.use_resets = reset.ok_or_else(|| {
+            format!("{where_}.useResets: expected off, when-full, or when-all-full")
+        })?;
+    }
+    if let Some(value) = raw.get("resetMinWaitMinutes") {
+        let minutes = value.as_f64().filter(|m| *m >= 0.0);
+        policy.reset_min_wait_minutes = minutes
+            .ok_or_else(|| format!("{where_}.resetMinWaitMinutes: expected a number of minutes"))?;
+    }
+    Ok((family.base(), policy))
 }
 
 mod file;
 
-pub use file::{config_json, config_path, load, profile_json, save};
+pub use file::{config_json, config_path, entry_json, load, policy_json, profile_json, save};
