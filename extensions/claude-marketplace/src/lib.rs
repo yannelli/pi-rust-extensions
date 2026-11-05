@@ -38,7 +38,7 @@ pub mod stage;
 pub mod state;
 pub mod styles;
 pub mod synthetic;
-mod tui;
+pub mod ui;
 
 pub use env::{Env, Paths, Scope};
 
@@ -203,13 +203,14 @@ pub fn extension(paths: Paths) -> Extension {
             let env = env_of(&p, &host, Some(ctx.snapshot()));
             async move {
                 if args.trim().is_empty() && host.has_ui() {
-                    return tui::browse(host, env).await;
+                    let trusted = env.trusted;
+                    return ui::run::browse(host, env, trusted).await;
                 }
                 let installs = installed_id(&args);
                 let result = blocking(env.clone(), move |env| cli::run(&env, &args)).await;
                 let text = match (result, installs) {
                     (Ok(text), Some(id)) if host.has_ui() => {
-                        match tui::prompt_options(&host, &env, &id, false).await {
+                        match ui::options::prompt_options(&host, &env, &id, false).await {
                             Ok(configured) => Ok(configured.unwrap_or(text)),
                             Err(err) => Ok(format!("{text}\n{err:#}")),
                         }
