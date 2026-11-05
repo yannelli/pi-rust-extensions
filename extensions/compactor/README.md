@@ -1,6 +1,6 @@
 # compactor
 
-Created 2026-10-30. Last updated 2026-10-31.
+Created 2026-10-30. Last updated 2026-11-04.
 
 Rust port of `@pi-unipi/compactor` 3.0.0 for pi-rust (`pi-rust-ext compactor`). The extension replaces pi's compaction summary with one of two methods:
 
@@ -43,7 +43,7 @@ Other extensions can add `[Active Work]` blocks: emit `{ "id": "<id>", "text": "
 
 ## Config
 
-Paths: global `<agentDir>/ext/compactor.json`, project `<cwd>/.pi/ext/compactor.json`. The extension deep-merges the two files. A project key replaces the same global key.
+Paths: global `<agentDir>/ext/compactor.json`, project `<cwd>/.pi/ext/compactor.json`. The extension deep-merges the two files. A project key replaces the same global key. In a git worktree without this file, the main checkout's copy applies.
 
 | Key | Default | Meaning |
 | --- | --- | --- |

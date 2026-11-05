@@ -1,6 +1,6 @@
 # ollama
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-11-04.
 
 Local Ollama models in pi-rust. The extension reads `/api/tags` and `/api/show` (context length and capabilities) and registers provider `ollama` with `provider.register`: OpenAI-compatible API (`openai-completions`) at `<host>/v1`, API key `ollama`. Embedding-only models are skipped; `thinking` sets `reasoning` and `vision` adds image input.
 
@@ -19,4 +19,4 @@ Discovery runs at process start (at most 1.5 seconds, so `--model ollama/<id>` r
 | `~/.pi/agent/ext/ollama.json` (`/ollama host` writes it) | `host` | none |
 | Environment | `OLLAMA_HOST` | `http://127.0.0.1:11434` |
 
-The first one set wins. `host`, `host:port`, `:port`, and URLs work; `0.0.0.0` means `127.0.0.1`.
+The first one set wins. In a git worktree without `<cwd>/.pi/ext/ollama.json`, the main checkout's copy applies. `host`, `host:port`, `:port`, and URLs work; `0.0.0.0` means `127.0.0.1`.

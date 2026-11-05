@@ -3,6 +3,7 @@ pub mod options;
 
 use std::path::{Path, PathBuf};
 
+use pi_ext_sdk::paths::project_path;
 use serde_json::Value;
 
 use crate::model::{HookDef, Plugin, Scope, Source};
@@ -28,7 +29,7 @@ pub struct Loaded {
 
 pub fn options_files(agent_dir: &Path, cwd: &Path) -> (PathBuf, PathBuf) {
     let global = agent_dir.join("ext").join("hooks.json");
-    let project = cwd.join(".pi").join("ext").join("hooks.json");
+    let project = pi_ext_sdk::paths::project_ext_config(cwd, "hooks");
     (global, project)
 }
 
@@ -61,7 +62,7 @@ pub fn load(input: &LoadInput) -> Loaded {
         let mut files = vec![(Scope::Global, input.paths.claude_dir.join("settings.json"))];
         if scoped(Scope::Project) {
             for name in ["settings.json", "settings.local.json"] {
-                let path = root.join(".claude").join(name);
+                let path = project_path(&root, Path::new(".claude").join(name));
                 if same_path(&path, &files[0].1) {
                     continue;
                 }
@@ -161,7 +162,7 @@ fn codex_project_dirs(cwd: &Path) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = cwd
         .ancestors()
         .take_while(|dir| dir.starts_with(root))
-        .map(|dir| dir.join(".codex"))
+        .map(|dir| project_path(dir, ".codex"))
         .filter(|dir| dir.is_dir())
         .collect();
     dirs.reverse();

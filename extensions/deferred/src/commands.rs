@@ -128,10 +128,7 @@ pub(crate) async fn write_rule(
 ) -> std::result::Result<String, String> {
     let host = ctx.host();
     let (path, target) = match scope {
-        Scope::Project => (
-            host.project_dir().join("settings.json"),
-            SettingsScope::Project,
-        ),
+        Scope::Project => (host.project_file("settings.json"), SettingsScope::Project),
         Scope::Global | Scope::Repo(_) => (
             host.agent_dir().join("settings.json"),
             SettingsScope::Global,

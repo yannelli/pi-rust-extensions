@@ -118,7 +118,7 @@ pub fn global_file(agent_dir: &Path) -> PathBuf {
 }
 
 pub fn project_file(cwd: &Path) -> PathBuf {
-    cwd.join(".pi").join("ext").join("permissions.json")
+    pi_ext_sdk::paths::project_ext_config(cwd, "permissions")
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

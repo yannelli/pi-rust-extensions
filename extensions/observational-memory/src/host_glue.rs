@@ -22,9 +22,7 @@ pub fn global_config_path(agent_dir: &Path) -> PathBuf {
 }
 
 pub fn project_config_path(cwd: &Path) -> PathBuf {
-    cwd.join(".pi")
-        .join("ext")
-        .join(format!("{SETTINGS_NAMESPACE}.json"))
+    pi_ext_sdk::paths::project_ext_config(cwd, SETTINGS_NAMESPACE)
 }
 
 pub fn project_trusted(snapshot: &Snapshot) -> bool {

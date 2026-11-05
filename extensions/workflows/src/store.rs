@@ -42,7 +42,7 @@ pub fn root(agent_dir: &Path) -> PathBuf {
 
 impl Dirs {
     pub fn new(agent_dir: &Path, project_dir: &Path, trusted: bool) -> Self {
-        let project = root(project_dir).join("definitions");
+        let project = pi_ext_sdk::paths::project_path(project_dir, "ext/workflows/definitions");
         Self {
             global: root(agent_dir).join("definitions"),
             project: trusted.then_some(project),

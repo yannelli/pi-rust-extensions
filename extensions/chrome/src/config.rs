@@ -118,7 +118,7 @@ pub fn global_path(agent_dir: &Path) -> PathBuf {
 }
 
 pub fn project_path(cwd: &Path) -> PathBuf {
-    cwd.join(".pi").join("ext").join("chrome.json")
+    pi_ext_sdk::paths::project_ext_config(cwd, "chrome")
 }
 
 pub fn state_dir(agent_dir: &Path) -> PathBuf {

@@ -1,6 +1,6 @@
 # permissions
 
-Created 2026-10-30. Last updated 2026-10-31.
+Created 2026-10-30. Last updated 2026-11-04.
 
 Applies allow, ask, and deny rules to pi tool calls. It reads the permission rules of Claude Code and the execpolicy rules of Codex, plus a pi-owned rules file. On each `tool_call` it finds the matching rules: deny blocks the call with a reason the model sees, ask opens a dialog, allow lets the call run, and no match leaves the call to pi.
 
@@ -29,6 +29,7 @@ Panel keys: up/down move, `a` adds a pi rule (Claude syntax, then deny, ask, or 
 | `pi` | `<agentDir>/ext/permissions.json` and `<cwd>/.pi/ext/permissions.json` | both |
 
 - `<root>` is the cwd when it holds `.claude`, else the nearest parent with `.git`, else the cwd.
+- In a git worktree without one of the project files or rules folders, the main checkout's copy applies. This covers the untracked `.claude/settings.local.json`.
 - Every source is on until a pi file turns it off. Project sources load only when the ctx snapshot has `isProjectTrusted: true`.
 - Claude and Codex files are read-only. The extension writes only the pi files.
 - Codex rules load as in Codex: system, then user, then project files, each folder sorted by name; only regular `*.rules` files count, so a symlink or a folder is skipped. A missing rules folder has no rules.

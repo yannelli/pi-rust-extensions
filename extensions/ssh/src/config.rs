@@ -59,7 +59,7 @@ impl Default for Config {
 pub fn paths(host: &Host) -> (PathBuf, PathBuf) {
     (
         host.agent_dir().join("ext/ssh.json"),
-        host.cwd().join(".pi/ext/ssh.json"),
+        host.project_file("ext/ssh.json"),
     )
 }
 

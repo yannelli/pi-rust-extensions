@@ -12,6 +12,11 @@ pub fn agents_dir(base: &Path) -> PathBuf {
     base.join("ext").join("subagents").join("agents")
 }
 
+/// `<project_base>/ext/subagents/agents`, or the main checkout's copy in a git worktree that lacks it.
+pub fn project_agents_dir(project_base: &Path) -> PathBuf {
+    pi_ext_sdk::paths::project_path(project_base, "ext/subagents/agents")
+}
+
 #[derive(Debug, Clone)]
 pub struct Layers {
     pub global: PathBuf,
@@ -23,7 +28,7 @@ impl Layers {
     pub fn new(agent_dir: &Path, project_base: Option<&Path>) -> Self {
         Self {
             global: agents_dir(agent_dir),
-            project: project_base.map(agents_dir),
+            project: project_base.map(project_agents_dir),
         }
     }
 

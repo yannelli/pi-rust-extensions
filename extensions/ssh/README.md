@@ -28,7 +28,7 @@ Commands use a temporary file for input and reserve SSH stdin for connection lif
 
 ## Configuration
 
-Global: `<agentDir>/ext/ssh.json`. Project: `<cwd>/.pi/ext/ssh.json`.
+Global: `<agentDir>/ext/ssh.json`. Project: `<cwd>/.pi/ext/ssh.json`. In a git worktree without this file, the main checkout's copy applies.
 Project keys override global keys recursively. The extension ignores project
 config until `ctx.isProjectTrusted` returns true and reports this once.
 

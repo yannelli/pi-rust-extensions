@@ -54,6 +54,8 @@ Files, later ones win per key:
 2. `<agentDir>/ext/ask-user-question.json`
 3. `<cwd>/.pi/ext/ask-user-question.json`
 
+In a git worktree without the project file, the main checkout's copy applies.
+
 | Key | Default | Notes |
 | --- | --- | --- |
 | `collapseKey` | `"ctrl+]"` | pi key spec (`ctrl+]`, `alt+o`, `f9`); `"off"` disables; an invalid spec uses the default |

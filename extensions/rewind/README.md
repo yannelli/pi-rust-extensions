@@ -1,6 +1,6 @@
 # pi-ext-rewind
 
-Created 2026-10-29. Last updated 2026-10-31.
+Created 2026-10-29. Last updated 2026-11-04.
 
 Per-turn git checkpoints of the workspace, and `/rewind` to restore code, conversation, or both. Port of `@ayulab/pi-rewind` 0.4.6 on the pi-rust native extension SDK. Run it as `pi-rust-ext rewind`.
 
@@ -34,7 +34,7 @@ Per-turn git checkpoints of the workspace, and `/rewind` to restore code, conver
 
 ## Settings
 
-Same keys as upstream. Layers, later wins per key: pi settings `ayu` (`settings.get`), `<agentDir>/ext/rewind.json`, `<cwd>/.pi/ext/rewind.json`. The two files use the shape of the `ayu` tree: `{ "rewind": {...}, "checkpoint": {...} }`. A malformed file shows a warning and is skipped.
+Same keys as upstream. Layers, later wins per key: pi settings `ayu` (`settings.get`), `<agentDir>/ext/rewind.json`, `<cwd>/.pi/ext/rewind.json`. The two files use the shape of the `ayu` tree: `{ "rewind": {...}, "checkpoint": {...} }`. A malformed file shows a warning and is skipped. In a git worktree without this file, the main checkout's copy applies.
 
 | Key | Default | Use |
 | --- | --- | --- |

@@ -373,7 +373,7 @@ pub fn global_path(agent_dir: &Path) -> PathBuf {
 }
 
 pub fn project_path(cwd: &Path) -> PathBuf {
-    cwd.join(".pi").join("ext").join(FILE_NAME)
+    pi_ext_sdk::paths::project_path(cwd, Path::new(".pi").join("ext").join(FILE_NAME))
 }
 
 /// `block` with `kind.pattern` set to `mode`, or removed when `mode` is `None`.

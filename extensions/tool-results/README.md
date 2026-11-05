@@ -82,7 +82,7 @@ The panel has 3 tabs. **Settings** has a row for each key: `←` `→` or space 
 
 ## Config
 
-`<agentDir>/ext/tool-results.json`. A trusted project can add `<cwd>/.pi/ext/tool-results.json`, which is merged over the global file (RFC 7386). Changes apply at the next session start or `/reload`, and at once from the panel.
+`<agentDir>/ext/tool-results.json`. A trusted project can add `<cwd>/.pi/ext/tool-results.json`, which is merged over the global file (RFC 7386). Changes apply at the next session start or `/reload`, and at once from the panel. In a git worktree without this file, the main checkout's copy applies.
 
 | Key | Default | Use |
 | --- | --- | --- |

@@ -34,7 +34,7 @@ impl Default for Config {
 pub fn paths(agent_dir: &Path, cwd: &Path) -> [PathBuf; 2] {
     [
         agent_dir.join("ext").join("todo.json"),
-        cwd.join(".pi").join("ext").join("todo.json"),
+        pi_ext_sdk::paths::project_ext_config(cwd, "todo"),
     ]
 }
 

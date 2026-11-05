@@ -93,7 +93,7 @@ pub enum Scope {
 pub fn config_path(scope: Scope, agent_dir: &Path, cwd: &Path) -> PathBuf {
     match scope {
         Scope::Global => agent_dir.join("ext/goal.json"),
-        Scope::Project => cwd.join(".pi/ext/goal.json"),
+        Scope::Project => pi_ext_sdk::paths::project_ext_config(cwd, "goal"),
     }
 }
 
@@ -101,7 +101,10 @@ fn layer_paths(agent_dir: &Path, cwd: &Path) -> [(PathBuf, bool); 4] {
     [
         (agent_dir.join("pi-goal-x-settings.json"), false),
         (config_path(Scope::Global, agent_dir, cwd), false),
-        (cwd.join(".pi/pi-goal-x-settings.json"), true),
+        (
+            pi_ext_sdk::paths::project_path(cwd, ".pi/pi-goal-x-settings.json"),
+            true,
+        ),
         (config_path(Scope::Project, agent_dir, cwd), true),
     ]
 }

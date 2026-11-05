@@ -57,7 +57,8 @@ pub struct Loaded {
 pub fn load(agent_dir: &Path, project_dir: &Path, trusted: bool) -> Loaded {
     let mut merged = read(&agent_dir.join("ext").join("simple-goal.json"));
     let mut ignored = Vec::new();
-    for (key, value) in read(&project_dir.join("ext").join("simple-goal.json")) {
+    let project = pi_ext_sdk::paths::project_path(project_dir, "ext/simple-goal.json");
+    for (key, value) in read(&project) {
         if !trusted && TRUSTED_KEYS.contains(&key.as_str()) {
             ignored.push(key);
             continue;

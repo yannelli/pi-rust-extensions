@@ -47,7 +47,7 @@ The timers of a session are armed at `session_start` and disarmed at `session_sh
 
 ## Config
 
-`<agentDir>/ext/timers.json` and `<cwd>/.pi/ext/timers.json`; project keys win.
+`<agentDir>/ext/timers.json` and `<cwd>/.pi/ext/timers.json`; project keys win. In a git worktree without this file, the main checkout's copy applies.
 
 | Key | Default | Meaning |
 | --- | --- | --- |

@@ -85,7 +85,7 @@ impl Env {
     pub fn scope_root(&self, scope: Scope) -> PathBuf {
         match scope {
             Scope::User => self.agent_dir.clone(),
-            Scope::Project => self.cwd.join(".pi"),
+            Scope::Project => project_root(&self.cwd),
         }
     }
 
@@ -110,6 +110,16 @@ impl Env {
     pub fn dirs(&self, scope: Scope) -> Dirs {
         Dirs::new(&self.scope_root(scope))
     }
+}
+
+/// `<cwd>/.pi`, or the main checkout's `.pi` when a git worktree has no install state but the
+/// main checkout does, so every file of the scope comes from one tree.
+fn project_root(cwd: &Path) -> PathBuf {
+    let state = pi_ext_sdk::paths::project_path(cwd, Path::new(".pi").join("ext").join(NAME));
+    state
+        .ancestors()
+        .nth(2)
+        .map_or_else(|| cwd.join(".pi"), Path::to_path_buf)
 }
 
 /// Files and directories of one scope.

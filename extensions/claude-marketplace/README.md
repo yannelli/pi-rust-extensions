@@ -46,7 +46,7 @@ Installs Claude Code plugin marketplaces and plugins into pi. Port of `pi-claude
 
 ## Config
 
-Desired state, user `<agentDir>/ext/claude-marketplace.json`, project `<cwd>/.pi/ext/claude-marketplace.json`:
+Desired state, user `<agentDir>/ext/claude-marketplace.json`, project `<cwd>/.pi/ext/claude-marketplace.json`. In a git worktree without project install state (`<cwd>/.pi/ext/claude-marketplace/`), the project scope uses the main checkout's `.pi` folder:
 
 ```json
 {

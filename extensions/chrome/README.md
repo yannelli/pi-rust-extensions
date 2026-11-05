@@ -60,7 +60,7 @@ Default screenshots go to `<cwd>/.pi/chrome-screenshots/<epoch-ms>.<format>`. Th
 
 ## Config
 
-Global: `<agentDir>/ext/chrome.json`. Project: `<cwd>/.pi/ext/chrome.json`. Project keys override global keys one by one. The extension reads the project file only when the project is trusted, because it can start programs and open connections. Otherwise the extension ignores the file and shows one warning.
+Global: `<agentDir>/ext/chrome.json`. Project: `<cwd>/.pi/ext/chrome.json`. Project keys override global keys one by one. The extension reads the project file only when the project is trusted, because it can start programs and open connections. Otherwise the extension ignores the file and shows one warning. In a git worktree without this file, the main checkout's copy applies.
 
 | Key | Default | Use |
 | --- | --- | --- |

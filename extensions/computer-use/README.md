@@ -1,6 +1,6 @@
 # computer-use
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-11-04.
 
 This extension lets the agent see and operate desktop windows and a managed Chrome or Helium browser. It is a Rust port of [@injaneity/pi-computer-use](https://github.com/injaneity/pi-computer-use) 0.5.1. The tool names, parameter names, refs, and `details` fields are the same as upstream.
 
@@ -55,7 +55,7 @@ If an action fails or stops, the extension releases the mouse button and the mod
 
 ## Configuration
 
-Global file: `<agentDir>/ext/computer-use.json`. Project file: `<cwd>/.pi/ext/computer-use.json`. The project file sets values key by key over the global file. The extension reads the project file only for a trusted project. Environment variables set values over the two files. A file can also put the keys in a `computer_use` object.
+Global file: `<agentDir>/ext/computer-use.json`. Project file: `<cwd>/.pi/ext/computer-use.json`. The project file sets values key by key over the global file. The extension reads the project file only for a trusted project. Environment variables set values over the two files. A file can also put the keys in a `computer_use` object. In a git worktree without this file, the main checkout's copy applies.
 
 | Key | Default | Environment variable | Use |
 | --- | --- | --- | --- |

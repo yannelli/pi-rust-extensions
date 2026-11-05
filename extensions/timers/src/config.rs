@@ -30,7 +30,8 @@ fn read_object(path: &Path) -> Map<String, Value> {
 /// `<agentDir>/ext/timers.json`, then `<cwd>/.pi/ext/timers.json`; project keys win.
 pub fn load(agent_dir: &Path, cwd: &Path) -> Config {
     let mut merged = read_object(&agent_dir.join("ext/timers.json"));
-    merged.extend(read_object(&cwd.join(".pi/ext/timers.json")));
+    let project = pi_ext_sdk::paths::project_ext_config(cwd, "timers");
+    merged.extend(read_object(&project));
     merged.retain(|_, value| !value.is_null());
     serde_json::from_value(Value::Object(merged)).unwrap_or_else(|err| {
         pi_ext_sdk::warn!("timers config ignored: {err}");

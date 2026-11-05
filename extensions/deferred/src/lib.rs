@@ -68,7 +68,7 @@ pub(crate) async fn load_config(host: &Host, snapshot: &Snapshot) -> (Config, Ve
         });
     let cwd = host.cwd();
     let project_path = config::project_path(&cwd);
-    let settings_path = host.project_dir().join("settings.json");
+    let settings_path = host.project_file("settings.json");
     let trusted = match project_path.is_file() || settings_path.is_file() {
         true => project_trusted(host, snapshot).await,
         false => false,

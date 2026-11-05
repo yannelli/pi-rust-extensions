@@ -128,6 +128,11 @@ impl Host {
         paths::project_dir(self.cwd())
     }
 
+    /// `<cwd>/.pi/<rel>`, or the main checkout's copy in a git worktree that lacks it.
+    pub fn project_file(&self, rel: impl AsRef<std::path::Path>) -> PathBuf {
+        paths::project_path(self.cwd(), std::path::Path::new(".pi").join(rel))
+    }
+
     /// Resize and close events of widget and footer surfaces.
     pub fn surface_events(&self) -> SurfaceEvents {
         self.inner.surfaces.subscribe()
