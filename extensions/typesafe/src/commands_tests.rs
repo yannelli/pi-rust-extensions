@@ -16,4 +16,11 @@ fn completes_actions_and_backends() {
     assert_eq!(values("status "), None);
     assert_eq!(values("zz"), None);
     assert_eq!(values("").unwrap().len(), ACTIONS.len());
+    assert_eq!(values("ga").unwrap(), ["gate"]);
+    assert_eq!(
+        values("gate ").unwrap(),
+        ["gate on", "gate off", "gate test"]
+    );
+    assert_eq!(values("gate o").unwrap(), ["gate on", "gate off"]);
+    assert_eq!(values("gate test ls"), None);
 }

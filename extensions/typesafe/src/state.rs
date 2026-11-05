@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use pi_ext_sdk::paths::project_ext_config;
 use pi_ext_sdk::{CustomMessage, Host, NotifyType};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -13,6 +14,7 @@ use crate::backends::{
 use crate::client::Client;
 use crate::credentials::{Env, KeyStore, write_private};
 use crate::errors::{TsError, TsResult};
+use crate::gate::GateState;
 use crate::usage::{Caps, Clock, local_day};
 
 const FIXED_CONSENT: &str = "Submitted state and questions will be sent to api.typesafe.ai and may incur charges. Do not include secrets. The extension does not collect files or conversation history. Results are model judgments, not proof or authorization.";
@@ -29,6 +31,8 @@ pub struct Config {
     pub max_requests_per_day: Option<u64>,
     pub max_input_tokens_per_day: Option<u64>,
     pub max_usd_per_day: Option<f64>,
+    /// The tool-call gate object; `GateConfig::parse` reads it key by key.
+    pub gate: Option<Value>,
 }
 
 impl Config {
@@ -65,6 +69,17 @@ impl Config {
         Ok(path)
     }
 
+    /// Sets `gate.enabled` in the global file and keeps the other gate keys.
+    pub fn save_gate_enabled(agent_dir: &Path, enabled: bool) -> TsResult<PathBuf> {
+        let mut gate = std::fs::read_to_string(Self::path(agent_dir))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|keys| keys.get("gate").and_then(Value::as_object).cloned())
+            .unwrap_or_default();
+        gate.insert("enabled".to_owned(), Value::Bool(enabled));
+        Self::save(agent_dir, &[("gate", Value::Object(gate))])
+    }
+
     pub fn read(path: &Path) -> Config {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         serde_json::from_str(&text).unwrap_or_default()
@@ -79,7 +94,8 @@ impl Config {
     }
 }
 
-/// The project file `<cwd>/.pi/ext/typesafe.json` and whether pi trusts the project.
+/// The project file `.pi/ext/typesafe.json` (the main checkout's copy in a worktree without
+/// one) and whether pi trusts the project.
 #[derive(Debug, Clone, Default)]
 pub struct Project {
     pub config: Config,
@@ -88,7 +104,7 @@ pub struct Project {
 
 impl Project {
     pub fn load(cwd: &Path, trusted: bool) -> Project {
-        let config = Config::read(&cwd.join(".pi").join("ext").join("typesafe.json"));
+        let config = Config::read(&project_ext_config(cwd, "typesafe"));
         Project { config, trusted }
     }
 
@@ -124,6 +140,7 @@ pub struct State {
     selection: RwLock<Selection>,
     session: Mutex<Session>,
     project_notice: AtomicBool,
+    pub gate: GateState,
 }
 
 impl State {
@@ -156,6 +173,7 @@ impl State {
             selection: RwLock::new(Selection { model, price }),
             session: Mutex::new(Session::default()),
             project_notice: AtomicBool::new(false),
+            gate: GateState::default(),
         };
         state.reset_session(&Project::default());
         Arc::new(state)
@@ -193,6 +211,7 @@ impl State {
             .get("PI_TYPESAFE_ENABLED")
             .map_or(configured, |v| v == "1");
         let caps = global.caps().lowest(project.config.caps());
+        self.gate.reset(&global, project);
         *self.lock() = Session {
             enabled,
             caps,

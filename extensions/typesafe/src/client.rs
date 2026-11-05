@@ -30,8 +30,17 @@ pub struct Session {
     pub usd: f64,
 }
 
+/// Who sends a request: the tool and the bus share the per-session attempt cap; the
+/// tool-call gate has its own counters and only the daily caps.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Purpose {
+    Tool,
+    Gate,
+}
+
 pub struct Spend {
     pub session: Session,
+    pub gate: Session,
     pub today: Today,
     pub blocked: Option<Blocked>,
 }
@@ -47,6 +56,7 @@ pub struct Client {
     ledger: Ledger,
     auth: AuthState,
     session: Mutex<Session>,
+    gate: Mutex<Session>,
     verified: AtomicBool,
     last_failure: Mutex<Option<String>>,
 }
@@ -109,6 +119,7 @@ impl Client {
             auth: AuthState::new(dir),
             backend,
             session: Mutex::new(Session::default()),
+            gate: Mutex::new(Session::default()),
             verified: AtomicBool::new(false),
             last_failure: Mutex::new(None),
         })
@@ -130,6 +141,7 @@ impl Client {
         };
         Spend {
             session,
+            gate: *self.gate.lock().expect("gate lock"),
             today: self.ledger.today(),
             blocked,
         }
@@ -193,10 +205,17 @@ impl Client {
         Ok(models.into_iter().map(|m| m.id).collect())
     }
 
+    fn counters(&self, purpose: Purpose) -> &Mutex<Session> {
+        match purpose {
+            Purpose::Tool => &self.session,
+            Purpose::Gate => &self.gate,
+        }
+    }
+
     /// Checks the session and daily caps and counts the attempt under one lock.
-    fn reserve(&self) -> TsResult<()> {
-        let mut session = self.session.lock().expect("session lock");
-        if session.requests_started >= DEFAULT_MAX_REQUESTS {
+    fn reserve(&self, purpose: Purpose) -> TsResult<()> {
+        let mut session = self.counters(purpose).lock().expect("session lock");
+        if purpose == Purpose::Tool && session.requests_started >= DEFAULT_MAX_REQUESTS {
             return Err(TsError::new(
                 Code::Budget,
                 format!(
@@ -224,6 +243,15 @@ impl Client {
 
     /// One judge request: validated, capped, counted, and never retried.
     pub async fn evaluate(&self, input: Value, cancel: &CancellationToken) -> TsResult<Value> {
+        self.submit(input, cancel, Purpose::Tool).await
+    }
+
+    pub async fn submit(
+        &self,
+        input: Value,
+        cancel: &CancellationToken,
+        purpose: Purpose,
+    ) -> TsResult<Value> {
         let mut request = prepare(input, Some(&self.backend.limits))?;
         let sent_model = match request.get("model").and_then(Value::as_str) {
             Some(model) => self.backend.sent_model(Some(model)),
@@ -237,7 +265,7 @@ impl Client {
                 "TypeSafe request cancelled before submission.",
             ));
         }
-        self.reserve()?;
+        self.reserve(purpose)?;
         let start = Instant::now();
         let post = self.http.post(self.backend.systemone_url()).json(&request);
         let outcome = self.send(post, cancel).await.and_then(|result| {
@@ -261,7 +289,7 @@ impl Client {
                     .unwrap_or(DEFAULT_USD_PER_MTOK);
                 let cost = input as f64 * rate / 1e6;
                 {
-                    let mut session = self.session.lock().expect("session lock");
+                    let mut session = self.counters(purpose).lock().expect("session lock");
                     session.requests_succeeded += 1;
                     session.input_tokens += input;
                     session.output_tokens += output;
@@ -273,7 +301,10 @@ impl Client {
                 Ok(result)
             }
             Err(error) => {
-                self.session.lock().expect("session lock").requests_failed += 1;
+                self.counters(purpose)
+                    .lock()
+                    .expect("session lock")
+                    .requests_failed += 1;
                 self.ledger.record_failure();
                 let fingerprint = format!(
                     "{}:{:?}:{}",

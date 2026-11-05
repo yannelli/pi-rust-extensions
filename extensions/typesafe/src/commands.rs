@@ -11,9 +11,11 @@ use crate::models::ModelInfo;
 use crate::result::format_result;
 use crate::state::{Config, State};
 use crate::status::status_text;
-use crate::{notify, prompt, sample, validate};
+use crate::{gate, notify, prompt, sample, validate};
 
-const ACTIONS: [&str; 10] = [
+const GATE_ACTIONS: [&str; 3] = ["on", "off", "test"];
+
+const ACTIONS: [&str; 11] = [
     "login",
     "logout",
     "setup",
@@ -24,6 +26,7 @@ const ACTIONS: [&str; 10] = [
     "playground",
     "models",
     "backend",
+    "gate",
 ];
 
 pub fn complete(prefix: &str) -> Option<Vec<CompletionItem>> {
@@ -36,8 +39,20 @@ pub fn complete(prefix: &str) -> Option<Vec<CompletionItem>> {
         label: Some(label.to_owned()),
         description: None,
     };
-    let backend_rest = rest.filter(|_| matches!(verb, "login" | "logout" | "backend"));
-    let items: Vec<CompletionItem> = if let Some(rest) = backend_rest {
+    let backend_rest = rest
+        .as_ref()
+        .filter(|_| matches!(verb, "login" | "logout" | "backend"));
+    let gate_rest = rest.as_ref().filter(|_| verb == "gate");
+    let items: Vec<CompletionItem> = if let Some(rest) = gate_rest {
+        match rest.as_slice() {
+            [] | [_] => GATE_ACTIONS
+                .iter()
+                .filter(|a| a.starts_with(rest.first().copied().unwrap_or_default()))
+                .map(|a| item(format!("gate {a}"), a))
+                .collect(),
+            _ => Vec::new(),
+        }
+    } else if let Some(rest) = backend_rest {
         let typed = rest.join(" ");
         NAMES
             .iter()
@@ -381,6 +396,10 @@ pub async fn run(state: Arc<State>, args: String, ctx: CommandCtx) -> Result<()>
     let outcome = match action {
         "models" => models(&state, &host).await,
         "backend" => choose_backend(&state, &host, backend_arg).await,
+        "gate" => {
+            let rest = args.trim_start().strip_prefix("gate").unwrap_or_default();
+            gate::command(&state, &host, rest.trim()).await
+        }
         _ => act(&state, &host, action, backend_arg).await,
     };
     if let Err(error) = outcome {

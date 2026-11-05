@@ -81,3 +81,59 @@ fn backend_and_consent() {
     );
     assert_eq!(bad.backend.name, "typesafe");
 }
+
+#[test]
+fn gate_toggle_keeps_other_gate_keys_and_merges_the_project() {
+    let dir = TempDir::new();
+    let agent = dir.path().join("agent");
+    write(
+        &agent.join("ext/typesafe.json"),
+        r#"{ "model": "m", "gate": { "rules": { "no_prod": "Changes prod" } } }"#,
+    );
+    Config::save_gate_enabled(&agent, true).unwrap();
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(agent.join("ext/typesafe.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        saved,
+        serde_json::json!({ "model": "m", "gate": { "rules": { "no_prod": "Changes prod" }, "enabled": true } })
+    );
+    let state = State::new(Env::fixed::<&str, &str>([]), &agent);
+    state.reset_session(&project(
+        &dir,
+        r#"{ "gate": { "rules": { "no_rm": "Deletes files" } } }"#,
+        false,
+    ));
+    let gate = state.gate.settings();
+    assert!(gate.enabled);
+    assert_eq!(gate.rules.len(), 2);
+    Config::save_gate_enabled(&agent, false).unwrap();
+    state.gate.reload(&Config::load(&agent));
+    assert!(!state.gate.settings().enabled);
+    assert_eq!(state.gate.settings().rules.len(), 2);
+}
+
+#[test]
+fn worktree_reads_the_main_checkout_project_file() {
+    let dir = TempDir::new();
+    let (main, wt) = (dir.path().join("main"), dir.path().join("wt"));
+    let admin = main.join(".git/worktrees/wt");
+    write(&admin.join("commondir"), "../..\n");
+    write(&wt.join(".git"), &format!("gitdir: {}\n", admin.display()));
+    write(
+        &main.join(".pi/ext/typesafe.json"),
+        r#"{ "maxRequestsPerDay": 4 }"#,
+    );
+    assert_eq!(
+        Project::load(&wt, true).config.max_requests_per_day,
+        Some(4)
+    );
+    write(
+        &wt.join(".pi/ext/typesafe.json"),
+        r#"{ "maxRequestsPerDay": 2 }"#,
+    );
+    assert_eq!(
+        Project::load(&wt, true).config.max_requests_per_day,
+        Some(2)
+    );
+}

@@ -391,3 +391,192 @@ async fn login_reads_hidden_key_and_saves_owner_only() {
         );
     }
 }
+
+fn gate_answer(no_prod: f64) -> Value {
+    json!({ "model": "typesafe/jev-1.14", "usage": { "input_tokens": 30, "output_tokens": 1 },
+        "answers": { "no_prod": { "type": "noul", "noul": no_prod } } })
+}
+
+fn write_config(dir: &TempDir, config: Value) {
+    std::fs::create_dir_all(dir.0.join("ext")).unwrap();
+    std::fs::write(dir.0.join("ext/typesafe.json"), config.to_string()).unwrap();
+}
+
+async fn send_tool_call(host: &mut TestHost, id: u64, tool: &str, input: Value, has_ui: bool) {
+    let event = json!({ "type": "tool_call", "toolCallId": format!("t{id}"), "toolName": tool, "input": input });
+    let params = json!({ "name": "tool_call", "event": event, "ctx": ctx(has_ui) });
+    host.request(id, "event", params).await;
+}
+
+/// The block reason of an event response, `None` when the call may run.
+fn block_reason(response: &Value) -> Option<String> {
+    let result = &response["result"]["result"];
+    (result["block"] == true).then(|| result["reason"].as_str().unwrap().to_owned())
+}
+
+async fn gate_call(host: &mut TestHost, id: u64, tool: &str, command: &str) -> Option<String> {
+    send_tool_call(host, id, tool, json!({ "command": command }), false).await;
+    block_reason(&host.expect_response(id).await)
+}
+
+#[tokio::test]
+async fn gate_blocks_allows_caches_and_applies_on_error() {
+    let api = MockApi::start(vec![
+        Reply::json(200, &gate_answer(0.93)),
+        Reply::json(200, &gate_answer(0.04)),
+    ])
+    .await;
+    let dir = TempDir::new("gate");
+    write_config(
+        &dir,
+        json!({ "gate": { "enabled": true, "onError": "block",
+            "rules": { "no_prod": "The command changes production systems" } } }),
+    );
+    let env = Env::fixed([
+        ("PI_TYPESAFE_ENABLED", "1"),
+        ("TYPESAFE_API_KEY", KEY),
+        ("PI_TYPESAFE_BASE_URL", api.url.as_str()),
+    ]);
+    let (mut host, _) = start(&dir, env, false).await;
+    let host = &mut host;
+    let blocked = gate_call(host, 2, "bash", "psql prod -c 'drop table users'").await;
+    assert_eq!(
+        blocked.as_deref(),
+        Some(
+            "TypeSafe gate blocked this call: rule `no_prod` (The command changes production systems) p=0.93 (blockAt 0.8, typesafe/jev-1.14)."
+        )
+    );
+    let sent: Value = serde_json::from_str(&api.requests()[0].body).unwrap();
+    assert_eq!(
+        sent["state"],
+        json!({ "tool": "bash", "input": "psql prod -c 'drop table users'", "cwd": "/work" })
+    );
+    assert_eq!(
+        sent["questions"]["no_prod"],
+        json!({ "type": "noul", "instructions": "Does this tool call violate the rule \"Not allowed: The command changes production systems\"?" })
+    );
+    let again = gate_call(host, 3, "bash", "psql prod -c 'drop table users'").await;
+    assert_eq!(again, blocked, "a repeated call reuses the verdict");
+    assert_eq!(api.requests().len(), 1);
+    assert_eq!(gate_call(host, 4, "bash", "ls").await, None);
+    assert_eq!(gate_call(host, 5, "read", "ls").await, None);
+    assert_eq!(api.requests().len(), 2, "read is not a gated tool");
+    let failed = gate_call(host, 6, "bash", "git status").await.unwrap();
+    assert!(
+        failed.starts_with("TypeSafe gate could not review this call (TypeSafe returned HTTP 500")
+            && failed.ends_with("and onError is block."),
+        "{failed}"
+    );
+
+    let gate = run_headless(host, 7, "gate").await;
+    assert!(gate.starts_with("TypeSafe gate: on. Reviews bash. Blocks at p >= 0.8, asks at p >= 0.5, on error block.\nRules:\n- no_prod (global): The command changes production systems\n"), "{gate}");
+    assert!(
+        gate.contains(
+            "Session: 4 reviewed, 3 blocked, 0 asked, 1 errors; 3 requests, 60 input tokens"
+        ),
+        "{gate}"
+    );
+    let status = run_headless(host, 8, "status").await;
+    assert!(status.contains("Session 0/20 attempts"), "{status}");
+    assert!(
+        status.contains("Today 3 requests (2 ok, 1 failed)"),
+        "{status}"
+    );
+}
+
+#[tokio::test]
+async fn gate_toggle_asks_allows_on_error_and_tests() {
+    let api = MockApi::start(vec![
+        Reply::json(200, &gate_answer(0.6)),
+        Reply::json(503, &json!({})),
+        Reply::json(200, &gate_answer(0.1)),
+    ])
+    .await;
+    let dir = TempDir::new("gate-ui");
+    write_config(
+        &dir,
+        json!({ "model": "jev-1.14", "gate": { "enabled": false, "rules": { "no_prod": "Changes production" } } }),
+    );
+    let env = Env::fixed([
+        ("PI_TYPESAFE_ENABLED", "1"),
+        ("TYPESAFE_API_KEY", KEY),
+        ("PI_TYPESAFE_BASE_URL", api.url.as_str()),
+    ]);
+    let (mut host, _) = start(&dir, env, true).await;
+    send_tool_call(
+        &mut host,
+        2,
+        "bash",
+        json!({ "command": "deploy prod" }),
+        true,
+    )
+    .await;
+    assert_eq!(block_reason(&host.expect_response(2).await), None);
+    assert!(api.requests().is_empty(), "the gate is off");
+
+    host.request(
+        3,
+        "command.run",
+        json!({ "name": "typesafe", "args": "gate on", "ctx": ctx(true) }),
+    )
+    .await;
+    let (id, params) = host.expect_request("ui.notify").await;
+    let message = params["message"].as_str().unwrap();
+    assert!(message.ends_with("The gate is on."), "{message}");
+    host.answer(&id, Value::Null).await;
+    host.expect_response(3).await;
+    assert_eq!(
+        config(&dir),
+        json!({ "model": "jev-1.14", "gate": { "enabled": true, "rules": { "no_prod": "Changes production" } } })
+    );
+
+    send_tool_call(
+        &mut host,
+        4,
+        "bash",
+        json!({ "command": "deploy prod" }),
+        true,
+    )
+    .await;
+    let (id, params) = host.expect_request("ui.confirm").await;
+    assert_eq!(params["title"], "TypeSafe gate: allow this call?");
+    assert_eq!(
+        params["message"],
+        "bash: deploy prod\nFlagged: rule `no_prod` (Changes production) p=0.60 (askAt 0.5, blockAt 0.8, typesafe/jev-1.14)."
+    );
+    host.answer(&id, json!(false)).await;
+    let denied = block_reason(&host.expect_response(4).await).unwrap();
+    assert!(
+        denied.starts_with(
+            "The user denied this tool call after the TypeSafe gate flagged it: rule `no_prod`"
+        ),
+        "{denied}"
+    );
+
+    send_tool_call(&mut host, 5, "bash", json!({ "command": "make" }), true).await;
+    let (id, params) = host.expect_request("ui.notify").await;
+    let warning = params["message"].as_str().unwrap();
+    assert!(
+        warning.starts_with("TypeSafe gate could not review a tool call and allowed it (onError allow): TypeSafe returned HTTP 503"),
+        "{warning}"
+    );
+    host.answer(&id, Value::Null).await;
+    assert_eq!(block_reason(&host.expect_response(5).await), None);
+
+    host.request(
+        6,
+        "command.run",
+        json!({ "name": "typesafe", "args": "gate test echo hi", "ctx": ctx(true) }),
+    )
+    .await;
+    let (id, params) = host.expect_request("ui.notify").await;
+    assert_eq!(
+        params["message"],
+        "TypeSafe gate test: allow. no_prod p=0.10 (typesafe/jev-1.14)."
+    );
+    host.answer(&id, Value::Null).await;
+    host.expect_response(6).await;
+    let sent: Value = serde_json::from_str(&api.requests()[2].body).unwrap();
+    assert_eq!(sent["state"]["input"], "echo hi");
+    assert_eq!(api.requests().len(), 3);
+}

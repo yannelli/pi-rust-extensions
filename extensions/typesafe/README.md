@@ -37,8 +37,9 @@ A native pi extension that sends structured questions to TypeSafe AI Jev and ret
 | `playground` | Opens the sample request in the editor, then sends your edited JSON after you confirm. |
 | `models` | Lists the models of the active backend and saves the one you pick as `model`. The next request sends it. |
 | `backend [name]` | Without a name, shows the active backend and the valid names, or a picker with a UI. With a name, saves it as `backend`. Run `/reload` to apply it. |
+| `gate [on\|off\|test <command>]` | Shows the tool-call gate, turns it on or off in the global file, or reviews a sample bash command. See [Tool-call gate](#tool-call-gate). |
 
-Completions give the action names, and the backend names after `login `, `logout `, and `backend `. Without a UI, the command writes a `typesafe-status` message. `login`, `setup`, `enable`, `test`, and `playground` need a UI.
+Completions give the action names, the backend names after `login `, `logout `, and `backend `, and `on`, `off`, and `test` after `gate `. Without a UI, the command writes a `typesafe-status` message. `login`, `setup`, `enable`, `test`, and `playground` need a UI.
 
 ### Models
 
@@ -66,6 +67,56 @@ The tool is disabled until the operator enables it. At each `session_start` the 
 
 A 401 or 403 response or a configuration error during a tool call shows one warning for each different failure.
 
+## Tool-call gate
+
+The gate lets TypeSafe review tool calls before they run and block the calls that break your rules. Each rule is a plain-language statement of what is not allowed. The gate asks the decision model one yes-or-no question per rule. No LLM turn is involved.
+
+```json
+{
+  "gate": {
+    "enabled": true,
+    "tools": ["bash"],
+    "blockAt": 0.8,
+    "askAt": 0.5,
+    "onError": "allow",
+    "rules": {
+      "no_prod": "The command changes production systems or prod databases",
+      "no_force_push": "The command force-pushes or rewrites published git history"
+    }
+  }
+}
+```
+
+| Key | Default | Use |
+| --- | --- | --- |
+| `enabled` | `false` | Turns the gate on. The gate reviews calls only while TypeSafe is enabled (`/typesafe enable` or `PI_TYPESAFE_ENABLED=1`). |
+| `tools` | `["bash"]` | Tool names to review. `"*"` reviews every tool. |
+| `blockAt` | `0.8` | A call is blocked when the probability of a violation of any rule is at or above this value. |
+| `askAt` | `0.5` | At or above this value and below `blockAt`, the user confirms the call. Without a UI the call is blocked. A value above `blockAt` acts as `blockAt`. |
+| `onError` | `allow` | `allow`, `ask`, or `block`, when TypeSafe fails, times out, or a daily cap is reached. `allow` shows one warning per kind of failure. |
+| `rules` | none | Rule name (1 to 100 characters) to rule text. Without rules, no call is reviewed. |
+
+For each gated call, the gate sends `state` = `{ tool, input, cwd }`, where `input` is the command of a bash call and the full input of any other tool. It asks one `noul` question per rule, `Does this tool call violate the rule "Not allowed: <text>"?`. When there are more rules than the backend accepts in one request, the gate sends several requests at the same time. Large inputs are cut so that each request stays under 64 KiB. The highest probability decides. A blocked call returns a reason to the agent, for example:
+
+```
+TypeSafe gate blocked this call: rule `no_prod` (The command changes production systems or prod databases) p=0.93 (blockAt 0.8, typesafe/jev-1.14).
+```
+
+Merge and trust:
+
+- Rules from the global file and the project file merge. A project rule with the name of a global rule replaces it. A project rule set to `null` removes the global rule.
+- In a trusted project, the project's `enabled`, `tools`, `blockAt`, `askAt`, and `onError` replace the global values.
+- An untrusted project can only make the gate stricter. It can add rules and tools, lower `blockAt` and `askAt`, and raise `onError` (`allow` < `ask` < `block`). It cannot set `enabled`, because the gate sends tool input over the network, and it cannot replace or remove a global rule. `/typesafe gate` lists the keys it ignored.
+
+Cost and limits:
+
+- Each gated call sends one request (more only when the rules need several). The input of the call goes to the backend, so keep secrets out of gated commands.
+- Gate requests count toward the daily caps and the daily ledger. They do not use the 20 attempts per session of `typesafe_evaluate`, so the gate keeps working after 20 commands.
+- A repeated call with the same tool, input, and working directory reuses the verdict of the session (up to 256 calls).
+- Each request uses the 15 second timeout. A cancelled tool call cancels its review.
+
+`/typesafe gate` shows the gate, the merged rules with their source (`global` or `project`), and the session counters (reviewed, blocked, asked, errors, requests, tokens). `/typesafe gate on` and `/typesafe gate off` set `gate.enabled` in the global file and keep the other keys. A trusted project file that sets `gate.enabled` still wins. `/typesafe gate test git push --force origin main` reviews a sample bash command and shows the verdict and the probability for each rule.
+
 ## Configuration
 
 Environment variables take precedence over the config files.
@@ -81,7 +132,7 @@ Environment variables take precedence over the config files.
 | `PI_TYPESAFE_MAX_USD_PER_DAY` | `maxUsdPerDay` | none | Daily cost cap in USD. |
 | `PI_TYPESAFE_BASE_URL` | none | registry host | Replaces the backend host. Use an https origin, or http on localhost, 127.0.0.0/8, or [::1]. Tests and local gateways use it. |
 
-- Global config: `<agentDir>/ext/typesafe.json`. Project config: `<cwd>/.pi/ext/typesafe.json`.
+- Global config: `<agentDir>/ext/typesafe.json`. Project config: `<cwd>/.pi/ext/typesafe.json`. In a linked git worktree without that file, the extension reads the main checkout's `.pi/ext/typesafe.json`.
 - The extension reads `backend` and `model` from the global file when it starts. `backend` sets the request host and the tool description, so a change applies after `/reload`. `/typesafe models` changes `model` for the running session too.
 - The project file sets `enabled` only when pi trusts the project. When pi does not trust the project, the extension ignores that key and shows one notice. Caps from the environment, the global file, and the project file all apply. The lowest cap wins.
 - API keys: `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`, `COMMANDCODE_API_KEY`, `LIQUID_API_KEY`, `SUBQ_API_KEY`. A key variable takes precedence over a stored key. `login` does not run when the variable is set.
