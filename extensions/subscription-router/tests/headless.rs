@@ -90,7 +90,10 @@ async fn login_start_answers_a_url_and_reserves_the_next_account() {
         &format!("login finish {id} abc#not-the-state"),
     )
     .await;
-    assert_eq!(wrong, vec![("error".to_owned(), "State mismatch".to_owned())]);
+    assert_eq!(
+        wrong,
+        vec![("error".to_owned(), "State mismatch".to_owned())]
+    );
     let unknown = run(&mut host, 4, "login finish 0123abcd code").await;
     assert!(
         unknown[0].1.contains("expired or does not exist"),

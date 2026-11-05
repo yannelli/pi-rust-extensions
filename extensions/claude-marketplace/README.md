@@ -13,7 +13,15 @@ Installs Claude Code plugin marketplaces and plugins into pi. Port of `pi-claude
 
 ## Commands
 
-`/claude-plugins` opens the browser: a panel with the marketplaces and their plugins (status, scope, version, description). Keys: up/down, enter (action menu: install user, install project, update, uninstall, enable, disable, configure, info), `a` add marketplace (source, then scope), `u` update marketplace, `d` remove marketplace (with confirmation), `q`/esc close. Without a UI, the bare command shows the plugin list.
+`/claude-plugins` opens the browser, a panel laid out like `/deferred`'s that stays open while you work:
+
+- Tabs (tab and shift-tab): **Installed** (on `●` and off `○`, with their scope), **Discover** (installable `+` first, then unavailable `✕` with the reason), and **Marketplaces** (with auto-update `⟳`, installed counts, and source). Typing searches the tab; esc clears the search, then closes.
+- Enter opens the details and actions of a row: what a plugin is and adds (skills, commands, agents, MCP servers, hooks), its state and notes; then turn on or off, update, configure, reinstall, uninstall, or install for every project or this one (when it is trusted). A marketplace offers update now, auto-update on or off, and remove. Uninstall and remove ask for a second enter.
+- ← and → turn an installed plugin on or off, or a marketplace's auto-update, in place.
+- The Marketplaces tab starts with **Add a marketplace…** (an input line in the panel; tab picks the scope), **Update every marketplace and plugin**, and **Import from Claude Code settings**.
+- Work runs in the background: the status line shows a spinner and the seconds a clone or pull takes, then the result. The panel closes only to ask for a plugin's options after an install.
+
+Without a UI, the bare command shows the plugin list.
 
 `/claude:plugin` is an alias. Both take text subcommands, with completions:
 
