@@ -1,6 +1,6 @@
 # context-include
 
-Created 2026-10-29. Last updated 2026-10-30.
+Created 2026-10-29. Last updated 2026-11-04.
 
 Rust port of `@d3ara1n/pi-context-include` v3.0.0. Lines such as `@docs/api.md` in loaded context files (`AGENTS.md`) add the referenced Markdown files to the system prompt, recursively.
 
@@ -37,7 +37,7 @@ Invalid numbers (negative, non-finite, not a number) use the defaults. Arrays th
 
 The extension reads config on `session_start` only (`/reload` reads it again). It uses the first source that exists:
 
-1. `<cwd>/.pi/ext/context-include.json` (fields at the top level), only when the project is trusted. Otherwise the extension ignores it and shows a warning one time.
+1. `<cwd>/.pi/ext/context-include.json` (fields at the top level), only when the project is trusted. Otherwise the extension ignores it and shows a warning one time. In a git worktree without this file, the main checkout's copy applies.
 2. The `contextInclude` setting (pi merges `<agentDir>/settings.json` and `<cwd>/.pi/settings.json`).
 3. `<agentDir>/ext/context-include.json`.
 

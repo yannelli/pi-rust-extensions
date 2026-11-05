@@ -173,7 +173,7 @@ pub fn global_path(agent_dir: &Path) -> PathBuf {
 }
 
 pub fn project_path(cwd: &Path) -> PathBuf {
-    cwd.join(".pi").join("ext").join("computer-use.json")
+    pi_ext_sdk::paths::project_ext_config(cwd, "computer-use")
 }
 
 /// Merges defaults, the global file, the project file (when trusted), then env.

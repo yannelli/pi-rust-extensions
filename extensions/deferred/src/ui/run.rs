@@ -33,7 +33,7 @@ async fn inventory(state: &Shared, ctx: &CommandCtx) -> Inventory {
     let block =
         |path: std::path::PathBuf| config::read_file(&path).and_then(|v| v.get(NAMESPACE).cloned());
     let global = block(host.agent_dir().join("settings.json"));
-    let project = block(host.project_dir().join("settings.json"));
+    let project = block(host.project_file("settings.json"));
     let session = lock(state);
     let options = live
         .filter(Value::is_object)

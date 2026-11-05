@@ -41,7 +41,7 @@ The extension publishes the focused open goal as the `[Active Work]` block `goal
 
 ## Settings
 
-Layers, lowest to highest: `<agentDir>/pi-goal-x-settings.json`, `<agentDir>/ext/goal.json`, the `goal` settings namespace, `<cwd>/.pi/pi-goal-x-settings.json`, `<cwd>/.pi/ext/goal.json`. Project files and the merged settings namespace set `provider`, `model`, and `thinkingLevel` only in a trusted project. In other projects, the extension keeps the global values and reports ignored project overrides once.
+Layers, lowest to highest: `<agentDir>/pi-goal-x-settings.json`, `<agentDir>/ext/goal.json`, the `goal` settings namespace, `<cwd>/.pi/pi-goal-x-settings.json`, `<cwd>/.pi/ext/goal.json`. Project files and the merged settings namespace set `provider`, `model`, and `thinkingLevel` only in a trusted project. In other projects, the extension keeps the global values and reports ignored project overrides once. In a git worktree without one of the project files, the main checkout's copy applies.
 
 | Key | Default | Use |
 | --- | --- | --- |

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use pi_ext_sdk::paths::project_path;
 use pi_ext_sdk::prelude::*;
 
 use crate::decide::first_block;
@@ -63,8 +64,14 @@ pub fn config_files(rt: &Runtime, cwd: &Path) -> Vec<(&'static str, PathBuf)> {
     let claude = &rt.paths.claude_dir;
     let mut files = vec![
         ("user_settings", claude.join("settings.json")),
-        ("project_settings", root.join(".claude/settings.json")),
-        ("local_settings", root.join(".claude/settings.local.json")),
+        (
+            "project_settings",
+            project_path(&root, ".claude/settings.json"),
+        ),
+        (
+            "local_settings",
+            project_path(&root, ".claude/settings.local.json"),
+        ),
     ];
     for dir in policy_dirs() {
         files.push(("policy_settings", dir.join("managed-settings.json")));
@@ -74,7 +81,7 @@ pub fn config_files(rt: &Runtime, cwd: &Path) -> Vec<(&'static str, PathBuf)> {
                 .map(|f| ("policy_settings", f)),
         );
     }
-    for skills in [claude.join("skills"), root.join(".claude/skills")] {
+    for skills in [claude.join("skills"), project_path(&root, ".claude/skills")] {
         files.extend(
             list_files(&skills, SKILL_FILES_MAX)
                 .into_iter()

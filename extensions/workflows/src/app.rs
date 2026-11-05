@@ -79,7 +79,7 @@ impl App {
         let mut servers: Vec<String> = Vec::new();
         let mut configs = vec![host.agent_dir().join("mcp.json")];
         if trusted(host) {
-            configs.push(host.project_dir().join("mcp.json"));
+            configs.push(host.project_file("mcp.json"));
         }
         for path in configs {
             let text = std::fs::read_to_string(path).unwrap_or_default();
@@ -513,7 +513,7 @@ pub fn subagent_types(host: &Host) -> Vec<String> {
     let mut names: Vec<String> = ["explore", "build", "advisor"].map(String::from).to_vec();
     let mut dirs = vec![host.agent_dir().join("ext/subagents/agents")];
     if trusted(host) {
-        dirs.push(host.project_dir().join("ext/subagents/agents"));
+        dirs.push(host.project_file("ext/subagents/agents"));
     }
     for dir in dirs {
         for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {

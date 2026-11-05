@@ -214,3 +214,24 @@ fn a_bad_file_in_an_untrusted_project_is_not_read_and_user_rules_stay() {
             .any(|note| note.starts_with("Codex system, user, and project rules are not applied"))
     );
 }
+
+#[test]
+fn worktree_without_local_settings_reads_the_main_checkouts() {
+    let fx = fixture();
+    let admin = fx.cwd.join(".git/worktrees/wt");
+    write(&admin.join("commondir"), "../..\n");
+    let wt = fx.cwd.with_file_name("wt");
+    write(&wt.join(".git"), &format!("gitdir: {}\n", admin.display()));
+    write(
+        &fx.cwd.join(".claude/settings.local.json"),
+        r#"{"permissions":{"deny":["Bash(rm *)"]}}"#,
+    );
+    let loaded = load(&Env {
+        paths: &fx.paths,
+        agent_dir: fx.agent.clone(),
+        cwd: wt,
+        trusted: true,
+    });
+    assert!(sources(&loaded).contains(&Source::ClaudeLocal));
+    assert_eq!(loaded.local_root, fx.cwd);
+}

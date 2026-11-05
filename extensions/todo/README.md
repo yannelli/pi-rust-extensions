@@ -57,7 +57,7 @@ On `session_start`, `session_tree`, and `session_compact` the extension replays 
 
 ## Config
 
-Global `<agentDir>/ext/todo.json`, project `<cwd>/.pi/ext/todo.json`. The project file wins per key (`guidance` per field).
+Global `<agentDir>/ext/todo.json`, project `<cwd>/.pi/ext/todo.json`. The project file wins per key (`guidance` per field). In a git worktree without this file, the main checkout's copy applies.
 
 | Key | Default | Use |
 | --- | --- | --- |

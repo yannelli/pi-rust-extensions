@@ -52,6 +52,7 @@ The extension registers no tools.
 | pi | `<agentDir>/ext/hooks.json` | `<cwd>/.pi/ext/hooks.json` |
 
 - `<root>` is the session cwd when it holds `.claude` (or `.codex`), else the nearest parent directory with `.git`, else the cwd. `CLAUDE_PROJECT_DIR` is the Claude `<root>`.
+- In a git worktree without one of the project files, the main checkout's copy applies. This covers the untracked `.claude/settings.local.json`.
 - Hooks from all files merge.
 - Project files of all three sources load only when the ctx snapshot says `isProjectTrusted: true`. Otherwise the extension skips them and shows one warning per session that lists the skipped files. Options in an untrusted project `.pi/ext/hooks.json` are skipped too.
 - `disableAllHooks` follows Claude settings precedence: the value in the most specific loaded file wins (local, then project, then user). A project `false` overrides a user `true`. When it is `true`, pi-native groups with a `plugin` id are off too, because they come from Claude Code plugins.

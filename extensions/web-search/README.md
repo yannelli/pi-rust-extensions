@@ -1,6 +1,6 @@
 # web-search
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-11-04.
 
 This extension adds web search and URL reading to pi. It is a Rust port of [pi-web-search](https://github.com/ttttmr/pi-web-search) 1.7.0. The tool names, parameters, and `details` fields are the same as upstream. The extension also adds four search APIs: Exa, Firecrawl, Brave, and Tavily.
 
@@ -67,7 +67,7 @@ Provider settings can use the global or project scope. API keys use the global k
 | `$PI_WEB_SEARCH_CONFIG`, else `<agentDir>/web-search.json` | Upstream file `{ "provider", "model" }` (`modelId` is also correct). It sets the search model. `searchModel` has priority over this file. |
 | `<agentDir>/ext/web-search/keys.json` | API keys, mode 0600 |
 
-`<agentDir>` is `~/.pi/agent`, or `$PI_CODING_AGENT_DIR`.
+`<agentDir>` is `~/.pi/agent`, or `$PI_CODING_AGENT_DIR`. In a git worktree without `<cwd>/.pi/ext/web-search.json`, the main checkout's copy applies.
 
 ```json
 {

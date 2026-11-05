@@ -21,6 +21,7 @@ tokio-util.workspace = true
 
 [dev-dependencies]
 pi-ext-sdk = { path = ".", features = ["test-util"] }
+tempfile = "=3.27.0"
 
 [lints]
 workspace = true

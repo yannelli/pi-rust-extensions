@@ -128,7 +128,7 @@ pub fn global_path(agent_dir: &Path) -> PathBuf {
 }
 
 pub fn project_path(cwd: &Path) -> PathBuf {
-    cwd.join(".pi").join("ext").join("compactor.json")
+    pi_ext_sdk::paths::project_ext_config(cwd, "compactor")
 }
 
 /// Current keys of one layer; pre-rework keys fill only keys the layer does not set.

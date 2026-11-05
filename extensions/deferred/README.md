@@ -1,6 +1,6 @@
 # deferred
 
-Created 2026-11-02. Last updated 2026-11-03.
+Created 2026-11-02. Last updated 2026-11-04.
 
 Keeps tools, skills, context files, and prompt sections out of the system prompt until the model needs them, like Claude Code's tool search and deferred tools. You choose a mode for each item: loaded as usual, listed by name only, searchable but not listed, user-only (skills), or disabled. The model loads deferred items with the `deferred_search` tool.
 
@@ -74,6 +74,7 @@ The `<deferred>` section is in the prompt only while something is deferred. The 
   3. The matching `repos` blocks: first from step 1, then from step 2.
   4. The `deferred` setting of `<cwd>/.pi/settings.json`. pi merges it into the setting only when the project is trusted.
   5. `<cwd>/.pi/ext/deferred.json`, but only when the project is trusted.
+- In a git worktree without `<cwd>/.pi/settings.json` or `<cwd>/.pi/ext/deferred.json`, the main checkout's copy applies.
 - The extension reads the config and the repo on `session_start`, `/deferred reload`, and after `/deferred set`. Rules apply from the next prompt.
 
 ## Commands

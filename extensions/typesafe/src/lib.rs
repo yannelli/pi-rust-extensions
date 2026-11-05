@@ -14,6 +14,7 @@ pub mod client;
 mod commands;
 pub mod credentials;
 pub mod errors;
+pub mod gate;
 #[doc(hidden)]
 pub mod mock_api;
 pub mod models;
@@ -126,13 +127,17 @@ async fn session_start(state: Arc<State>, ev: EventCtx) -> Result<()> {
     } else if state.enabled() && level == Level::Error {
         let text = format!("TypeSafe is enabled but judgments are skipped. {text}");
         state.call_out(&host, "start:error", &text).await;
+    } else if !state.enabled() && state.gate.settings().enabled {
+        let text = "The TypeSafe tool-call gate is on, but TypeSafe is disabled, so tool calls are not reviewed. Run /typesafe enable to start reviews.";
+        state.call_out(&host, "start:gate", text).await;
     }
     Ok(())
 }
 
 /// The extension over a given state; tests pass a fixed environment and agent dir.
 pub fn extension_with(state: Arc<State>) -> Extension {
-    let (tool, start, command, complete, responder) = (
+    let (tool, start, command, complete, responder, gated) = (
+        state.clone(),
         state.clone(),
         state.clone(),
         state.clone(),
@@ -147,10 +152,13 @@ pub fn extension_with(state: Arc<State>) -> Extension {
             let state = start.clone();
             async move { session_start(state, ev).await }
         })
+        .on("tool_call", move |ev: EventCtx| {
+            gate::tool_call(gated.clone(), ev)
+        })
         .on_start(move |host: Host| bus::serve(responder.clone(), host))
         .command(
             "typesafe",
-            "TypeSafe login, consent, usage, sample test, and JSON playground",
+            "TypeSafe login, consent, usage, tool-call gate, sample test, and JSON playground",
             move |args, ctx: CommandCtx| commands::run(command.clone(), args, ctx),
         )
         .completions("typesafe", move |prefix, _host| {

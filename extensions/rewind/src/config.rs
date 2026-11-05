@@ -205,7 +205,7 @@ pub async fn load(host: &Host, project_trusted: bool) -> (Config, Vec<String>) {
         layer(&host.agent_dir().join("settings.json"))["ayu"].clone()
     };
     let global = layer(&host.agent_dir().join("ext").join("rewind.json"));
-    let project = layer(&host.project_dir().join("ext").join("rewind.json"));
+    let project = layer(&host.project_file("ext/rewind.json"));
     let (layers, dropped) =
         trusted_layers(settings, global_settings, global, project, project_trusted);
     if dropped {

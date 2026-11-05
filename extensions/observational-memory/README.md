@@ -1,6 +1,6 @@
 # pi-ext-observational-memory
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-11-04.
 
 A Rust port of the pi package `pi-observational-memory` 3.1.4 for pi-rust native extensions. Run it as `pi-rust-ext observational-memory`.
 
@@ -36,7 +36,7 @@ Sources, in order; a later source wins per key:
 1. Defaults.
 2. `<agentDir>/ext/observational-memory.json` (global).
 3. The `observational-memory` key of pi settings (`~/.pi/agent/settings.json` and `.pi/settings.json`, merged by pi). This is where upstream reads its settings.
-4. `<cwd>/.pi/ext/observational-memory.json` (project). The extension reads it only when pi reports the project as trusted, because `model` selects the provider that receives the transcript. It shows one warning when it ignores the file.
+4. `<cwd>/.pi/ext/observational-memory.json` (project). The extension reads it only when pi reports the project as trusted, because `model` selects the provider that receives the transcript. It shows one warning when it ignores the file. In a git worktree without this file, the main checkout's copy applies.
 5. `PI_OBSERVATIONAL_MEMORY_PASSIVE` (`1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off`) sets `passive`.
 
 The extension ignores a value of the wrong type or range and keeps the earlier value. Token counts accept integer-valued floats such as `10000.0`.

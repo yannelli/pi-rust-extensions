@@ -106,7 +106,10 @@ impl Config {
         let files = [
             upstream_config_path(),
             Some(agent_dir.join("ext").join("ask-user-question.json")),
-            Some(cwd.join(".pi").join("ext").join("ask-user-question.json")),
+            Some(pi_ext_sdk::paths::project_ext_config(
+                cwd,
+                "ask-user-question",
+            )),
         ];
         for path in files.into_iter().flatten() {
             if let Some(Value::Object(map)) = read_json(&path) {

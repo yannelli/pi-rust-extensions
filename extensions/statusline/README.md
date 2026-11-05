@@ -1,6 +1,6 @@
 # statusline
 
-Created 2026-10-30. Last updated 2026-11-03.
+Created 2026-10-30. Last updated 2026-11-04.
 
 A footer status line for pi-rust. It replaces the built-in `statusLine` setting and renders with `ui.setFooter` from the ctx snapshot, the footer data (`sessionStats`, `runState`, `gitBranch`), and events. It renders again when the footer width changes.
 
@@ -17,7 +17,7 @@ A footer status line for pi-rust. It replaces the built-in `statusLine` setting 
 
 ## Config
 
-`~/.pi/agent/ext/statusline.json` (global) and `<cwd>/.pi/ext/statusline.json` (project, wins per key). Keys are those of the old `statusLine` setting: `type`, `preset`, `chip` (`style`), `theme`, `icons`, `layout`, `segments`, `separator`, `colors`, `padding`, `command`, `refreshInterval`.
+`~/.pi/agent/ext/statusline.json` (global) and `<cwd>/.pi/ext/statusline.json` (project, wins per key). Keys are those of the old `statusLine` setting: `type`, `preset`, `chip` (`style`), `theme`, `icons`, `layout`, `segments`, `separator`, `colors`, `padding`, `command`, `refreshInterval`. In a git worktree without this file, the main checkout's copy applies.
 
 Without either file, the old `statusLine` setting applies (through `settings.get`, with `command` from `~/.pi/agent/settings.json` only). Without that too, the `minimal` preset applies.
 

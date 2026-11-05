@@ -48,7 +48,7 @@ The footer status `simple-goal` shows `simple goal 2/8` while a goal is active a
 
 ## Config
 
-`<agentDir>/ext/simple-goal.json`, then `<cwd>/.pi/ext/simple-goal.json` (project keys win). `model`, `thinking`, `systemPrompt`, and `judge` apply from the project file only in a trusted project; otherwise the extension ignores them and warns once.
+`<agentDir>/ext/simple-goal.json`, then `<cwd>/.pi/ext/simple-goal.json` (project keys win). `model`, `thinking`, `systemPrompt`, and `judge` apply from the project file only in a trusted project; otherwise the extension ignores them and warns once. In a git worktree without this file, the main checkout's copy applies.
 
 | Key | Default | Use |
 | --- | --- | --- |

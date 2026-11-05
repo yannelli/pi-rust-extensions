@@ -1,6 +1,6 @@
 # iterm2
 
-Created 2026-10-30. Last updated 2026-10-30.
+Created 2026-10-30. Last updated 2026-11-04.
 
 iTerm2 integration for pi-rust. It replaces the built-in `terminal.iterm2` feature. It writes iTerm2 escape sequences through `ui.writeTerminal` and asks pi to wrap them for tmux when `TMUX` is set.
 
@@ -19,7 +19,7 @@ The extension does nothing outside iTerm2 (`TERM_PROGRAM=iTerm.app`, `LC_TERMINA
 
 ## Config
 
-`~/.pi/agent/ext/iterm2.json` (global) and `<cwd>/.pi/ext/iterm2.json` (project, wins per key). The value is `true`, `false`, or an object:
+`~/.pi/agent/ext/iterm2.json` (global) and `<cwd>/.pi/ext/iterm2.json` (project, wins per key). In a git worktree without the project file, the main checkout's copy applies. The value is `true`, `false`, or an object:
 
 | Key | Default | Use |
 | --- | --- | --- |

@@ -159,6 +159,45 @@ async fn daily_cap_blocks_before_sending() {
 }
 
 #[tokio::test]
+async fn gate_requests_skip_the_session_cap_but_not_daily_caps() {
+    let api = MockApi::start(Vec::new()).await;
+    let dir = TempDir::new();
+    let backend = from_values(None, Some(&api.url)).unwrap();
+    let env = Env::fixed([("PI_TYPESAFE_MAX_REQUESTS_PER_DAY", "22")]);
+    let clock: Clock = Arc::new(|| "2026-10-29".to_owned());
+    let client = Client::new(
+        backend,
+        Some(KEY.into()),
+        None,
+        dir.path(),
+        &env,
+        Caps::default(),
+        clock,
+    )
+    .unwrap();
+    let cancel = CancellationToken::new();
+    for _ in 0..=DEFAULT_MAX_REQUESTS {
+        let error = client
+            .submit(request(), &cancel, Purpose::Gate)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, Code::Http);
+    }
+    let error = client.evaluate(request(), &cancel).await.unwrap_err();
+    assert_eq!(error.code, Code::Http, "the tool keeps its own attempts");
+    let spend = client.spend();
+    assert_eq!(spend.gate.requests_started, DEFAULT_MAX_REQUESTS + 1);
+    assert_eq!(spend.session.requests_started, 1);
+    assert_eq!(spend.today.totals.requests_started, 22);
+    let capped = client
+        .submit(request(), &cancel, Purpose::Gate)
+        .await
+        .unwrap_err();
+    assert_eq!(capped.code, Code::Budget);
+    assert_eq!(api.requests().len(), 22);
+}
+
+#[tokio::test]
 async fn lists_models_and_cancels() {
     let decisions = json!(["/api/alpha/decisions"]);
     let models = json!({ "data": [

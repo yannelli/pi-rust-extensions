@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use pi_ext_sdk::paths::project_path;
 use serde_json::Value;
 
 use crate::codex;
@@ -80,7 +81,7 @@ pub fn load(env: &Env) -> Loaded {
         dirs: vec![env.cwd.clone()],
         agent_dir: env.agent_dir.clone(),
         fence_dirs: vec![env.cwd.clone()],
-        local_root: project_root(&env.cwd, ".claude"),
+        local_root: local_root(&env.cwd),
         ..Loaded::default()
     };
     let global = pi_file(&out.global_file, &mut out.notes);
@@ -200,6 +201,16 @@ fn claude_precedence(source: Source) -> u8 {
     }
 }
 
+const LOCAL_SETTINGS: &str = ".claude/settings.local.json";
+
+/// The folder whose `.claude/settings.local.json` applies: the project root, or the main checkout's
+/// root in a git worktree without that file.
+fn local_root(cwd: &Path) -> PathBuf {
+    let root = project_root(cwd, ".claude");
+    let file = project_path(&root, LOCAL_SETTINGS);
+    file.ancestors().nth(2).map_or(root, Path::to_path_buf)
+}
+
 fn claude_source(out: &mut Loaded, source: Source, env: &Env, managed_only: bool) {
     let root = project_root(&env.cwd, ".claude");
     let (file, anchor) = match source {
@@ -212,8 +223,11 @@ fn claude_source(out: &mut Loaded, source: Source, env: &Env, managed_only: bool
             env.paths.claude_dir.join("settings.json"),
             env.paths.claude_dir.clone(),
         ),
-        Source::ClaudeProject => (root.join(".claude/settings.json"), env.cwd.clone()),
-        _ => (root.join(".claude/settings.local.json"), env.cwd.clone()),
+        Source::ClaudeProject => (
+            project_path(&root, ".claude/settings.json"),
+            env.cwd.clone(),
+        ),
+        _ => (out.local_root.join(LOCAL_SETTINGS), env.cwd.clone()),
     };
     let link = std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink());
     if link && source != Source::ClaudeManaged {
@@ -322,7 +336,9 @@ fn codex_source(out: &mut Loaded, source: Source, env: &Env) {
     } else {
         let mut dirs = up_to_root(&env.cwd);
         dirs.reverse();
-        dirs.into_iter().map(|d| d.join(".codex/rules")).collect()
+        dirs.into_iter()
+            .map(|d| project_path(d, ".codex/rules"))
+            .collect()
     };
     for dir in dirs {
         match rules_files(&dir) {

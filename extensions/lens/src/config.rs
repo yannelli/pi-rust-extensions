@@ -107,7 +107,7 @@ pub fn read(path: &Path) -> Result<Value> {
 pub fn paths(agent_dir: &Path, cwd: &Path) -> [PathBuf; 2] {
     [
         agent_dir.join("ext/lens.json"),
-        cwd.join(".pi/ext/lens.json"),
+        pi_ext_sdk::paths::project_ext_config(cwd, "lens"),
     ]
 }
 

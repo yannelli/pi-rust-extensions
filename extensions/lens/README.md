@@ -30,6 +30,8 @@ Config paths, in precedence order:
 3. The nearest `.pi-lens.json` above the current directory.
 4. `<cwd>/.pi/ext/lens.json`.
 
+In a git worktree without `<cwd>/.pi/ext/lens.json` or `<cwd>/.pi/ext/lens-lsp.json`, the main checkout's copy applies.
+
 Project fields override global fields. Objects merge by key. Arrays replace previous arrays.
 Untrusted project config cannot override `commands` or `lsp`.
 In an untrusted project, Lens does not auto-detect tools and does not add `node_modules/.bin` to `PATH`. Lens also does not read `<cwd>/.pi/ext/lens-lsp.json`. Commands and LSP servers from global config still run. Lens shows one notice.

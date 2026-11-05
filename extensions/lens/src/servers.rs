@@ -164,7 +164,10 @@ impl LspServer {
 
 /// The server files of the user and project scopes.
 pub fn paths(agent_dir: &Path, cwd: &Path) -> [PathBuf; 2] {
-    [agent_dir.join(FILE), cwd.join(".pi").join(FILE)]
+    [
+        agent_dir.join(FILE),
+        pi_ext_sdk::paths::project_path(cwd, Path::new(".pi").join(FILE)),
+    ]
 }
 
 /// Modification times of the server files, to notice changes between scans.

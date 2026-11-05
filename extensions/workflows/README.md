@@ -53,7 +53,7 @@ Both include the file format reference, `skills/format.md`.
 | Path | Contents |
 | --- | --- |
 | `<agentDir>/ext/workflows/definitions/<name>.json` | Global workflows |
-| `<cwd>/.pi/ext/workflows/definitions/<name>.json` | Project workflows. They load only in a trusted project and hide a global workflow of the same name. |
+| `<cwd>/.pi/ext/workflows/definitions/<name>.json` | Project workflows. They load only in a trusted project and hide a global workflow of the same name. In a git worktree without this folder, the main checkout's folder applies. |
 | `<agentDir>/ext/workflows/runs/<id>/` | `run.json` (state, history, resume), one session file per step (`01-<step>.jsonl`, or `session.jsonl` in `session` context), `memory.md`, `report.schema.json`, `plan.schema.json`, `commands/` (commands to the runner), `runner.log` (the runner's stderr), and `reported-<endedMs>` (the claim of the pi that reported the run's end). Directories older than 30 days are deleted at startup. |
 | `<agentDir>/ext/workflows/sessions/<pid>` | The liveness file of each running pi, refreshed every 2 seconds. |
 

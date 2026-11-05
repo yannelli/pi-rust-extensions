@@ -53,7 +53,7 @@ The `subagent-notify` message starts with `Background task completed|failed|stop
 
 ## Agent files
 
-Built-in defaults, then `<agentDir>/ext/subagents/agents/*.md`, then `<cwd>/.pi/ext/subagents/agents/*.md`. A later file overrides only the fields it sets. A file with a new name adds an agent. Project agents load only when the project is trusted. The format is the Claude Code agent format (YAML frontmatter and a prompt body), so `claude-marketplace` writes plugin agents here.
+Built-in defaults, then `<agentDir>/ext/subagents/agents/*.md`, then `<cwd>/.pi/ext/subagents/agents/*.md`. A later file overrides only the fields it sets. A file with a new name adds an agent. Project agents load only when the project is trusted. The format is the Claude Code agent format (YAML frontmatter and a prompt body), so `claude-marketplace` writes plugin agents here. In a git worktree without the project agents folder, the main checkout's folder applies.
 
 ```markdown
 ---
@@ -104,7 +104,7 @@ The extension publishes its running runs as the `[Active Work]` block `subagents
 
 ## Config
 
-`<agentDir>/ext/subagents.json`, then `<cwd>/.pi/ext/subagents.json` (project keys win; `piBin` and `extraArgs` apply from the project file only in a trusted project).
+`<agentDir>/ext/subagents.json`, then `<cwd>/.pi/ext/subagents.json` (project keys win; `piBin` and `extraArgs` apply from the project file only in a trusted project). In a git worktree without this file, the main checkout's copy applies.
 
 | Key | Default | Use |
 | --- | --- | --- |
