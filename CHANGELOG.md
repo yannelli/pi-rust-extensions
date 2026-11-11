@@ -2,6 +2,15 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.15] - 2026-11-11
+
+### Added
+
+- **hybrid-router:** route prompts between a local and a remote model with /hybrid ([0812b3d](https://github.com/yannelli/pi-rust-extensions/commit/0812b3d90ae829bb54bb09c294cbf9b31f0af6b4))
+- **claude-marketplace:** a /claude-plugins panel like /deferred's ([589d313](https://github.com/yannelli/pi-rust-extensions/commit/589d313f17ef0acbb0a1dc8c5ee4939f262d3e3e))
+- **subscription-router:** manage accounts without dialogs ([8be954f](https://github.com/yannelli/pi-rust-extensions/commit/8be954fb7c09f3cb7b1ad246cbaa407cf454e5c2))
+- **subscription-router:** accounts behind one provider, picked per request ([2a44409](https://github.com/yannelli/pi-rust-extensions/commit/2a44409e999359e91ffe777752f59626d81c4cc5))
+
 ## [0.5.14] - 2026-11-04
 
 ### Added
