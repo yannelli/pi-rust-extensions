@@ -57,6 +57,7 @@ For example, `pi install marketplace:todo`. You can also open `/extensions` in t
 
 | Extension | Description |
 | --- | --- |
+| [`hybrid-router`](extensions/hybrid-router/README.md) | The `hybrid/auto` virtual model. The classifier of a local llama.cpp model sends simple prompts to the local model and the other prompts to a remote model. While the machine is busy, prompts go to the remote model. Set it up with `/hybrid`. |
 | [`ollama`](extensions/ollama/README.md) | Discovers models from a local Ollama, registers the `ollama` provider, and manages models with `/ollama`. |
 | [`subscription-router`](extensions/subscription-router/README.md) | Several ChatGPT Codex and Anthropic subscription accounts behind one provider, picked per request (manual, fill, threshold, or balance), with failover, Codex usage resets, fallback to other providers, and `router/<profile>` virtual models. |
 
