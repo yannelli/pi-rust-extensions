@@ -136,6 +136,20 @@
       ]
     },
     {
+      "name": "hybrid-router",
+      "displayName": "Hybrid Router",
+      "description": "The hybrid/auto virtual model: a local model's classifier sends simple prompts to the local model and the others to a remote model, and a busy machine sends prompts to the remote model. Set it up with /hybrid.",
+      "version": "0.5.14",
+      "args": [
+        "hybrid-router"
+      ],
+      "tags": [
+        "provider",
+        "models",
+        "router"
+      ]
+    },
+    {
       "name": "iterm2",
       "displayName": "iTerm2",
       "description": "iTerm2 integration: tab color follows the agent state, session badge, status bar user variables, attention requests, and /terminal-setup.",

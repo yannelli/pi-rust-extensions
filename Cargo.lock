@@ -891,6 +891,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-ext-hybrid-router"
+version = "0.5.14"
+dependencies = [
+ "pi-ext-e2e",
+ "pi-ext-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pi-ext-iterm2"
 version = "0.5.14"
 dependencies = [
@@ -1126,6 +1137,7 @@ dependencies = [
  "pi-ext-e2e",
  "pi-ext-goal",
  "pi-ext-hooks",
+ "pi-ext-hybrid-router",
  "pi-ext-iterm2",
  "pi-ext-lens",
  "pi-ext-observational-memory",

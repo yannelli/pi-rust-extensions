@@ -23,6 +23,7 @@ pi-ext-rewind = { path = "../../extensions/rewind" }
 pi-ext-ssh = { path = "../../extensions/ssh" }
 pi-ext-iterm2 = { path = "../../extensions/iterm2" }
 pi-ext-ollama = { path = "../../extensions/ollama" }
+pi-ext-hybrid-router = { path = "../../extensions/hybrid-router" }
 pi-ext-statusline = { path = "../../extensions/statusline" }
 pi-ext-ask-user-question = { path = "../../extensions/ask-user-question" }
 pi-ext-subagents = { path = "../../extensions/subagents" }

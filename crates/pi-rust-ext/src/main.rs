@@ -16,6 +16,7 @@ const EXTENSIONS: &[Extension] = &[
     ("ssh", pi_ext_ssh::main),
     ("iterm2", pi_ext_iterm2::main),
     ("ollama", pi_ext_ollama::main),
+    ("hybrid-router", pi_ext_hybrid_router::main),
     ("statusline", pi_ext_statusline::main),
     ("ask-user-question", pi_ext_ask_user_question::main),
     ("subagents", pi_ext_subagents::main),
