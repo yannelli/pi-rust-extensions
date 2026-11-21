@@ -50,7 +50,12 @@ pub struct Switch {
 }
 
 /// The switches that features add, in Settings tab order.
-pub const SWITCHES: &[Switch] = &[];
+pub const SWITCHES: &[Switch] = &[Switch {
+    key: "managed/forceEnabledPlugins",
+    label: "Force-enabled plugin hooks",
+    about: "Run hooks of plugins that Claude managed enabledPlugins sets to true, under allowManagedHooksOnly or a non-managed disableAllHooks.",
+    default: true,
+}];
 
 /// The value of each switch in `doc`, else its default.
 pub fn read_switches(doc: &Value, switches: &'static [Switch]) -> BTreeMap<&'static str, bool> {

@@ -1,6 +1,6 @@
 # hooks
 
-Created 2026-10-29. Last updated 2026-11-20.
+Created 2026-10-29. Last updated 2026-11-21.
 
 Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both tools and a pi-native hooks file, maps pi events onto hook events, runs the matching handlers, and applies their decisions to pi. It follows these docs, read 2026-11-20: the Claude Code hooks reference (code.claude.com/docs/en/hooks), settings reference (code.claude.com/docs/en/settings-reference), and managed settings (code.claude.com/docs/en/managed-settings), and the Codex hooks docs (developers.openai.com/codex/hooks) with the Codex 0.171.0 hook schemas.
 
@@ -63,8 +63,9 @@ The extension registers no tools.
 - Managed hooks load in every `scope` option and project trust state while their source (`sources.claude` or `sources.codex`) is on. They are trusted by policy, ignore `disabled` lists and Codex `[hooks.state]`, and are not shadowed.
 - The Codex project root is the nearest dir with one of the user `config.toml` `project_root_markers` (default `[".git"]`); `project_root_markers = []` makes the cwd the root.
 - Project files of all three sources load only when the ctx snapshot says `isProjectTrusted: true`. Otherwise the extension skips them and shows one warning per session that lists the skipped files. Options in an untrusted project `.pi/ext/hooks.json` are skipped too.
-- `disableAllHooks` follows Claude settings precedence: a managed value wins, else the value in the most specific loaded file (local, then project, then user). A project `false` overrides a user `true`. A managed `true` turns off all Claude hooks. A `true` outside managed settings turns off user, project, and local hooks; managed hooks keep running. Managed `allowManagedHooksOnly: true` keeps only managed Claude hooks. In both cases pi-native groups with a `plugin` id are off too, because they come from Claude Code plugins.
-- Claude `allowedHttpHookUrls` and `httpHookAllowedEnvVars` merge across the managed, user, project, and local files. When any file sets `allowedHttpHookUrls`, a Claude or pi http hook runs only when its URL matches a pattern (`*` is a wildcard; the scheme and host compare without case and without a trailing dot). When any file sets `httpHookAllowedEnvVars`, a header can use a variable only when both that list and the hook's `allowedEnvVars` name it.
+- `disableAllHooks` follows Claude settings precedence: a managed value wins, else the value in the most specific loaded file (local, then project, then user). A project `false` overrides a user `true`. A managed `true` turns off all Claude hooks. A `true` outside managed settings turns off user, project, and local hooks; managed hooks keep running. Managed `allowManagedHooksOnly: true` keeps only managed Claude hooks.
+- pi-native groups with a `plugin` id come from Claude Code plugins, so the Claude settings gate them. Under `allowManagedHooksOnly` or a `disableAllHooks: true` outside managed settings, a plugin group runs only when its full `plugin@marketplace` id is `true` in managed `enabledPlugins`. The `managed/forceEnabledPlugins` switch (default on) turns this exception off. A managed `disableAllHooks: true` turns off all plugin groups. A plugin group whose id is `false` in managed `enabledPlugins` is off whether or not a gate is on, because Claude Code blocks that plugin at every scope. These managed values apply also when `sources.claude` is off; the user, project, and local Claude settings are then not read. Plugin groups that run keep the normal trust flow.
+- Claude `allowedHttpHookUrls` and `httpHookAllowedEnvVars` merge across the managed, user, project, and local files. When `sources.claude` is off, only the managed files set them. When any file sets `allowedHttpHookUrls`, a Claude or pi http hook runs only when its URL matches a pattern (`*` is a wildcard; the scheme and host compare without case and without a trailing dot). When any file sets `httpHookAllowedEnvVars`, a header can use a variable only when both that list and the hook's `allowedEnvVars` name it.
 - Codex `[features] hooks = false` (or `codex_hooks = false`) turns off the Codex source. A `[features] hooks` value in `requirements.toml` wins; else the most specific layer that sets it wins. `requirements.toml` `allow_managed_hooks_only = true` keeps only the system and `requirements.toml` hooks.
 - Codex `[hooks.state."<file>:<snake_event>:<group>:<handler>"] enabled = false` in the user `config.toml` turns off one Codex hook, as Codex `/hooks` does. `trusted_hash` is not read; pi uses its own trust list.
 - Codex inline hooks in `config.toml` (`[[hooks.<Event>]]` with `[[hooks.<Event>.hooks]]`) merge with `hooks.json` of the same layer, with a log warning.
@@ -82,6 +83,7 @@ In `<agentDir>/ext/hooks.json` and `<cwd>/.pi/ext/hooks.json` (same file as the 
 | `conflicts` | `"merge"` | `merge`, `warn`, or `override`; see [Conflicts between layers](#conflicts-between-layers). Read from the global options file only, because a project options file can come from the repository. |
 | `disabled` | `[]` | Hashes of disabled hooks. The lists of both files merge. |
 | Feature switches | per switch | On and off rows that features add to the Settings tab, each under its own key (for example `managed/<name>`). Read from the global options file only. |
+| `managed/forceEnabledPlugins` | `true` | Run hooks of plugins that managed `enabledPlugins` sets to `true` under `allowManagedHooksOnly` or a non-managed `disableAllHooks`. |
 
 ## Conflicts between layers
 
@@ -227,7 +229,7 @@ Events marked pi-rust come from host events that only pi-rust 0.12.3 and later s
 - PreCompact stdout does not become compaction instructions: pi's `session_before_compact` reply takes no `customInstructions`, so this needs a pi host change.
 - Output fields: UserPromptSubmit `sessionTitle` sets the session name. A PermissionRequest deny with `decision.interrupt: true` aborts the run. `<system-reminder>` tags in context reach the model with `<` as `&lt;`. PostToolUse `classifierContext` and UserPromptSubmit `suppressOriginalPrompt` have no effect, because pi has no auto mode classifier and shows no block message with the prompt text.
 - Unsupported handler and settings fields: `shell: "powershell"` on non-Windows, Claude `updatedPermissions`, `updatedMCPToolOutput` beyond replacing the content, SessionStart `reloadSkills`, plugin `hooks/hooks.json` files outside the pi-native file, and skill or subagent frontmatter hooks.
-- Claude managed settings come from the managed settings files only: MDM, registry, and server-managed sources are not read, and the files merge without the `first-wins` choice between sources. Under `allowManagedHooksOnly`, hooks of plugins that managed `enabledPlugins` force-enables do not run.
+- Claude managed settings come from the managed settings files only: MDM, registry, and server-managed sources are not read, and the files merge without the `first-wins` choice between sources.
 - Claude Code runs at most 12 prompt and agent hooks of one event at once and starts the rest as those finish. pi starts them all at once.
 - SubagentStart context and SubagentStop blocks go to `pi.events` channels, because the extension cannot reach the subagent session.
 - A denied hook stays denied with `trustAll`.
