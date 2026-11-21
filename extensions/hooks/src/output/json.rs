@@ -85,7 +85,7 @@ pub fn apply_json(cx: &Interpret, json: &Value, out: &mut Outcome) {
         }
         "PostToolUse" | "PostToolUseFailure" => {
             out.block = block;
-            if !codex {
+            if !codex && cx.event == "PostToolUse" {
                 out.updated_output = get("updatedToolOutput")
                     .or_else(|| get("updatedMCPToolOutput"))
                     .cloned();

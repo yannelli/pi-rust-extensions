@@ -1,9 +1,10 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::{Map, Value};
 
 use crate::model::{Scope, Source};
+use crate::policy::ConflictMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeOption {
@@ -38,6 +39,31 @@ impl ScopeOption {
     }
 }
 
+/// An on/off row of the Settings tab. pi reads it from the global options file only.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Switch {
+    /// `/`-separated key in the options file, for example `managed/claudeMdm`.
+    pub key: &'static str,
+    pub label: &'static str,
+    pub about: &'static str,
+    pub default: bool,
+}
+
+/// The switches that features add, in Settings tab order.
+pub const SWITCHES: &[Switch] = &[];
+
+/// The value of each switch in `doc`, else its default.
+pub fn read_switches(doc: &Value, switches: &'static [Switch]) -> BTreeMap<&'static str, bool> {
+    switches
+        .iter()
+        .map(|switch| {
+            let pointer = format!("/{}", switch.key);
+            let value = doc.pointer(&pointer).and_then(Value::as_bool);
+            (switch.key, value.unwrap_or(switch.default))
+        })
+        .collect()
+}
+
 /// Options from `ext/hooks.json`: global file first, project file wins per key.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Options {
@@ -46,8 +72,12 @@ pub struct Options {
     pub pi: bool,
     pub scope: ScopeOption,
     pub trust_all: bool,
+    /// Read from the global options file only.
+    pub conflicts: ConflictMode,
     /// Hashes from the `disabled` lists of both files.
     pub disabled: BTreeSet<String>,
+    /// [`SWITCHES`] values from the global options file.
+    pub switches: BTreeMap<&'static str, bool>,
 }
 
 impl Default for Options {
@@ -58,7 +88,9 @@ impl Default for Options {
             pi: true,
             scope: ScopeOption::Both,
             trust_all: false,
+            conflicts: ConflictMode::Merge,
             disabled: BTreeSet::new(),
+            switches: BTreeMap::new(),
         }
     }
 }
@@ -80,12 +112,25 @@ impl Options {
             if let Some(trust_all) = layer.get("trustAll").and_then(Value::as_bool) {
                 options.trust_all = trust_all;
             }
+            if let Some(mode) = layer.get("conflicts").and_then(Value::as_str) {
+                options.conflicts = ConflictMode::parse(mode).unwrap_or(options.conflicts);
+            }
             if let Some(list) = layer.get("disabled").and_then(Value::as_array) {
                 let hashes = list.iter().filter_map(Value::as_str).map(str::to_owned);
                 options.disabled.extend(hashes);
             }
         }
         options
+    }
+
+    /// The value of the switch `key`; its default when the file does not set it.
+    pub fn switch_on(&self, key: &str) -> bool {
+        self.switches.get(key).copied().unwrap_or_else(|| {
+            SWITCHES
+                .iter()
+                .find(|s| s.key == key)
+                .is_none_or(|s| s.default)
+        })
     }
 
     pub fn source_on(&self, source: Source) -> bool {
@@ -156,6 +201,31 @@ mod tests {
         assert_eq!(options.scope, ScopeOption::Project);
         assert!(options.trust_all);
         assert_eq!(Options::merge(&[]), Options::default());
+    }
+
+    #[test]
+    fn switches_read_the_global_file_with_defaults() {
+        static TEST: [Switch; 2] = [
+            Switch {
+                key: "managed/a",
+                label: "A",
+                about: "",
+                default: true,
+            },
+            Switch {
+                key: "limits/b",
+                label: "B",
+                about: "",
+                default: false,
+            },
+        ];
+        let doc = json!({ "managed": { "a": false } });
+        let values = read_switches(&doc, &TEST);
+        assert_eq!(values.get("managed/a"), Some(&false));
+        assert_eq!(values.get("limits/b"), Some(&false));
+        let doc = json!({ "limits": { "b": true } });
+        assert_eq!(read_switches(&doc, &TEST).get("limits/b"), Some(&true));
+        assert!(Options::default().switch_on("unknown"));
     }
 
     #[test]

@@ -1,89 +1,56 @@
+//! Keys of the `/hooks` panel: typing filters, as in `/deferred` and `/claude-plugins`.
+
 use pi_ext_sdk::Key;
 
-use super::{Action, DetailAction, Mode, PAGE, Row, Tab, TrustChange, View};
-use crate::manage::PROJECT_UNTRUSTED;
-use crate::model::Scope;
+use super::{
+    Action, AddForm, AddStep, DetailAction, Entry, PAGE, Row, Screen, Tab, Tone, TrustChange, View,
+};
+use crate::manage::EVENTS;
 
 impl View {
     pub fn key(&mut self, key: &Key, rows: &[Row]) -> Action {
-        self.status = None;
-        match self.mode.clone() {
-            Mode::List => self.list_key(key, rows),
-            Mode::Search => self.search_key(key, rows),
-            Mode::Details { hash, action } => self.details_key(key, rows, hash, action),
-            Mode::ConfirmRemove { hash } => self.confirm_key(key, hash),
-            Mode::AddScope => self.add_key(key),
+        match self.screen.clone() {
+            Screen::List => self.list_key(key, rows),
+            Screen::Menu { choice } => self.menu_key(key, rows, choice),
+            Screen::Confirm { hash } => {
+                self.screen = Screen::List;
+                if *key == Key::Enter {
+                    return Action::Remove(hash);
+                }
+                self.status = Some((Tone::Info, "Cancelled.".into()));
+                Action::Redraw
+            }
+            Screen::Add(form) => self.add_key(key, form),
         }
     }
 
     fn list_key(&mut self, key: &Key, rows: &[Row]) -> Action {
-        if key.is("escape") && !self.query.is_empty() {
-            self.query.clear();
-            self.selected = 0;
-            return Action::Redraw;
-        }
-        if key.is_cancel() {
-            return Action::Close;
-        }
-        if self.move_key(key, rows) {
-            return Action::Redraw;
-        }
-        let hash = self.selected_row(rows).map(|r| r.def.hash.clone());
+        self.status = None;
+        let len = self.entries(rows).len();
         match key {
-            Key::Tab | Key::BackTab => self.cycle_tab(*key == Key::Tab),
-            Key::Char('/') => self.mode = Mode::Search,
-            Key::Char('a') => self.mode = Mode::AddScope,
-            Key::Char('t') => return Action::TrustAll,
-            Key::Char('s') => return Action::Sources,
-            Key::Char('c') => return Action::LoadScope,
-            Key::Char(' ') => return hash.map_or(Action::Redraw, Action::Toggle),
-            Key::Enter | Key::Right => {
-                if let Some(hash) = hash {
-                    self.mode = Mode::Details { hash, action: 0 };
-                }
-            }
-            Key::Char('d') | Key::Delete => {
-                if let Some(hash) = hash {
-                    self.mode = Mode::ConfirmRemove { hash };
-                }
-            }
-            _ => {}
-        }
-        Action::Redraw
-    }
-
-    /// Up/Down wrap; Home, End, PageUp, and PageDown stop at the ends.
-    fn move_key(&mut self, key: &Key, rows: &[Row]) -> bool {
-        let len = self.visible(rows).len();
-        let last = len.saturating_sub(1);
-        self.selected = match key {
-            Key::Up if len > 0 => self.selected.checked_sub(1).unwrap_or(last),
-            Key::Down if len > 0 => (self.selected + 1) % len,
-            Key::Home => 0,
-            Key::End => last,
-            Key::PageUp => self.selected.saturating_sub(PAGE),
-            Key::PageDown => (self.selected + PAGE).min(last),
-            Key::Up | Key::Down => 0,
-            _ => return false,
-        };
-        true
-    }
-
-    fn cycle_tab(&mut self, forward: bool) {
-        let index = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
-        let step = if forward { 1 } else { Tab::ALL.len() - 1 };
-        self.tab = Tab::ALL[(index + step) % Tab::ALL.len()];
-        self.selected = 0;
-    }
-
-    fn search_key(&mut self, key: &Key, rows: &[Row]) -> Action {
-        match key {
-            Key::Escape => {
+            Key::Escape | Key::Ctrl('c') if !self.query.is_empty() => {
                 self.query.clear();
-                self.mode = Mode::List;
+                self.selected = 0;
             }
-            Key::Enter | Key::Tab => self.mode = Mode::List,
-            Key::Ctrl('c') => return Action::Close,
+            Key::Escape | Key::Ctrl('c') => return Action::Close,
+            Key::Tab | Key::BackTab => {
+                let at = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
+                let step = if *key == Key::Tab {
+                    1
+                } else {
+                    Tab::ALL.len() - 1
+                };
+                self.tab = Tab::ALL[(at + step) % Tab::ALL.len()];
+                self.selected = 0;
+            }
+            Key::Up if len > 0 => self.selected = (self.selected + len - 1) % len,
+            Key::Down if len > 0 => self.selected = (self.selected + 1) % len,
+            Key::PageUp => self.selected = self.selected.saturating_sub(PAGE),
+            Key::PageDown => self.selected = (self.selected + PAGE).min(len.saturating_sub(1)),
+            Key::Home => self.selected = 0,
+            Key::End => self.selected = len.saturating_sub(1),
+            Key::Left | Key::Right => return self.change(rows, *key == Key::Right),
+            Key::Enter => self.open(rows),
             Key::Backspace => {
                 self.query.pop();
                 self.selected = 0;
@@ -96,84 +63,185 @@ impl View {
                 self.query.push_str(text);
                 self.selected = 0;
             }
-            _ => {
-                self.move_key(key, rows);
-            }
-        }
-        Action::Redraw
-    }
-
-    fn details_key(&mut self, key: &Key, rows: &[Row], hash: String, action: usize) -> Action {
-        let Some(row) = rows.iter().find(|r| r.def.hash == hash) else {
-            self.mode = Mode::List;
-            return Action::Redraw;
-        };
-        let count = DetailAction::ALL.len();
-        match key {
-            Key::Escape | Key::Left | Key::Backspace | Key::Char('q') => self.mode = Mode::List,
-            Key::Ctrl('c') => return Action::Close,
-            Key::Up => {
-                let action = action.checked_sub(1).unwrap_or(count - 1);
-                self.mode = Mode::Details { hash, action };
-            }
-            Key::Down => {
-                let action = (action + 1) % count;
-                self.mode = Mode::Details { hash, action };
-            }
-            Key::Char(' ') => return Action::Toggle(hash),
-            Key::Char('d') | Key::Delete => self.mode = Mode::ConfirmRemove { hash },
-            Key::Enter => return self.run_detail(DetailAction::ALL[action], row, hash),
             _ => {}
         }
         Action::Redraw
     }
 
-    fn run_detail(&mut self, action: DetailAction, row: &Row, hash: String) -> Action {
-        let change = match action {
-            DetailAction::Toggle => return Action::Toggle(row.def.hash.clone()),
-            DetailAction::Remove => {
-                self.mode = Mode::ConfirmRemove { hash };
-                return Action::Redraw;
+    /// Enter on a list row: the actions pane, or the add form.
+    fn open(&mut self, rows: &[Row]) {
+        match self.selected_entry(rows) {
+            Some(Entry::Add) => self.screen = Screen::Add(self.add_form()),
+            Some(Entry::Hook(_)) => self.screen = Screen::Menu { choice: 0 },
+            Some(Entry::Setting(setting)) => {
+                let choice = setting.current(&self.options);
+                self.screen = Screen::Menu { choice };
             }
-            DetailAction::TrustAlways => TrustChange::Always,
-            DetailAction::AllowOnce => TrustChange::Once,
-            DetailAction::Untrust => TrustChange::Untrust,
-            DetailAction::Deny => TrustChange::Deny,
-        };
-        Action::Trust(hash, change)
+            None => {}
+        }
     }
 
-    fn confirm_key(&mut self, key: &Key, hash: String) -> Action {
-        match key {
-            Key::Char('y') | Key::Char('Y') => {
-                self.mode = Mode::List;
-                Action::Remove(hash)
-            }
-            Key::Char('n') | Key::Char('N') | Key::Escape => {
-                self.mode = Mode::List;
+    /// ← and →: turn a hook on or off, or step a setting to its previous or next value.
+    fn change(&mut self, rows: &[Row], forward: bool) -> Action {
+        match self.selected_entry(rows) {
+            Some(Entry::Hook(row)) if row.managed() => {
+                self.status = Some((Tone::Warn, managed_text(row)));
                 Action::Redraw
             }
-            Key::Ctrl('c') => Action::Close,
+            Some(Entry::Hook(row)) => Action::Toggle(row.def.hash.clone()),
+            Some(Entry::Setting(setting)) => {
+                let count = setting.values().len();
+                let at = setting.current(&self.options);
+                let next = if forward {
+                    (at + 1) % count
+                } else {
+                    (at + count - 1) % count
+                };
+                Action::Set(setting, next)
+            }
             _ => Action::Redraw,
         }
     }
 
-    fn add_key(&mut self, key: &Key) -> Action {
-        let scope = match key {
-            Key::Char('p') => Scope::Project,
-            Key::Char('g') => Scope::Global,
-            Key::Escape | Key::Char('n') => {
-                self.mode = Mode::List;
-                return Action::Redraw;
+    fn menu_key(&mut self, key: &Key, rows: &[Row], choice: usize) -> Action {
+        let count = self.choice_count(rows).max(1);
+        match key {
+            Key::Up => {
+                self.screen = Screen::Menu {
+                    choice: (choice + count - 1) % count,
+                };
             }
-            Key::Ctrl('c') => return Action::Close,
+            Key::Down => {
+                self.screen = Screen::Menu {
+                    choice: (choice + 1) % count,
+                };
+            }
+            Key::Enter => {
+                self.screen = Screen::List;
+                return self.run_choice(rows, choice);
+            }
+            _ if key.is_cancel() || matches!(key, Key::Left | Key::Backspace) => {
+                self.screen = Screen::List;
+            }
+            _ => {}
+        }
+        Action::Redraw
+    }
+
+    fn run_choice(&mut self, rows: &[Row], choice: usize) -> Action {
+        let row = match self.selected_entry(rows) {
+            Some(Entry::Setting(setting)) if choice < setting.values().len() => {
+                return Action::Set(setting, choice);
+            }
+            Some(Entry::Hook(row)) if !row.managed() => row,
             _ => return Action::Redraw,
         };
-        self.mode = Mode::List;
-        if scope == Scope::Project && !self.project_trusted {
-            self.status = Some(format!("Cannot add: {PROJECT_UNTRUSTED}"));
-            return Action::Redraw;
-        }
-        Action::Add(scope)
+        let hash = row.def.hash.clone();
+        let change = match DetailAction::ALL.get(choice) {
+            Some(DetailAction::Toggle) => return Action::Toggle(hash),
+            Some(DetailAction::Remove) => {
+                self.screen = Screen::Confirm { hash };
+                return Action::Redraw;
+            }
+            Some(DetailAction::TrustAlways) => TrustChange::Always,
+            Some(DetailAction::AllowOnce) => TrustChange::Once,
+            Some(DetailAction::Untrust) => TrustChange::Untrust,
+            Some(DetailAction::Deny) => TrustChange::Deny,
+            None => return Action::Redraw,
+        };
+        Action::Trust(hash, change)
     }
+
+    fn add_key(&mut self, key: &Key, mut form: AddForm) -> Action {
+        let field = match form.step {
+            AddStep::Event => None,
+            AddStep::Matcher => Some(&mut form.matcher),
+            AddStep::Command => Some(&mut form.command),
+        };
+        match (key, field) {
+            (Key::Escape | Key::Ctrl('c'), _) => {
+                self.screen = Screen::List;
+                return Action::Redraw;
+            }
+            (Key::Tab | Key::BackTab, _) => {
+                let scopes = self.scopes();
+                let at = scopes.iter().position(|s| *s == form.scope).unwrap_or(0);
+                form.scope = scopes[(at + 1) % scopes.len()];
+            }
+            (Key::Up, None) => form.event = (form.event + EVENTS.len() - 1) % EVENTS.len(),
+            (Key::Down, None) => form.event = (form.event + 1) % EVENTS.len(),
+            (Key::Enter, _) => match form.step {
+                AddStep::Event => form.step = AddStep::Matcher,
+                AddStep::Matcher => form.step = AddStep::Command,
+                AddStep::Command if form.command.trim().is_empty() => {}
+                AddStep::Command => {
+                    self.screen = Screen::List;
+                    return Action::Add {
+                        scope: form.scope,
+                        event: EVENTS[form.event].to_owned(),
+                        matcher: form.matcher.trim().to_owned(),
+                        command: form.command.trim().to_owned(),
+                    };
+                }
+            },
+            (Key::Backspace, Some(text)) if text.is_empty() => {
+                form.step = match form.step {
+                    AddStep::Command => AddStep::Matcher,
+                    _ => AddStep::Event,
+                };
+            }
+            (Key::Backspace, Some(text)) => {
+                text.pop();
+            }
+            (Key::Char(c), Some(text)) => text.push(*c),
+            (Key::Text(t), Some(text)) => text.push_str(t),
+            _ => {}
+        }
+        self.screen = Screen::Add(form);
+        Action::Redraw
+    }
+
+    /// The key hints of the current screen.
+    pub(super) fn hints(&self) -> Vec<&'static str> {
+        match &self.screen {
+            Screen::List => {
+                let change = if self.tab == Tab::Settings {
+                    "←→ change"
+                } else {
+                    "←→ on/off"
+                };
+                let esc = if self.query.is_empty() {
+                    "esc close"
+                } else {
+                    "esc clear search"
+                };
+                let hints = ["↑↓ move", "tab switch", "enter actions", change];
+                [&hints[..], &["type to search", esc]].concat()
+            }
+            Screen::Menu { .. } => vec!["↑↓ choose", "enter run", "esc back"],
+            Screen::Confirm { .. } => vec!["enter remove", "any other key cancels"],
+            Screen::Add(form) => {
+                let step = match form.step {
+                    AddStep::Event => vec!["↑↓ event", "enter next"],
+                    AddStep::Matcher => vec!["type a matcher", "enter next"],
+                    AddStep::Command => vec!["type a command", "enter add"],
+                };
+                let scope: &[&str] = if self.project_trusted {
+                    &["tab scope"]
+                } else {
+                    &[]
+                };
+                [&step[..], scope, &["esc cancel"]].concat()
+            }
+        }
+    }
+}
+
+pub fn managed_text(row: &Row) -> String {
+    format!(
+        "{} {} is a managed hook from {}. Change it in that policy file.",
+        row.def.event,
+        row.matcher(),
+        row.def.file.display()
+    )
 }

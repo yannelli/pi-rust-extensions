@@ -44,29 +44,39 @@ fn render(view: &View, rows: &[Row], width: usize, height: usize) -> Vec<String>
     lines.iter().map(|l| style::strip(l)).collect()
 }
 
-fn selected_matcher(view: &View, rows: &[Row]) -> String {
-    view.selected_row(rows).unwrap().matcher().to_owned()
+/// The text the pointer line of the selected entry holds.
+fn selected_text(view: &View, rows: &[Row]) -> String {
+    match view.selected_entry(rows).unwrap() {
+        Entry::Hook(row) => row.matcher().to_owned(),
+        Entry::Add => "Add a hook".to_owned(),
+        Entry::Setting(setting) => setting.label().to_owned(),
+    }
 }
 
 fn assert_selected_visible(view: &View, rows: &[Row], lines: &[String]) {
-    let matcher = selected_matcher(view, rows);
-    let pointer: Vec<&String> = lines.iter().filter(|l| l.contains('→')).collect();
+    let text = selected_text(view, rows);
+    let pointer: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.trim_start().starts_with('→'))
+        .collect();
     assert_eq!(pointer.len(), 1, "{lines:#?}");
-    assert!(pointer[0].contains(&matcher), "{matcher}: {lines:#?}");
+    let shown = pointer[0].contains(&text[..text.len().min(8)]);
+    assert!(shown, "{text}: {lines:#?}");
 }
 
 /// Panel heights: 80x12 and 40x16 terminals less 3 host rows, then edge sizes.
 const SIZES: [(usize, usize); 6] = [(80, 9), (40, 13), (80, 37), (20, 3), (100, 5), (30, 1)];
+const DOWN: &str = "\x1b[B";
 
 #[test]
 fn every_list_position_fits_and_shows_the_selection() {
     let rows = rows();
     for (width, height) in SIZES {
         let mut view = View::new(true);
-        for _ in 0..rows.len() {
+        for _ in 0..=rows.len() {
             let lines = render(&view, &rows, width, height);
             assert_selected_visible(&view, &rows, &lines);
-            press(&mut view, &rows, "\x1b[B");
+            press(&mut view, &rows, DOWN);
         }
         assert_eq!(view.selected, 0);
         for key in [
@@ -80,15 +90,15 @@ fn every_list_position_fits_and_shows_the_selection() {
 }
 
 #[test]
-fn small_heights_keep_counter_and_close_hint() {
+fn small_heights_keep_tabs_counter_and_close_hint() {
     let rows = rows();
     let mut view = View::new(true);
     for _ in 0..8 {
-        press(&mut view, &rows, "\x1b[B");
+        press(&mut view, &rows, DOWN);
     }
     for (width, height) in [(80, 9), (40, 13)] {
         let text = render(&view, &rows, width, height).join("\n");
-        for part in ["Hooks", "[All (23)]", "(9/23)", "esc close"] {
+        for part in ["Hooks", "[All (23)]", "(9/24)", "esc close"] {
             assert!(
                 text.contains(part),
                 "{width}x{height} missing {part}:\n{text}"
@@ -96,10 +106,10 @@ fn small_heights_keep_counter_and_close_hint() {
         }
     }
     let tall = render(&view, &rows, 80, 37).join("\n");
-    for part in ["Claude Code (2)", "pi (21)", "tab filter", "esc close"] {
+    for part in ["Claude Code (2)", "pi (21)", "tab switch", "esc close"] {
         assert!(tall.contains(part), "missing {part}:\n{tall}");
     }
-    assert!(!tall.contains("(9/23)"), "{tall}");
+    assert!(!tall.contains("(9/24)"), "{tall}");
 }
 
 #[test]
@@ -107,7 +117,7 @@ fn resize_while_open_keeps_the_selection_visible() {
     let rows = rows();
     let mut view = View::new(true);
     for _ in 0..8 {
-        press(&mut view, &rows, "\x1b[B");
+        press(&mut view, &rows, DOWN);
     }
     for (width, height) in [(80, 37), (80, 9), (40, 13), (80, 9), (80, 37)] {
         let lines = render(&view, &rows, width, height);
@@ -116,11 +126,11 @@ fn resize_while_open_keeps_the_selection_visible() {
 }
 
 #[test]
-fn details_confirm_add_and_status_fit() {
+fn actions_confirm_add_settings_and_status_fit() {
     let rows = rows();
     for (width, height) in SIZES {
         let mut view = View::new(false);
-        press(&mut view, &rows, "\x1b[B");
+        press(&mut view, &rows, DOWN);
         press(&mut view, &rows, "\r");
         for action in DetailAction::ALL {
             let text = render(&view, &rows, width, height).join("\n");
@@ -129,28 +139,34 @@ fn details_confirm_add_and_status_fit() {
                 let label = &label[..label.len().min(width.saturating_sub(6))];
                 assert!(text.contains(&format!("→ {label}")), "{label}:\n{text}");
             }
-            press(&mut view, &rows, "\x1b[B");
+            press(&mut view, &rows, DOWN);
         }
-        press(&mut view, &rows, "\x1b");
-        press(&mut view, &rows, "d");
+        press(&mut view, &rows, "\x1b[A");
+        press(&mut view, &rows, "\r");
         let text = render(&view, &rows, width, height).join("\n");
         if height >= 3 && width >= 40 {
-            assert!(text.contains("n cancel"), "{width}x{height}:\n{text}");
+            assert!(text.contains("any other key"), "{width}x{height}:\n{text}");
         }
         press(&mut view, &rows, "n");
-        press(&mut view, &rows, "a");
+        press(&mut view, &rows, "\x1b[H");
+        press(&mut view, &rows, "\r");
         let text = render(&view, &rows, width, height).join("\n");
         if height >= 3 {
-            assert!(text.contains("Add a hook"), "{width}x{height}:\n{text}");
+            assert!(text.contains("Add a"), "{width}x{height}:\n{text}");
         }
         press(&mut view, &rows, "\x1b");
-        view.status = Some(format!("Disabled Stop c01; saved in /{}", "x/".repeat(60)));
+        press(&mut view, &rows, "\x1b[Z");
+        let lines = render(&view, &rows, width, height);
+        assert_selected_visible(&view, &rows, &lines);
+        press(&mut view, &rows, "\t");
+        press(&mut view, &rows, DOWN);
+        let status = format!("Disabled Stop c01; saved in /{}", "x/".repeat(60));
+        view.status = Some((Tone::Info, status));
         let lines = render(&view, &rows, width, height);
         if height >= 3 {
             assert_selected_visible(&view, &rows, &lines);
         }
         view.status = None;
-        press(&mut view, &rows, "/");
         press(&mut view, &rows, "p");
         let lines = render(&view, &rows, width, height);
         assert_selected_visible(&view, &rows, &lines);
@@ -162,15 +178,24 @@ fn toggle_and_remove_act_on_the_visible_selection() {
     let rows = rows();
     let mut view = View::new(true);
     for _ in 0..12 {
-        press(&mut view, &rows, "\x1b[B");
+        press(&mut view, &rows, DOWN);
     }
     let lines = render(&view, &rows, 80, 9);
     assert_selected_visible(&view, &rows, &lines);
-    let hash = view.selected_row(&rows).unwrap().def.hash.clone();
-    assert_eq!(press(&mut view, &rows, " "), Action::Toggle(hash.clone()));
-    press(&mut view, &rows, "d");
-    assert!(render(&view, &rows, 80, 9).join("\n").contains("y confirm"));
-    assert_eq!(press(&mut view, &rows, "y"), Action::Remove(hash));
+    let Some(Entry::Hook(row)) = view.selected_entry(&rows) else {
+        panic!("a hook is selected");
+    };
+    let hash = row.def.hash.clone();
+    assert_eq!(
+        press(&mut view, &rows, "\x1b[C"),
+        Action::Toggle(hash.clone())
+    );
+    press(&mut view, &rows, "\r");
+    press(&mut view, &rows, "\x1b[A");
+    press(&mut view, &rows, "\r");
+    let text = render(&view, &rows, 80, 9).join("\n");
+    assert!(text.contains("Enter removes it"), "{text}");
+    assert_eq!(press(&mut view, &rows, "\r"), Action::Remove(hash));
 }
 
 #[test]
@@ -182,6 +207,6 @@ fn no_height_keeps_the_twelve_row_window() {
         .iter()
         .filter(|l| style::strip(l).contains("echo "))
         .count();
-    assert_eq!(shown, 12);
-    assert!(lines.iter().any(|l| style::strip(l).contains("(1/23)")));
+    assert_eq!(shown, 11);
+    assert!(lines.iter().any(|l| style::strip(l).contains("(1/24)")));
 }

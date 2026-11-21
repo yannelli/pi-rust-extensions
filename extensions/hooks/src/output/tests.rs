@@ -10,6 +10,8 @@ fn run(source: Source, event: &str, code: i32, stdout: &str, stderr: &str) -> Ou
         tool: Some("Bash"),
         label: "check.sh",
         on_failure_block: false,
+        kind: "command",
+        plugin: false,
     };
     interpret(&cx, &RawRun::exit(code, stdout, stderr))
 }
@@ -50,6 +52,8 @@ fn exit_codes() {
         tool: Some("Bash"),
         label: "s",
         on_failure_block: true,
+        kind: "command",
+        plugin: false,
     };
     let failed = interpret(&cx, &RawRun::exit(1, "", "lint failed"));
     assert_eq!(
@@ -170,8 +174,9 @@ fn permission_decisions_and_precedence() {
     );
     assert_eq!(
         fold(&[&ask, &defer, &allow]).permission.unwrap().0,
-        Permission::Defer
+        Permission::Ask
     );
+    assert_eq!(fold(&[&defer]).permission, None);
     assert_eq!(
         fold(&[&allow, &deny, &defer]).permission,
         Some((Permission::Deny, "nope".into()))
@@ -376,4 +381,53 @@ fn json_detection_and_universal_fields() {
         (Some("c"), Some("t"))
     );
     assert_eq!(title.initial_user_message.as_deref(), Some("go"));
+}
+
+#[test]
+fn missing_script_and_mcp_answers_under_on_failure() {
+    let missing = "/bin/sh: ./gone.sh: No such file or directory";
+    let task = run(C, "TaskCompleted", 2, "", missing);
+    assert!(task.block.is_none() && task.error.is_some());
+    let prompt = run(C, "UserPromptSubmit", 2, "", missing);
+    assert!(prompt.block.is_some());
+    let plugin = Interpret {
+        source: C,
+        event: "UserPromptSubmit",
+        tool: None,
+        label: "p",
+        on_failure_block: false,
+        kind: "command",
+        plugin: true,
+    };
+    let plugin_run = interpret(&plugin, &RawRun::exit(2, "", missing));
+    assert!(plugin_run.block.is_none());
+    let mcp = Interpret {
+        event: "PreToolUse",
+        tool: Some("Bash"),
+        on_failure_block: true,
+        kind: "mcp_tool",
+        plugin: false,
+        ..plugin
+    };
+    let blocked = |stdout: &str| {
+        interpret(&mcp, &RawRun::exit(0, stdout, ""))
+            .block
+            .is_some()
+    };
+    assert!(blocked("looks fine"));
+    assert!(blocked(r#"{"reason":"r"}"#));
+    assert!(!blocked("{}"));
+    assert!(!blocked(""));
+    assert!(!blocked(r#"{"decision":"approve"}"#));
+}
+
+#[test]
+fn post_tool_use_failure_cannot_rewrite_the_result() {
+    let out = r#"{"hookSpecificOutput":{"updatedToolOutput":"redacted"}}"#;
+    assert!(
+        run(C, "PostToolUseFailure", 0, out, "")
+            .updated_output
+            .is_none()
+    );
+    assert!(run(C, "PostToolUse", 0, out, "").updated_output.is_some());
 }

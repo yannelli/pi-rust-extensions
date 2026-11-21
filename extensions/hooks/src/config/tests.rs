@@ -18,6 +18,7 @@ fn fixture() -> Fixture {
         claude_dir: base.join("claude"),
         codex_home: base.join("codex"),
         codex_system: None,
+        claude_policy: None,
         temp_dir: base.join("tmp"),
         agent_dir: None,
     };
@@ -81,7 +82,7 @@ fn merges_all_sources_and_scopes() {
         [
             "claude/global:cg",
             "claude/project:cp",
-            "claude/project:cl",
+            "claude/local:cl",
             "codex/global:xg",
             "codex/project:xp",
             "pi/global:pg",
@@ -120,7 +121,7 @@ fn scope_and_sources_options() {
     let loaded = load_with(&f, true);
     assert_eq!(
         commands(&loaded),
-        ["claude/project:cp", "claude/project:cl", "pi/project:pp"]
+        ["claude/project:cp", "claude/local:cl", "pi/project:pp"]
     );
     write(
         &f.agent.join("ext/hooks.json"),
@@ -217,7 +218,7 @@ fn claude_settings_in_home_load_once() {
         &hooks_json("cl"),
     );
     let loaded = load_with(&f, true);
-    assert_eq!(commands(&loaded), ["claude/global:cg", "claude/project:cl"]);
+    assert_eq!(commands(&loaded), ["claude/global:cg", "claude/local:cl"]);
 }
 
 #[test]
@@ -251,6 +252,7 @@ fn codex_layers_and_hook_state() {
     let system = f.cwd.parent().unwrap().join("etc-codex");
     let paths = Paths {
         codex_system: Some(system.clone()),
+        claude_policy: None,
         ..f.paths.clone()
     };
     let f = Fixture { paths, ..f };
@@ -277,7 +279,7 @@ fn codex_layers_and_hook_state() {
     assert_eq!(
         commands(&loaded),
         [
-            "codex/global:sys",
+            "codex/managed:sys",
             "codex/project:root",
             "codex/project:nested"
         ]

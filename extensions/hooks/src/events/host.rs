@@ -107,6 +107,10 @@ pub async fn notification(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> 
 /// `tool_call_blocked` -> PermissionDenied for blocks by other extensions or pi's permissions.
 pub async fn tool_call_blocked(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     let id = text(&ev, "toolCallId");
+    let pending = rt.lock().pending_stops.remove(&id);
+    if let Some(reason) = pending {
+        crate::events::tool::stop_run(ev.host(), reason);
+    }
     if ev.event().get("extension").and_then(Value::as_str) == Some("hooks")
         || rt.lock().own_blocks.remove(&id)
     {

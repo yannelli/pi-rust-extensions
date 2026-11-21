@@ -6,14 +6,16 @@ use pi_ext_sdk::{CustomMessage, DeliverAs, Host, Snapshot};
 use serde_json::{Value, json};
 use tokio::task::JoinSet;
 
+use crate::exec::http::HttpPolicy;
 use crate::exec::{self, Context};
 use crate::matcher::{Target, if_rule_matches, matches_event};
-use crate::model::{HookDef, Source, canonical};
+use crate::model::{HookDef, Layer, Source};
 use crate::output::{Interpret, Outcome, RawRun, interpret, terminal_sequence_allowed};
+use crate::policy;
 use crate::runtime::Runtime;
 use crate::trust::LastRun;
 
-const NO_MATCHER: &[&str] = &[
+pub const NO_MATCHER: &[&str] = &[
     "TaskCreated",
     "TaskCompleted",
     "TeammateIdle",
@@ -107,19 +109,7 @@ pub async fn dispatch(
 ) -> Vec<Outcome> {
     rt.ensure_loaded(host, snap).await;
     let selected = select(rt, &d, Path::new(&snap.cwd));
-    let mut runnable = Vec::new();
-    for def in selected {
-        if !rt.resolve_trust(host, &def).await {
-            continue;
-        }
-        if def.source == Source::Pi
-            && def.bool_field("once")
-            && rt.lock().ran_once.contains(&def.hash)
-        {
-            continue;
-        }
-        runnable.push(def);
-    }
+    let runnable = policy::runnable(rt, host, selected, rt.conflict_mode()).await;
     if runnable.is_empty() {
         return Vec::new();
     }
@@ -128,6 +118,8 @@ pub async fn dispatch(
         cwd: PathBuf::from(&snap.cwd),
         agent_dir: rt.agent_dir(host),
         session_id: snap.session_id.clone().unwrap_or_default(),
+        http: rt.http_policy(),
+        effort: claude_effort(snap),
     });
     let status = runnable
         .iter()
@@ -169,6 +161,8 @@ pub async fn dispatch(
             tool,
             label: &label,
             on_failure_block: def.str_field("onFailure") == Some("block"),
+            kind: def.kind(),
+            plugin: def.plugin.is_some(),
         };
         let mut outcome = interpret(&read, &raw);
         if let Some(error) = &outcome.error {
@@ -186,8 +180,9 @@ pub async fn dispatch(
     outcomes
 }
 
+/// Matched, enabled, and supported hooks in config order; [`policy::runnable`] picks the ones to run.
 fn select(rt: &Runtime, d: &Dispatch, cwd: &Path) -> Vec<HookDef> {
-    let mut seen = std::collections::HashSet::new();
+    let http = rt.http_policy();
     rt.hooks()
         .into_iter()
         .filter(|def| d.event_for(def.source) == Some(def.event.as_str()))
@@ -200,11 +195,24 @@ fn select(rt: &Runtime, d: &Dispatch, cwd: &Path) -> Vec<HookDef> {
             (Some(rule), Some((name, input))) => if_rule_matches(rule, name, input, cwd),
             _ => true,
         })
-        .filter(|def| !rt.is_disabled(&def.hash))
+        .filter(|def| def.layer == Layer::Managed || !rt.is_disabled(&def.hash))
         .filter(|def| !(def.kind() == "mcp_tool" && before_mcp(&def.event, &d.payload)))
         .filter(supported)
-        .filter(|def| seen.insert((def.source.is_codex(), canonical(&def.handler).to_string())))
+        .filter(|def| url_allowed(&http, def))
         .collect()
+}
+
+/// Claude `allowedHttpHookUrls`: an http hook runs only when its URL matches the merged list.
+fn url_allowed(http: &HttpPolicy, def: &HookDef) -> bool {
+    if def.kind() != "http" || def.source.is_codex() {
+        return true;
+    }
+    let url = def.str_field("url").unwrap_or_default();
+    let allowed = http.url_allowed(url);
+    if !allowed {
+        pi_ext_sdk::info!("hooks: skipping {def}: URL is not in allowedHttpHookUrls");
+    }
+    allowed
 }
 
 /// Setup and SessionStart at launch run before MCP servers are available, so `mcp_tool` skips them.
@@ -219,6 +227,18 @@ fn supported(def: &HookDef) -> bool {
             "powershell hooks need Windows"
         }
         "command" if def.str_field("command").is_none() => "command hook without command",
+        "command"
+            if def.plugin.is_some()
+                && def.handler.get("args").is_none()
+                && def
+                    .str_field("command")
+                    .is_some_and(|c| c.contains("${user_config.")) =>
+        {
+            "shell-form plugin hooks cannot use ${user_config.*}; read $CLAUDE_PLUGIN_OPTION_<KEY> or set args"
+        }
+        "mcp_tool" if def.source.is_codex() && def.event == "SessionEnd" => {
+            "Codex SessionEnd does not support mcp_tool hooks"
+        }
         "command" | "http" | "mcp_tool" => return true,
         "agent" if def.event == "PermissionRequest" => {
             "agent hooks do not run on PermissionRequest"
@@ -264,14 +284,7 @@ fn claude_common(
     if let Some(id) = &state.prompt_id {
         base.insert("prompt_id".into(), json!(id));
     }
-    let effort = snap
-        .thinking_level
-        .as_deref()
-        .and_then(|level| match level {
-            "minimal" | "low" => Some("low"),
-            "medium" | "high" | "xhigh" => Some(level),
-            _ => None,
-        });
+    let effort = claude_effort(snap);
     let tool_context =
         TOOL_EVENTS.contains(&def.event.as_str()) || matches!(&*def.event, "Stop" | "SubagentStop");
     if let Some(level) = effort.filter(|_| tool_context) {
@@ -301,13 +314,38 @@ fn claude_common(
     }
 }
 
+/// Claude async hooks may print their JSON on a line of its own among other stdout.
+fn async_json_line(stdout: &str) -> String {
+    if crate::output::json_output(stdout).is_some() {
+        return stdout.to_owned();
+    }
+    let line = stdout
+        .lines()
+        .rfind(|line| crate::output::json_output(line).is_some());
+    line.unwrap_or(stdout).to_owned()
+}
+
+/// The pi thinking level as a Claude effort level (`minimal` and `low` are `low`).
+fn claude_effort(snap: &Snapshot) -> Option<&'static str> {
+    match snap.thinking_level.as_deref()? {
+        "minimal" | "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" => Some("xhigh"),
+        _ => None,
+    }
+}
+
 fn spawn_async(rt: Arc<Runtime>, cx: Arc<Context>, def: HookDef, input: String) {
     tokio::spawn(async move {
         let Ok(_permit) = rt.async_slots.clone().acquire_owned().await else {
             return;
         };
         let started = Instant::now();
-        let raw = exec::run(&cx, &def, input).await;
+        let mut raw = exec::run(&cx, &def, input).await;
+        if !def.source.is_codex() {
+            raw.stdout = async_json_line(&raw.stdout);
+        }
         let label = def.summary();
         let read = Interpret {
             source: def.source,
@@ -315,6 +353,8 @@ fn spawn_async(rt: Arc<Runtime>, cx: Arc<Context>, def: HookDef, input: String) 
             tool: None,
             label: &label,
             on_failure_block: false,
+            kind: def.kind(),
+            plugin: def.plugin.is_some(),
         };
         let mut outcome = interpret(&read, &raw);
         cap_outcome(&rt, &cx, &def, &mut outcome);
@@ -348,36 +388,56 @@ fn spawn_async(rt: Arc<Runtime>, cx: Arc<Context>, def: HookDef, input: String) 
     });
 }
 
-/// Codex `additionalContextLimit` and the Claude 10,000-character cap: overflow goes to a file.
-fn cap_outcome(rt: &Runtime, cx: &Context, def: &HookDef, outcome: &mut Outcome) {
-    let limit = if def.source.is_codex() {
-        let tokens = def
-            .handler
-            .get("additionalContextLimit")
-            .and_then(Value::as_u64)
-            .unwrap_or(2500);
-        if tokens == 0 {
-            return;
+/// Codex `additionalContextLimit` (tokens) applies to `additionalContext` on these events only.
+const CODEX_CONTEXT_EVENTS: &[&str] = &[
+    "PreToolUse",
+    "PostToolUse",
+    "SessionStart",
+    "UserPromptSubmit",
+    "SubagentStart",
+];
+const CODEX_DEFAULT_TOKENS: usize = 2500;
+
+/// Characters of Codex context a handler may return; `None` when `additionalContextLimit` is 0.
+fn codex_context_limit(def: &HookDef) -> Option<usize> {
+    let default = Some(CODEX_DEFAULT_TOKENS * 4);
+    match def
+        .handler
+        .get("additionalContextLimit")
+        .and_then(Value::as_u64)
+    {
+        Some(_) if !CODEX_CONTEXT_EVENTS.contains(&def.event.as_str()) => {
+            pi_ext_sdk::info!("hooks: additionalContextLimit is ignored on {}", def.event);
+            default
         }
-        tokens as usize * 4
+        Some(0) => None,
+        Some(tokens) => Some(tokens as usize * 4),
+        None => default,
+    }
+}
+
+/// The Codex context limit and the Claude 10,000-character cap: overflow goes to a file.
+fn cap_outcome(rt: &Runtime, cx: &Context, def: &HookDef, outcome: &mut Outcome) {
+    let codex = def.source.is_codex();
+    let (context, other) = if codex {
+        (codex_context_limit(def), Some(CODEX_DEFAULT_TOKENS * 4))
     } else {
-        CLAUDE_CONTEXT_LIMIT
+        (Some(CLAUDE_CONTEXT_LIMIT), Some(CLAUDE_CONTEXT_LIMIT))
     };
     let fields = [
-        &mut outcome.context,
-        &mut outcome.feedback,
-        &mut outcome.block,
-        &mut outcome.system_message,
-        &mut outcome.initial_user_message,
+        (&mut outcome.context, context),
+        (&mut outcome.feedback, other.filter(|_| codex)),
+        (&mut outcome.block, other.filter(|_| codex)),
+        (&mut outcome.system_message, other),
+        (&mut outcome.initial_user_message, other.filter(|_| !codex)),
     ];
-    for (index, field) in fields.into_iter().enumerate() {
-        let claude_field = matches!(index, 0 | 3 | 4);
-        if !def.source.is_codex() && !claude_field {
+    for (field, limit) in fields {
+        let Some(limit) = limit else {
             continue;
-        }
+        };
         if let Some(text) = field.take() {
             *field = Some(if text.chars().count() > limit {
-                spill(rt, cx, &text, def.source.is_codex(), limit)
+                spill(rt, cx, &text, codex, limit)
             } else {
                 text
             });
@@ -473,5 +533,37 @@ fn last_run(raw: &RawRun, outcome: &Outcome, elapsed: std::time::Duration) -> La
         },
         stdout: cut(&raw.stdout),
         stderr: cut(&raw.stderr),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Scope;
+
+    #[test]
+    fn async_json_can_share_stdout_with_other_lines() {
+        let out = "loading profile\n{\"systemMessage\":\"done\"}\nbye\n";
+        assert_eq!(async_json_line(out), "{\"systemMessage\":\"done\"}");
+        assert_eq!(async_json_line("{\n  \"a\": 1\n}"), "{\n  \"a\": 1\n}");
+        assert_eq!(async_json_line("plain"), "plain");
+    }
+
+    #[test]
+    fn codex_context_limit_applies_to_context_events_only() {
+        let def = |event: &str, limit: u64| {
+            let handler = json!({ "command": "x", "additionalContextLimit": limit });
+            HookDef::new(
+                Source::Codex,
+                Scope::Global,
+                "/f".into(),
+                event,
+                None,
+                handler,
+            )
+        };
+        assert_eq!(codex_context_limit(&def("SessionStart", 100)), Some(400));
+        assert_eq!(codex_context_limit(&def("SessionStart", 0)), None);
+        assert_eq!(codex_context_limit(&def("Stop", 100)), Some(10_000));
     }
 }

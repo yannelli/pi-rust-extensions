@@ -14,6 +14,8 @@ pub struct TrustState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trust {
+    /// Organization policy files: trusted by policy.
+    Managed,
     All,
     Trusted,
     Once,
@@ -24,6 +26,7 @@ pub enum Trust {
 impl Trust {
     pub fn name(self) -> &'static str {
         match self {
+            Trust::Managed => "managed",
             Trust::All => "trustAll",
             Trust::Trusted => "trusted",
             Trust::Once => "once",

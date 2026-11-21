@@ -190,6 +190,10 @@ pub struct Interpret<'a> {
     pub tool: Option<&'a str>,
     pub label: &'a str,
     pub on_failure_block: bool,
+    /// Handler `type`: `command`, `http`, `mcp_tool`, `prompt`, or `agent`.
+    pub kind: &'a str,
+    /// The hook comes from a Claude Code plugin.
+    pub plugin: bool,
 }
 
 pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
@@ -226,7 +230,8 @@ pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
         }
         Some(2)
             if !codex
-                && matches!(cx.event, "Stop" | "SubagentStop")
+                && (matches!(cx.event, "Stop" | "SubagentStop" | "TaskCompleted")
+                    || cx.plugin && cx.event == "UserPromptSubmit")
                 && raw.stdout.trim().is_empty()
                 && stderr.contains("No such file or directory") =>
         {
@@ -273,13 +278,28 @@ pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
             }
         }
     }
-    let failed = raw.code != Some(0) && raw.code != Some(2) || invalid_json && raw.code == Some(0);
+    let failed = raw.code != Some(0) && raw.code != Some(2)
+        || invalid_json && raw.code == Some(0)
+        || cx.kind == "mcp_tool" && raw.code == Some(0) && mcp_answer_fails(&raw.stdout);
     if cx.on_failure_block && !codex && failed && failure_blocks(cx.event) {
         out.block = Some(failure_reason(cx, raw, stderr));
         out.permission = None;
         out.updated_input = None;
     }
     out
+}
+
+/// With `onFailure: "block"`, an `mcp_tool` answer fails unless it is empty, `{}`, or JSON that
+/// sets a hook output field other than `reason`.
+fn mcp_answer_fails(stdout: &str) -> bool {
+    let text = stdout.trim();
+    if text.is_empty() {
+        return false;
+    }
+    match json_output(text).as_ref().and_then(Value::as_object) {
+        Some(object) => !object.is_empty() && object.keys().all(|key| key == "reason"),
+        None => true,
+    }
 }
 
 /// The last non-empty stdout line without ANSI escapes (WorktreeCreate command hooks).

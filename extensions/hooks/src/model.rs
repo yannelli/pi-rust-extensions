@@ -49,6 +49,36 @@ impl Scope {
     }
 }
 
+/// How specific a hook's file is, least specific first. Organization policy files are `Managed`:
+/// trusted by policy, never disabled, and outside the `override` order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Layer {
+    Global,
+    /// Depth below the project root: Codex loads each `.codex` dir from the root down to the cwd.
+    Project(usize),
+    /// `.claude/settings.local.json`.
+    Local,
+    Managed,
+}
+
+impl Layer {
+    pub fn name(self) -> &'static str {
+        match self {
+            Layer::Global => "global",
+            Layer::Project(_) => "project",
+            Layer::Local => "local",
+            Layer::Managed => "managed",
+        }
+    }
+
+    pub fn of(scope: Scope) -> Self {
+        match scope {
+            Scope::Global => Layer::Global,
+            Scope::Project => Layer::Project(0),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plugin {
     pub id: Option<String>,
@@ -62,7 +92,9 @@ pub struct Plugin {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HookDef {
     pub source: Source,
+    /// The pi options file that holds this hook's `disabled` entry.
     pub scope: Scope,
+    pub layer: Layer,
     pub file: PathBuf,
     pub event: String,
     pub matcher: Option<String>,
@@ -86,6 +118,7 @@ impl HookDef {
         Self {
             source,
             scope,
+            layer: Layer::of(scope),
             file,
             event: event.to_owned(),
             matcher,
@@ -135,6 +168,7 @@ impl HookDef {
             {
                 30.0
             }
+            _ if !codex && self.event == "MessageDisplay" => 10.0,
             _ => 600.0,
         };
         let mut secs = self
@@ -143,6 +177,9 @@ impl HookDef {
             .and_then(Value::as_f64)
             .filter(|s| *s > 0.0)
             .map(|s| s.min(MAX_TIMEOUT_SECS));
+        if !codex {
+            secs = secs.map(|s| s.max(1.0));
+        }
         if codex_short {
             secs = secs.map(|s| s.min(3.0));
         } else if claude_end {
@@ -220,7 +257,7 @@ impl HookDef {
     }
 
     pub fn label(&self) -> String {
-        let mut label = format!("{}/{}", self.source.name(), self.scope.name());
+        let mut label = format!("{}/{}", self.source.name(), self.layer.name());
         if let Some(id) = self.plugin.as_ref().and_then(|p| p.id.as_deref()) {
             label.push_str(&format!(" plugin {id}"));
         }
@@ -367,5 +404,15 @@ mod tests {
         assert_eq!(def(Source::Claude, "Stop", bg).timeout().as_secs(), 86_400);
         let prompt = json!({ "type": "prompt", "prompt": "p" });
         assert_eq!(def(Source::Pi, "Stop", prompt).timeout().as_secs(), 30);
+        let display = def(Source::Claude, "MessageDisplay", json!({ "command": "x" }));
+        assert_eq!(display.timeout().as_secs(), 10);
+        let short = json!({ "command": "x", "timeout": 0.2 });
+        assert_eq!(
+            def(Source::Claude, "Stop", short.clone())
+                .timeout()
+                .as_secs(),
+            1
+        );
+        assert_eq!(def(Source::Codex, "Stop", short).timeout().as_millis(), 200);
     }
 }

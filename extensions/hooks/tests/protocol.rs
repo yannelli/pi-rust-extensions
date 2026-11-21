@@ -24,6 +24,7 @@ fn env() -> Env {
         claude_dir: base.join("claude"),
         codex_home: base.join("codex"),
         codex_system: None,
+        claude_policy: None,
         temp_dir: base.join("tmp"),
         agent_dir: Some(base.join("agent")),
     };
@@ -280,5 +281,25 @@ async fn untrusted_hook_asks_and_remembers() {
         json!({}),
         "trusted hook runs without asking"
     );
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn pre_tool_use_continue_false_lets_the_tool_run() {
+    let env = env();
+    let out = r#"{"continue":false,"stopReason":"halt after this"}"#;
+    let cmd = script(&env, "stop.sh", &format!("cat > /dev/null\necho '{out}'"));
+    write_hooks(
+        &env.paths.claude_dir.join("settings.json"),
+        "PreToolUse",
+        Some("Bash"),
+        &cmd,
+    );
+    let mut host = start(&env).await;
+    let ctx = hooks_ctx(&env.cwd, false, true);
+    let response = host
+        .event(1, "tool_call", tool_call(json!({ "command": "ls" })), ctx)
+        .await;
+    assert_ne!(response["result"]["result"]["block"], true, "{response}");
     host.finish().await.unwrap();
 }

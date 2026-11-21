@@ -26,6 +26,7 @@ fn env() -> Env {
         claude_dir: base.join("claude"),
         codex_home: base.join("codex"),
         codex_system: None,
+        claude_policy: None,
         temp_dir: base.join("tmp"),
         agent_dir: Some(base.join("agent")),
     };
@@ -88,8 +89,12 @@ async fn blocked(host: &mut TestHost, id: u64, env: &Env) -> bool {
     response["result"]["result"]["block"] == true
 }
 
+const DOWN: &str = "\u{1b}[B";
+const UP: &str = "\u{1b}[A";
+const RIGHT: &str = "\u{1b}[C";
+
 #[tokio::test]
-async fn space_disables_and_enables_in_the_running_session() {
+async fn right_arrow_disables_and_enables_in_the_running_session() {
     let env = env();
     let mut host = TestHost::start(extension(env.paths.clone()));
     host.initialize().await;
@@ -97,7 +102,8 @@ async fn space_disables_and_enables_in_the_running_session() {
 
     let (panel, surface, lines) = open(&mut host, 2, ctx(&env, true)).await;
     assert!(lines.contains("● PreToolUse"), "{lines}");
-    let lines = key(&mut host, &surface, " ").await;
+    key(&mut host, &surface, DOWN).await;
+    let lines = key(&mut host, &surface, RIGHT).await;
     assert!(lines.contains("○ PreToolUse"), "{lines}");
     assert!(lines.contains("Disabled PreToolUse Bash"), "{lines}");
     close(&mut host, 2, &panel, &surface).await;
@@ -110,7 +116,8 @@ async fn space_disables_and_enables_in_the_running_session() {
     assert!(!blocked(&mut host, 3, &env).await);
 
     let (panel, surface, _) = open(&mut host, 4, ctx(&env, true)).await;
-    let lines = key(&mut host, &surface, " ").await;
+    key(&mut host, &surface, DOWN).await;
+    let lines = key(&mut host, &surface, RIGHT).await;
     assert!(lines.contains("Enabled PreToolUse Bash"), "{lines}");
     close(&mut host, 4, &panel, &surface).await;
     assert!(blocked(&mut host, 5, &env).await);
@@ -118,38 +125,33 @@ async fn space_disables_and_enables_in_the_running_session() {
 }
 
 #[tokio::test]
-async fn add_writes_the_chosen_scope_and_refuses_untrusted_projects() {
+async fn add_runs_in_the_panel_and_untrusted_projects_offer_global_only() {
     let env = env();
     let mut host = TestHost::start(extension(env.paths.clone()));
     host.initialize().await;
     let (panel, surface, lines) = open(&mut host, 1, ctx(&env, false)).await;
     assert!(lines.contains("Project not trusted"), "{lines}");
     assert!(lines.lines().all(|l| l.chars().count() <= 40), "{lines}");
-    key(&mut host, &surface, "a").await;
-    let lines = key(&mut host, &surface, "p").await;
+    let lines = key(&mut host, &surface, "\r").await;
+    assert!(lines.contains("Add a command hook"), "{lines}");
     assert!(
-        lines.contains("Cannot add: project is not trusted"),
+        lines.contains("[global]") && !lines.contains("project]"),
         "{lines}"
     );
-    assert!(!env.cwd.join(".pi").exists());
-
-    key(&mut host, &surface, "a").await;
-    host.notify("ui.key", json!({ "surface": surface, "data": "g" }))
-        .await;
-    host.expect_notification("ui.close").await;
-    host.answer(&panel, Value::Null).await;
-    let (id, params) = host.expect_request("ui.select").await;
-    assert_eq!(params["options"][0], "PreToolUse");
-    host.answer(&id, json!("Stop")).await;
-    let (id, _) = host.expect_request("ui.input").await;
-    host.answer(&id, json!("")).await;
-    let (id, _) = host.expect_request("ui.input").await;
-    host.answer(&id, json!("echo done")).await;
-    let (panel, params) = host.expect_request("ui.custom").await;
-    let lines = text(&params["lines"]);
-    assert!(lines.contains("Added a global hook"), "{lines}");
+    let stop = pi_ext_hooks_events()
+        .iter()
+        .position(|e| *e == "Stop")
+        .unwrap();
+    for _ in 0..stop {
+        key(&mut host, &surface, DOWN).await;
+    }
+    key(&mut host, &surface, "\r").await;
+    key(&mut host, &surface, "\r").await;
+    key(&mut host, &surface, "echo done").await;
+    let lines = key(&mut host, &surface, "\r").await;
+    assert!(lines.contains("Added a global Stop hook"), "{lines}");
     assert!(lines.contains("→ ● Stop"), "{lines}");
-    close(&mut host, 1, &panel, &params["surface"]).await;
+    close(&mut host, 1, &panel, &surface).await;
 
     let doc: Value =
         serde_json::from_str(&std::fs::read_to_string(env.agent.join("ext/hooks.json")).unwrap())
@@ -164,20 +166,45 @@ async fn add_writes_the_chosen_scope_and_refuses_untrusted_projects() {
     host.finish().await.unwrap();
 }
 
+/// The event list of the add form, in order.
+fn pi_ext_hooks_events() -> [&'static str; 16] {
+    [
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PostToolBatch",
+        "PermissionRequest",
+        "UserPromptSubmit",
+        "Stop",
+        "StopFailure",
+        "SubagentStart",
+        "SubagentStop",
+        "SessionStart",
+        "SessionEnd",
+        "PreCompact",
+        "PostCompact",
+        "PreModelSwitch",
+        "PostModelSwitch",
+    ]
+}
+
 #[tokio::test]
-async fn remove_asks_then_edits_the_settings_file() {
+async fn remove_asks_for_a_second_enter_then_edits_the_settings_file() {
     let env = env();
     let mut host = TestHost::start(extension(env.paths.clone()));
     host.initialize().await;
     let (panel, surface, _) = open(&mut host, 1, ctx(&env, true)).await;
-    let lines = key(&mut host, &surface, "d").await;
+    key(&mut host, &surface, DOWN).await;
+    key(&mut host, &surface, "\r").await;
+    key(&mut host, &surface, UP).await;
+    let lines = key(&mut host, &surface, "\r").await;
     assert!(
         lines.contains("Remove PreToolUse Bash from settings.json?"),
         "{lines}"
     );
-    let lines = key(&mut host, &surface, "y").await;
+    let lines = key(&mut host, &surface, "\r").await;
     assert!(lines.contains("Removed PreToolUse Bash"), "{lines}");
-    assert!(lines.contains("No hooks found"), "{lines}");
+    assert!(lines.contains("no hooks found"), "{lines}");
     close(&mut host, 1, &panel, &surface).await;
     let doc: Value = serde_json::from_str(
         &std::fs::read_to_string(env.paths.claude_dir.join("settings.json")).unwrap(),
@@ -196,7 +223,8 @@ async fn panel_fits_the_terminal_height_from_ctx_and_resize() {
     let mut ctx = ctx(&env, true);
     ctx["terminalWidth"] = json!(80);
     ctx["terminalHeight"] = json!(8);
-    let (panel, surface, lines) = open(&mut host, 1, ctx).await;
+    let (panel, surface, _) = open(&mut host, 1, ctx).await;
+    let lines = key(&mut host, &surface, DOWN).await;
     assert!(lines.lines().count() <= 5, "{lines}");
     assert!(lines.contains("→ ● PreToolUse"), "{lines}");
     let sizes = [(json!(80), json!(40), 37), (Value::Null, json!(7), 4)];
@@ -212,5 +240,46 @@ async fn panel_fits_the_terminal_height_from_ctx_and_resize() {
         assert!(lines.contains("esc close"), "{lines}");
     }
     close(&mut host, 1, &panel, &surface).await;
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn settings_tab_sets_the_conflict_mode_in_place() {
+    let env = env();
+    let project = env.cwd.join(".claude/settings.json");
+    std::fs::create_dir_all(project.parent().unwrap()).unwrap();
+    let settings = json!({ "hooks": { "PreToolUse": [{ "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "echo project" }] }] } });
+    std::fs::write(&project, settings.to_string()).unwrap();
+    let mut host = TestHost::start(extension(env.paths.clone()));
+    host.initialize().await;
+    let (panel, surface, lines) = open(&mut host, 1, ctx(&env, true)).await;
+    assert!(lines.contains("[conflict]"), "{lines}");
+    let lines = key(&mut host, &surface, "\u{1b}[Z").await;
+    assert!(lines.contains("[Settings (6)]"), "{lines}");
+    assert!(lines.contains("Conflicts between layers"), "{lines}");
+    key(&mut host, &surface, "\u{1b}[F").await;
+    host.notify("ui.key", json!({ "surface": surface, "data": RIGHT }))
+        .await;
+    let (id, notice) = host.expect_request("ui.notify").await;
+    assert!(
+        notice["message"]
+            .as_str()
+            .unwrap()
+            .contains("have conflicts")
+    );
+    host.answer(&id, Value::Null).await;
+    let lines = text(&host.expect_notification("ui.update").await["lines"]);
+    assert!(lines.contains("Set conflicts = \"warn\""), "{lines}");
+    let lines = key(&mut host, &surface, RIGHT).await;
+    assert!(lines.contains("conflicts: override"), "{lines}");
+    assert!(lines.contains("Set conflicts"), "{lines}");
+    let lines = key(&mut host, &surface, "\t").await;
+    assert!(lines.contains("[shadowed]"), "{lines}");
+    close(&mut host, 1, &panel, &surface).await;
+    let doc: Value =
+        serde_json::from_str(&std::fs::read_to_string(env.agent.join("ext/hooks.json")).unwrap())
+            .unwrap();
+    assert_eq!(doc["conflicts"], "override");
     host.finish().await.unwrap();
 }

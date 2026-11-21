@@ -1,11 +1,43 @@
+//! Lines of the `/hooks` panel: rule, title, tabs, search, body, status, hints, rule.
+
 use pi_ext_sdk::style::{self, Color};
 
-use super::details::{details_lines, wrap};
-use super::{DetailAction, Group, Mode, Row, Tab, View};
-use crate::trust::Trust;
+use super::details::wrap;
+use super::{AddStep, Row, Screen, Setting, Tab, Tone, View};
+use crate::manage::EVENTS;
+use crate::model::Scope;
+use crate::policy::ConflictMode;
 
-const MAX_VISIBLE: usize = 12;
-const WIDE: usize = 72;
+/// Lines around the body: rule, title, tabs, search, two blanks, hints, rule.
+const CHROME: usize = 8;
+/// The body keeps this many lines before the chrome around it shrinks.
+const MIN_BODY: usize = 5;
+
+/// What a panel line is, so a short panel drops chrome before body lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Part {
+    Gap,
+    Search,
+    Title,
+    Rule,
+    Tabs,
+    Notice,
+    Status,
+    Hints,
+    Body,
+}
+
+/// Parts in the order a short panel drops them.
+const DROP: [Part; 8] = [
+    Part::Gap,
+    Part::Search,
+    Part::Rule,
+    Part::Title,
+    Part::Tabs,
+    Part::Notice,
+    Part::Status,
+    Part::Hints,
+];
 
 pub fn accent(text: &str) -> String {
     style::fg(Color::Cyan, text)
@@ -15,173 +47,89 @@ pub fn muted(text: &str) -> String {
     style::fg(Color::Gray, text)
 }
 
-fn warning(text: &str) -> String {
+pub fn warning(text: &str) -> String {
     style::fg(Color::Yellow, text)
 }
-
-fn trust_color(trust: Trust, text: &str) -> String {
-    match trust {
-        Trust::All | Trust::Trusted => style::fg(Color::Green, text),
-        Trust::Once => accent(text),
-        Trust::Denied => style::fg(Color::Red, text),
-        Trust::Untrusted => warning(text),
-    }
-}
-
-fn trust_glyph(trust: Trust) -> &'static str {
-    match trust {
-        Trust::All | Trust::Trusted => "✓",
-        Trust::Once => "1",
-        Trust::Denied => "✗",
-        Trust::Untrusted => "?",
-    }
-}
-
-/// How much chrome surrounds the body; `render` takes the first level that leaves room.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Chrome {
-    Full,
-    Tight,
-    Minimal,
-}
-
-/// The list or details body shows at least this many lines before chrome shrinks.
-const MIN_BODY: usize = 5;
 
 impl View {
     /// `height` is the lines the panel may use; `None` keeps the 12-row list window.
     pub fn render(&self, rows: &[Row], width: usize, height: Option<usize>) -> Vec<String> {
         let width = width.max(20);
-        let Some(height) = height else {
-            return self.layout(rows, width, Chrome::Full, None);
-        };
-        let height = height.max(1);
-        let levels = [Chrome::Full, Chrome::Tight, Chrome::Minimal];
-        let level = levels
-            .into_iter()
-            .find(|&level| {
-                let (head, foot) = self.chrome(rows, width, level);
-                let needed = self.body(rows, width, None).len().min(MIN_BODY);
-                head.len() + foot.len() + needed <= height
-            })
-            .unwrap_or(Chrome::Minimal);
-        let mut lines = self.layout(rows, width, level, Some(height));
-        lines.truncate(height);
-        lines
-    }
-
-    fn layout(
-        &self,
-        rows: &[Row],
-        width: usize,
-        level: Chrome,
-        height: Option<usize>,
-    ) -> Vec<String> {
-        let (mut lines, mut foot) = self.chrome(rows, width, level);
-        if let Some(height) = height {
-            while lines.len() + foot.len() >= height && !lines.is_empty() {
-                lines.remove(0);
-            }
-            while lines.len() + foot.len() >= height && foot.pop().is_some() {}
+        let rule = muted(&"─".repeat(width));
+        let mut parts = vec![
+            (Part::Rule, rule.clone()),
+            (Part::Title, self.title(rows)),
+            (Part::Tabs, self.tabs_line(rows)),
+        ];
+        if !self.project_trusted {
+            let notice = warning(" Project not trusted: project hooks hidden");
+            parts.push((Part::Notice, notice));
         }
-        let budget = height.map(|h| h.saturating_sub(lines.len() + foot.len()).max(1));
-        lines.extend(self.body(rows, width, budget));
-        lines.extend(foot);
-        lines
+        let search = match self.query.is_empty() {
+            true => muted(" › type to search"),
+            false => format!(" › {}▏", self.query),
+        };
+        parts.push((Part::Search, search));
+        parts.push((Part::Gap, String::new()));
+        let status = self.status_lines(width);
+        let hints = hint_lines(&self.hints(), width);
+        let chrome = CHROME - 1 + hints.len() + status.len() + usize::from(!self.project_trusted);
+        let budget = height.map(|h| {
+            let small = MIN_BODY.min(h.saturating_sub(1));
+            h.saturating_sub(chrome).max(small).max(1)
+        });
+        let body = match &self.screen {
+            Screen::List => self.list(rows, width, budget),
+            Screen::Menu { choice } => self.menu(rows, Some(*choice), width),
+            Screen::Confirm { hash } => self.confirm(rows, hash, width),
+            Screen::Add(_) => self.add_lines(),
+        };
+        let body = fit_body(body, budget, self.focus(rows, width));
+        parts.extend(body.into_iter().map(|line| (Part::Body, line)));
+        parts.push((Part::Gap, String::new()));
+        parts.extend(status.into_iter().map(|line| (Part::Status, line)));
+        parts.extend(hints.into_iter().map(|line| (Part::Hints, line)));
+        parts.push((Part::Rule, rule));
+        if let Some(height) = height {
+            for part in DROP {
+                while parts.len() > height
+                    && let Some(at) = parts.iter().rposition(|(p, _)| *p == part)
+                {
+                    parts.remove(at);
+                }
+            }
+            parts.truncate(height.max(1));
+        }
+        parts
             .into_iter()
-            .map(|line| style::truncate(&line, width))
+            .map(|(_, line)| style::truncate(&line, width))
             .collect()
     }
 
-    /// The lines above and below the body at `level`.
-    fn chrome(&self, rows: &[Row], width: usize, level: Chrome) -> (Vec<String>, Vec<String>) {
-        let full = level == Chrome::Full;
-        let rule = muted(&"─".repeat(width));
-        let mut head = Vec::new();
+    fn title(&self, rows: &[Row]) -> String {
         let mut title = format!(" {}", accent(&style::bold("Hooks")));
-        if self.trust_all {
-            title.push_str(&warning("  trustAll on"));
+        let plural = if rows.len() == 1 { "" } else { "s" };
+        let mut summary = format!("  {} hook{plural}", rows.len());
+        if self.options.conflicts != ConflictMode::Merge {
+            let mode = self.options.conflicts.name();
+            summary.push_str(&format!(" · conflicts: {mode}"));
         }
-        if level == Chrome::Minimal {
-            head.push(format!("{title} {}", self.tabs_line(rows)));
-        } else {
-            head.extend(full.then(|| rule.clone()));
-            head.push(title);
-            head.push(self.tabs_line(rows));
-            if !self.project_trusted {
-                head.push(warning(" Project not trusted: project hooks hidden"));
-            }
+        title.push_str(&muted(&summary));
+        if self.trust_all() {
+            let flag = if self.trust_flag { " (flag)" } else { "" };
+            title.push_str(&warning(&format!(" · trustAll on{flag}")));
         }
-        if self.mode == Mode::Search || !self.query.is_empty() {
-            let cursor = if self.mode == Mode::Search { "▏" } else { "" };
-            head.push(format!(" {} {}{cursor}", muted("Search:"), self.query));
-        }
-        head.extend(full.then(String::new));
-        let mut foot = Vec::new();
-        if self.mode == Mode::AddScope {
-            foot.extend(full.then(String::new));
-            foot.push(warning(" Add a hook to: p project · g global"));
-        }
-        foot.extend(full.then(String::new));
-        if let Some(status) = &self.status {
-            let status = format!(" {status}");
-            if full {
-                foot.extend(wrap(&status, width).iter().map(|l| warning(l)));
-            } else {
-                foot.push(warning(&style::truncate(&status, width)));
-            }
-        }
-        if full {
-            foot.extend(hint_lines(&self.hints(), width));
-        } else {
-            foot.push(hint_line(&self.hints(), width));
-        }
-        foot.extend((level != Chrome::Minimal).then_some(rule));
-        (head, foot)
-    }
-
-    /// The list or details lines, cut to `budget` lines around the cursor.
-    fn body(&self, rows: &[Row], width: usize, budget: Option<usize>) -> Vec<String> {
-        let (lines, focus) = match &self.mode {
-            Mode::Details { hash, action } => {
-                let lines = details_lines(rows, hash, Some(*action), width);
-                let focus = lines.len().saturating_sub(DetailAction::ALL.len() - action);
-                (lines, focus)
-            }
-            Mode::ConfirmRemove { hash } => {
-                let mut lines = details_lines(rows, hash, None, width);
-                if let Some(row) = rows.iter().find(|r| &r.def.hash == hash) {
-                    let name = row.def.file.file_name().unwrap_or_default();
-                    let prompt = format!(
-                        " Remove {} {} from {}? y confirm · n cancel",
-                        row.def.event,
-                        row.matcher(),
-                        name.to_string_lossy()
-                    );
-                    lines.push(String::new());
-                    lines.extend(wrap(&prompt, width).iter().map(|l| warning(l)));
-                }
-                let focus = lines.len().saturating_sub(1);
-                (lines, focus)
-            }
-            Mode::AddScope | Mode::List | Mode::Search => {
-                return self.list_lines(rows, width, budget);
-            }
-        };
-        match budget {
-            Some(budget) if lines.len() > budget => {
-                let start = focus.saturating_sub(budget / 2).min(lines.len() - budget);
-                lines[start..start + budget].to_vec()
-            }
-            _ => lines,
-        }
+        title
     }
 
     fn tabs_line(&self, rows: &[Row]) -> String {
         let tabs: Vec<String> = Tab::ALL
             .iter()
             .map(|tab| {
-                let count = rows.iter().filter(|r| tab.shows(r)).count();
+                let count = match tab {
+                    Tab::Settings => Setting::all().len(),
+                    _ => rows.iter().filter(|r| tab.shows(r)).count(),
+                };
                 let label = format!("{} ({count})", tab.title());
                 if *tab == self.tab {
                     accent(&style::bold(&format!("[{label}]")))
@@ -193,191 +141,109 @@ impl View {
         format!(" {}", tabs.join("  "))
     }
 
-    fn list_lines(&self, rows: &[Row], width: usize, budget: Option<usize>) -> Vec<String> {
-        let visible = self.visible(rows);
-        if visible.is_empty() {
-            let text = if rows.is_empty() {
-                " No hooks found. Press a to add one."
-            } else {
-                " No matching hooks"
-            };
-            return vec![muted(text)];
-        }
-        let selected = self.selected.min(visible.len() - 1);
-        let shown: Vec<&Row> = visible.iter().map(|&i| &rows[i]).collect();
-        let event_w = shown.iter().map(|r| r.def.event.len()).max().unwrap_or(0);
-        let matcher_w = shown.iter().map(|r| r.matcher().len()).max().unwrap_or(0);
-        let columns = (event_w.min(18), matcher_w.min(12));
-        let groups: Vec<Group> = shown.iter().map(|r| r.group).collect();
-        let max_rows = if budget.is_some() {
-            usize::MAX
-        } else {
-            MAX_VISIBLE
+    fn status_lines(&self, width: usize) -> Vec<String> {
+        let Some((tone, text)) = &self.status else {
+            return Vec::new();
         };
-        let max_lines = budget.unwrap_or(usize::MAX);
-        let Some((start, end)) = window(&groups, selected, max_rows, max_lines) else {
-            return vec![row_line(shown[selected], true, width, columns)];
-        };
-        let mut lines = Vec::new();
-        let mut group = None;
-        for (position, row) in shown.iter().enumerate().take(end).skip(start) {
-            if group != Some(row.group) {
-                group = Some(row.group);
-                let count = groups.iter().filter(|&&g| g == row.group).count();
-                lines.push(style::bold(&format!(" {} ({count})", row.group.title())));
+        wrap(text, width.saturating_sub(2))
+            .into_iter()
+            .map(|line| match tone {
+                Tone::Warn => warning(&format!(" {line}")),
+                Tone::Info => muted(&format!(" {line}")),
+            })
+            .collect()
+    }
+
+    /// The body line to keep in view when the body does not fit.
+    fn focus(&self, rows: &[Row], width: usize) -> usize {
+        match &self.screen {
+            Screen::Menu { choice } => {
+                let lines = self.menu(rows, Some(*choice), width).len();
+                lines.saturating_sub(self.choice_count(rows).saturating_sub(*choice))
             }
-            lines.push(row_line(row, position == selected, width, columns));
+            Screen::Confirm { .. } => usize::MAX,
+            _ => 0,
         }
-        if start > 0 || end < visible.len() {
-            lines.push(muted(&format!("  ({}/{})", selected + 1, visible.len())));
+    }
+
+    fn add_lines(&self) -> Vec<String> {
+        let Screen::Add(form) = &self.screen else {
+            return Vec::new();
+        };
+        let mut lines = vec![accent(&style::bold(" Add a command hook"))];
+        let field = |label: &str, value: &str, active: bool| {
+            let head = muted(&format!(" {label:<8}"));
+            if active {
+                format!("{head} {}", accent(&format!("› {value}▏")))
+            } else {
+                format!("{head}   {value}")
+            }
+        };
+        let step = form.step;
+        lines.push(field("event", EVENTS[form.event], step == AddStep::Event));
+        if step == AddStep::Event {
+            let around = [EVENTS.len() - 1, 1].map(|d| EVENTS[(form.event + d) % EVENTS.len()]);
+            let around = format!("            ↑ {} · ↓ {}", around[0], around[1]);
+            lines.push(muted(&around));
         }
+        let matcher = match (step, form.matcher.is_empty()) {
+            (AddStep::Event, _) | (AddStep::Matcher, true) => String::new(),
+            (_, true) => "*".into(),
+            (_, false) => form.matcher.clone(),
+        };
+        lines.push(field("matcher", &matcher, step == AddStep::Matcher));
+        if step == AddStep::Matcher {
+            let hint = "            a tool name, an a|b list, or a regex; empty matches all";
+            lines.push(muted(hint));
+        }
+        lines.push(field("command", &form.command, step == AddStep::Command));
+        let scopes: Vec<String> = self
+            .scopes()
+            .into_iter()
+            .map(|scope| {
+                let label = match scope {
+                    Scope::Global => "global",
+                    Scope::Project => "project",
+                };
+                if scope == form.scope {
+                    accent(&format!("[{label}]"))
+                } else {
+                    muted(label)
+                }
+            })
+            .collect();
+        lines.push(format!(" {} {}", muted("save to "), scopes.join("  ")));
         lines
     }
 
-    fn hints(&self) -> Vec<&'static str> {
-        match self.mode {
-            Mode::Search => vec!["type to filter", "↑↓ move", "enter done", "esc clear"],
-            Mode::Details { .. } => vec![
-                "↑↓ choose",
-                "enter run",
-                "space toggle",
-                "d remove",
-                "esc back",
-            ],
-            Mode::ConfirmRemove { .. } => vec!["y remove", "n cancel"],
-            Mode::AddScope => vec!["p project", "g global", "esc cancel"],
-            Mode::List => {
-                let close = if self.query.is_empty() {
-                    "esc close"
-                } else {
-                    "esc clear search"
-                };
-                vec![
-                    "↑↓ move",
-                    "space toggle",
-                    "enter details",
-                    "d remove",
-                    "a add",
-                    "/ search",
-                    "tab filter",
-                    "s sources",
-                    "c load scope",
-                    "t trustAll",
-                    close,
-                ]
-            }
+    fn confirm(&self, rows: &[Row], hash: &str, width: usize) -> Vec<String> {
+        let mut lines = self.menu(rows, None, width);
+        if let Some(row) = rows.iter().find(|r| r.def.hash == hash) {
+            let name = row.def.file.file_name().unwrap_or_default();
+            let question = format!(
+                "Remove {} {} from {}? Enter removes it; any other key cancels.",
+                row.def.event,
+                row.matcher(),
+                name.to_string_lossy()
+            );
+            lines.push(String::new());
+            let wrapped = wrap(&question, width.saturating_sub(2));
+            lines.extend(wrapped.iter().map(|l| warning(&format!(" {l}"))));
         }
+        lines
     }
 }
 
-fn row_line(row: &Row, selected: bool, width: usize, columns: (usize, usize)) -> String {
-    let pointer = if selected {
-        accent("→ ")
-    } else {
-        "  ".into()
-    };
-    let glyph = if row.enabled {
-        style::fg(Color::Green, "●")
-    } else {
-        muted("○")
-    };
-    let text = |s: &str| {
-        if !row.enabled {
-            muted(s)
-        } else if selected {
-            accent(s)
-        } else {
-            s.to_owned()
+/// Cuts `body` to `budget` lines around `focus`.
+fn fit_body(body: Vec<String>, budget: Option<usize>, focus: usize) -> Vec<String> {
+    match budget {
+        Some(budget) if body.len() > budget => {
+            let focus = focus.min(body.len() - 1);
+            let start = focus.saturating_sub(budget / 2).min(body.len() - budget);
+            body[start..start + budget].to_vec()
         }
-    };
-    let plugin = row.def.plugin.as_ref().and_then(|p| p.id.as_deref());
-    let command = match plugin {
-        Some(id) => format!("{id}: {}", row.def.summary()),
-        None => row.def.summary(),
-    };
-    let line = if width >= WIDE {
-        let (event_w, matcher_w) = columns;
-        format!(
-            " {pointer}{glyph} {} {} {} {} {}",
-            text(&style::fit(&row.def.event, event_w)),
-            text(&style::fit(row.matcher(), matcher_w)),
-            muted(&style::fit(row.scope_label(), 7)),
-            trust_color(row.trust, &style::fit(row.trust.name(), 9)),
-            text(&command)
-        )
-    } else {
-        let scope = row.scope_label()[..1].to_uppercase();
-        format!(
-            " {pointer}{glyph} {} {} {}{} {}",
-            text(&row.def.event),
-            text(row.matcher()),
-            muted(&scope),
-            trust_color(row.trust, trust_glyph(row.trust)),
-            text(&command)
-        )
-    };
-    style::truncate(&line, width)
-}
-
-/// Lines that rows `start..end` take: rows, group titles, and the `(n/m)` counter.
-fn window_lines(groups: &[Group], start: usize, end: usize) -> usize {
-    let titles = 1
-        + (start + 1..end)
-            .filter(|&i| groups[i] != groups[i - 1])
-            .count();
-    let counter = usize::from(start > 0 || end < groups.len());
-    end - start + titles + counter
-}
-
-/// The rows around `selected` that fit `max_rows` and `max_lines`; grows down and up in turn.
-/// `None` when the selected row with its group title and counter does not fit.
-fn window(
-    groups: &[Group],
-    selected: usize,
-    max_rows: usize,
-    max_lines: usize,
-) -> Option<(usize, usize)> {
-    let fits = |start: usize, end: usize| {
-        end <= groups.len()
-            && end - start <= max_rows
-            && window_lines(groups, start, end) <= max_lines
-    };
-    let (mut start, mut end) = (selected, selected + 1);
-    if !fits(start, end) {
-        return None;
+        _ => body,
     }
-    let mut down = true;
-    loop {
-        let grown = [down, !down].into_iter().find_map(|down| {
-            let next = if down {
-                (start, end + 1)
-            } else {
-                (start.checked_sub(1)?, end)
-            };
-            fits(next.0, next.1).then_some((next, down))
-        });
-        let Some(((next_start, next_end), went_down)) = grown else {
-            return Some((start, end));
-        };
-        (start, end, down) = (next_start, next_end, !went_down);
-    }
-}
-
-/// One hint line: the hints from the start that fit, then the last hint (close or cancel).
-fn hint_line(hints: &[&str], width: usize) -> String {
-    let Some((last, rest)) = hints.split_last() else {
-        return String::new();
-    };
-    let mut kept: Vec<&str> = Vec::new();
-    for hint in rest {
-        let line = [&kept[..], &[hint, last]].concat().join(" · ");
-        if style::visible_width(&line) + 1 > width {
-            break;
-        }
-        kept.push(hint);
-    }
-    kept.push(last);
-    style::dim(&format!(" {}", kept.join(" · ")))
 }
 
 /// Joins hints with " · " and starts a new line before one would overflow `width`.
@@ -390,13 +256,13 @@ fn hint_lines(hints: &[&str], width: usize) -> Vec<String> {
         } else {
             format!("{line} · {hint}")
         };
-        if !line.is_empty() && style::visible_width(&next) > width {
-            lines.push(style::dim(&line));
+        if style::visible_width(&next) > width && !line.is_empty() {
+            lines.push(muted(&line));
             line = format!(" {hint}");
         } else {
             line = next;
         }
     }
-    lines.push(style::dim(&line));
+    lines.push(muted(&line));
     lines
 }

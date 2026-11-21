@@ -91,23 +91,49 @@ pub fn error_type(message: &str) -> &'static str {
     let has = |words: &[&str]| words.iter().any(|w| text.contains(w));
     if has(&["rate limit", "rate_limit", "429"]) {
         "rate_limit"
+    } else if has(&["oauth_org_not_allowed", "organization is not allowed"]) {
+        "oauth_org_not_allowed"
+    } else if has(&["account_on_hold", "account is on hold"]) {
+        "account_on_hold"
+    } else if has(&[
+        "cloud_credential_error",
+        "could not load credentials",
+        "unable to locate credentials",
+        "default credentials",
+    ]) {
+        "cloud_credential_error"
     } else if has(&["401", "403", "unauthorized", "authentication", "api key"]) {
         "authentication_failed"
     } else if has(&["billing", "quota", "credit"]) {
         "billing_error"
     } else if has(&["max_tokens", "max output", "maximum output"]) {
         "max_output_tokens"
-    } else if has(&["overloaded", "529"]) {
-        "overloaded"
     } else if has(&["model_not_found", "model not found"]) {
         "model_not_found"
-    } else if has(&["500", "502", "503", "server error"]) {
+    } else if has(&["overloaded", "529", "500", "502", "503", "server error"]) {
         "server_error"
     } else if has(&["400", "invalid request", "invalid_request"]) {
         "invalid_request"
     } else {
         "unknown"
     }
+}
+
+/// A Claude `background_tasks` entry from one `compactor:active-work` publisher.
+fn background_task(source: &str, text: &str) -> Value {
+    let kind = match source {
+        "background-tasks" => "shell",
+        "subagents" => "subagent",
+        other => other,
+    };
+    let chars = text.chars().count();
+    let description = if chars > 1000 {
+        let head: String = text.chars().take(1000).collect();
+        format!("{head}… [+{} chars]", chars - 1000)
+    } else {
+        text.to_owned()
+    };
+    json!({ "id": source, "type": kind, "status": "running", "description": description })
 }
 
 pub async fn agent_settled(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
@@ -136,7 +162,7 @@ pub async fn agent_settled(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply>
         .active_work
         .iter()
         .filter(|(_, text)| !text.trim().is_empty())
-        .map(|(source, text)| json!({ "source": source, "description": text }))
+        .map(|(source, text)| background_task(source, text))
         .collect();
     let payload = json!({ "stop_hook_active": active, "last_assistant_message": last,
         "background_tasks": background, "session_crons": [] });
@@ -207,6 +233,7 @@ fn stop_block_cap() -> u32 {
 
 /// Codex PreModelRequest: diagnostic only, so the request does not wait for it.
 pub async fn before_provider_request(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
+    rt.lock().model_requests += 1;
     model_request(rt, &ev, "PreModelRequest", json!({}));
     Ok(EventReply::none())
 }
@@ -219,13 +246,23 @@ pub async fn after_provider_response(rt: Arc<Runtime>, ev: EventCtx) -> Result<E
         "status": if completed { "completed" } else { "failed" },
         "error": (!completed).then(|| format!("HTTP {}", status.unwrap_or_default())),
         "token_usage": null,
+        "response_id": null,
     });
     model_request(rt, &ev, "PostModelRequest", payload);
     Ok(EventReply::none())
 }
 
-fn model_request(rt: Arc<Runtime>, ev: &EventCtx, event: &'static str, payload: Value) {
+/// pi reports no request ids or retries, so each provider request is attempt 1 of its own id.
+fn model_request(rt: Arc<Runtime>, ev: &EventCtx, event: &'static str, mut payload: Value) {
     let (host, snap) = (ev.host().clone(), ev.snapshot().clone());
+    let (turn, request) = {
+        let state = rt.lock();
+        (state.turn, state.model_requests)
+    };
+    payload["request_id"] = json!(format!("req-{turn}-{request}"));
+    payload["attempt_number"] = json!(1);
+    payload["thread_id"] = json!(snap.session_id.clone().unwrap_or_default());
+    payload["kind"] = json!("sampling");
     tokio::spawn(async move {
         let mut d = Dispatch::new(event, Target::Any, payload);
         d.claude = None;
@@ -342,5 +379,37 @@ pub async fn background_done(rt: &Arc<Runtime>, host: &Host, data: &Value) {
     if let Some(reason) = blocked {
         let data = json!({ "agentId": agent_id, "reason": reason });
         let _ = host.emit("hooks:teammate-idle-blocked", data).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_failure_types_follow_the_claude_list() {
+        assert_eq!(error_type("529 Overloaded"), "server_error");
+        assert_eq!(error_type("HTTP 503"), "server_error");
+        assert_eq!(error_type("account_on_hold"), "account_on_hold");
+        assert_eq!(
+            error_type("Unable to locate credentials"),
+            "cloud_credential_error"
+        );
+        assert_eq!(error_type("429 rate limit"), "rate_limit");
+        assert_eq!(error_type("something else"), "unknown");
+    }
+
+    #[test]
+    fn background_tasks_use_the_claude_fields() {
+        let task = background_task("subagents", &"x".repeat(1005));
+        assert_eq!(task["id"], "subagents");
+        assert_eq!(task["type"], "subagent");
+        assert_eq!(task["status"], "running");
+        assert!(
+            task["description"]
+                .as_str()
+                .unwrap()
+                .ends_with("… [+5 chars]")
+        );
     }
 }

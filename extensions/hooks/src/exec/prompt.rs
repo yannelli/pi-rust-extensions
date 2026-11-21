@@ -9,12 +9,41 @@ const SYSTEM: &str = "You evaluate a hook event for a coding agent. Reply with o
 {\"ok\": true} to allow, or {\"ok\": false, \"reason\": \"...\"} to block. Add \
 \"impossible\": true when the condition can never be satisfied.";
 
+/// Replaces `$ARGUMENTS` with the event JSON (appended without a placeholder); `\$` is a literal `$`.
 pub fn prompt_text(template: &str, input: &str) -> String {
-    if template.contains("$ARGUMENTS") {
-        template.replace("$ARGUMENTS", input)
-    } else {
-        format!("{template}\n\n{input}")
+    let mut out = String::new();
+    let mut placeholder = false;
+    let mut rest = template;
+    while let Some(at) = rest.find(['\\', '$']) {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if let Some(after) = tail.strip_prefix("\\$") {
+            out.push('$');
+            rest = after;
+        } else if let Some(after) = tail.strip_prefix("$ARGUMENTS") {
+            out.push_str(input);
+            placeholder = true;
+            rest = after;
+        } else {
+            out.push_str(&tail[..1]);
+            rest = &tail[1..];
+        }
     }
+    out.push_str(rest);
+    if placeholder {
+        out
+    } else {
+        format!("{out}\n\n{input}")
+    }
+}
+
+/// pi takes `provider/id`; a bare Claude model id resolves on the `anthropic` provider.
+async fn resolve_model(host: &Host, model: &str) -> Option<String> {
+    if model.contains('/') {
+        return Some(model.to_owned());
+    }
+    let found = host.find_model("anthropic", model).await.ok().flatten()?;
+    Some(format!("anthropic/{}", found.id))
 }
 
 pub async fn run_prompt(
@@ -31,7 +60,12 @@ pub async fn run_prompt(
         .unwrap_or_default();
     let mut request = LlmRequest::prompt(prompt_text(template, &input)).system(SYSTEM);
     if let Some(model) = handler.get("model").and_then(Value::as_str) {
-        request = request.model(model);
+        match resolve_model(host, model).await {
+            Some(model) => request = request.model(model),
+            None => pi_ext_sdk::info!(
+                "hooks: prompt hook model {model} is not a pi model; using the session model"
+            ),
+        }
     }
     match tokio::time::timeout(timeout, host.complete(request)).await {
         Err(_) => RawRun::failed(format!("timed out after {}s", timeout.as_secs_f64())),
@@ -80,6 +114,11 @@ mod tests {
     fn arguments_placeholder() {
         assert_eq!(prompt_text("check $ARGUMENTS now", "{}"), "check {} now");
         assert_eq!(prompt_text("check", "{}"), "check\n\n{}");
+        assert_eq!(
+            prompt_text(r"costs \$1.00 for $ARGUMENTS", "{}"),
+            "costs $1.00 for {}"
+        );
+        assert_eq!(prompt_text(r"\$ARGUMENTS", "{}"), "$ARGUMENTS\n\n{}");
     }
 
     #[test]

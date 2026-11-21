@@ -12,6 +12,7 @@ use crate::matcher::Target;
 use crate::model::Source;
 use crate::output::{Outcome, Permission};
 use crate::paths::env_file;
+use crate::policy::{ConflictMode, disagreement};
 use crate::runtime::Runtime;
 use crate::tools::{
     codex_tool_input, codex_tool_name, from_hook_input, hook_tool_name, to_hook_input,
@@ -43,7 +44,20 @@ fn drop_patch_rewrites(pi_tool: &str, outcomes: &mut [Outcome]) {
     }
 }
 
-fn stop_run(host: &Host, reason: String) {
+/// Under `conflicts: "warn"`: tells the user when tool hooks return different decisions.
+fn warn_disagreement(rt: &Runtime, host: &Host, event: &str, tool: &str, outcomes: &[Outcome]) {
+    if rt.conflict_mode() != ConflictMode::Warn {
+        return;
+    }
+    if let Some(notice) = disagreement(event, tool, outcomes) {
+        let host = host.clone();
+        tokio::spawn(async move {
+            let _ = host.notify_warning(notice).await;
+        });
+    }
+}
+
+pub fn stop_run(host: &Host, reason: String) {
     let host = host.clone();
     tokio::spawn(async move {
         let _ = host.notify_warning(reason).await;
@@ -66,11 +80,13 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     d.codex_payload = Some(codex_fields(&call.tool_name, &tool, &input));
     let mut outcomes = dispatch(&rt, host, snap, d).await;
     drop_patch_rewrites(&call.tool_name, &mut outcomes);
+    warn_disagreement(&rt, host, "PreToolUse", &tool, &outcomes);
     let pre = fold_tool(&outcomes);
     if let Some(reason) = pre.stop {
-        let reason = stop_text(&reason);
-        stop_run(host, reason.clone());
-        return Ok(own_block(&rt, &call.tool_call_id, reason));
+        // Claude Code: `continue: false` ends the run after the tool; only a deny blocks the call.
+        rt.lock()
+            .pending_stops
+            .insert(call.tool_call_id.clone(), stop_text(&reason));
     }
     if !pre.context.is_empty() {
         rt.lock()
@@ -86,13 +102,15 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
     }
     let mut permission = pre.permission;
     if let Some((Permission::Deny, reason)) = permission {
-        return Ok(own_block(&rt, &call.tool_call_id, reason));
+        return Ok(own_block(&rt, host, &call.tool_call_id, reason));
     }
     if !matches!(permission, Some((Permission::Allow, _))) {
         let payload = json!({ "tool_name": tool, "tool_input": input, "tool_use_id": call.tool_call_id, "permission_suggestions": [] });
         let mut d = tool_dispatch("PermissionRequest", &tool, &input, payload);
         d.codex_payload = Some(codex_fields(&call.tool_name, &tool, &input));
-        let request = fold_tool(&dispatch(&rt, host, snap, d).await);
+        let outcomes = dispatch(&rt, host, snap, d).await;
+        warn_disagreement(&rt, host, "PermissionRequest", &tool, &outcomes);
+        let request = fold_tool(&outcomes);
         if let Some(new_input) = request.updated_input {
             input = new_input;
             updated = true;
@@ -102,7 +120,7 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         }
         match request.permission {
             Some((Permission::Deny, reason)) => {
-                return Ok(own_block(&rt, &call.tool_call_id, reason));
+                return Ok(own_block(&rt, host, &call.tool_call_id, reason));
             }
             Some((Permission::Allow, reason)) => permission = Some((Permission::Allow, reason)),
             _ => {}
@@ -112,7 +130,7 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         let allowed = host.has_ui()
             && confirm_with_notice(&rt, host, snap, &format!("Hook: allow {tool}?"), reason).await;
         if !allowed {
-            return Ok(own_block(&rt, &call.tool_call_id, reason.clone()));
+            return Ok(own_block(&rt, host, &call.tool_call_id, reason.clone()));
         }
     }
     if call.tool_name == TODO_TOOL {
@@ -123,7 +141,7 @@ pub async fn tool_call(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         };
         let (block, context) = todo_call(&rt, host, snap, &todo_input).await;
         if let Some(reason) = block {
-            return Ok(own_block(&rt, &call.tool_call_id, reason));
+            return Ok(own_block(&rt, host, &call.tool_call_id, reason));
         }
         if !context.is_empty() {
             rt.lock()
@@ -216,6 +234,11 @@ pub async fn tool_result(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
         appended.extend(outcome.feedback.clone());
     }
     appended.extend(contexts(&outcomes));
+    let pending = rt.lock().pending_stops.remove(&result.tool_call_id);
+    if let Some(reason) = pending {
+        appended.push(reason.clone());
+        stop_run(host, reason);
+    }
     for outcome in &outcomes {
         let Some(reason) = outcome.stop.as_deref().map(stop_text) else {
             continue;
@@ -335,8 +358,15 @@ pub async fn confirm_with_notice(
 }
 
 /// Blocks a tool call and remembers it, so `tool_call_blocked` skips this extension's own blocks.
-fn own_block(rt: &Runtime, id: &str, reason: impl Into<String>) -> EventReply {
-    rt.lock().own_blocks.insert(id.to_owned());
+fn own_block(rt: &Runtime, host: &Host, id: &str, reason: impl Into<String>) -> EventReply {
+    let pending = {
+        let mut state = rt.lock();
+        state.own_blocks.insert(id.to_owned());
+        state.pending_stops.remove(id)
+    };
+    if let Some(stop) = pending {
+        stop_run(host, stop);
+    }
     EventReply::block(reason)
 }
 

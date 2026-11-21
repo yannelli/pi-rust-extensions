@@ -13,9 +13,20 @@ pub struct ToolDecision {
     pub interrupt: bool,
 }
 
+/// pi has no deferred tool calls, so `defer` is dropped as Claude Code drops it in interactive
+/// sessions; another hook's `ask` still applies.
 pub fn fold_tool(outcomes: &[Outcome]) -> ToolDecision {
-    let decisions: Vec<(Permission, Option<String>)> =
-        outcomes.iter().filter_map(Outcome::decision).collect();
+    let decisions: Vec<(Permission, Option<String>)> = outcomes
+        .iter()
+        .filter_map(Outcome::decision)
+        .filter(|(permission, _)| {
+            let defer = *permission == Permission::Defer;
+            if defer {
+                pi_ext_sdk::warn!("hooks: permissionDecision \"defer\" is ignored");
+            }
+            !defer
+        })
+        .collect();
     let permission = decisions.iter().map(|(p, _)| *p).max().map(|best| {
         let reason = decisions
             .iter()

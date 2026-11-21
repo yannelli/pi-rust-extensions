@@ -9,6 +9,7 @@ mod model;
 mod output;
 mod panel;
 mod paths;
+mod policy;
 mod runtime;
 mod tools;
 mod trust;
