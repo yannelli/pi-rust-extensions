@@ -431,3 +431,27 @@ fn post_tool_use_failure_cannot_rewrite_the_result() {
     );
     assert!(run(C, "PostToolUse", 0, out, "").updated_output.is_some());
 }
+
+#[test]
+fn pre_compact_plain_stdout_is_instructions_for_claude_and_pi() {
+    let claude = run(C, "PreCompact", 0, "keep the test names\n", "");
+    assert_eq!(
+        claude.compact_instructions.as_deref(),
+        Some("keep the test names")
+    );
+    assert_eq!(claude.context, None);
+    let pi = run(Source::Pi, "PreCompact", 0, "notes", "");
+    assert_eq!(pi.compact_instructions.as_deref(), Some("notes"));
+    assert_eq!(
+        run(X, "PreCompact", 0, "notes", "").compact_instructions,
+        None
+    );
+    assert_eq!(
+        run(C, "PreCompact", 1, "notes", "").compact_instructions,
+        None
+    );
+    assert_eq!(
+        run(C, "PreCompact", 0, "{\"decision\":\"approve\"}", "").compact_instructions,
+        None
+    );
+}

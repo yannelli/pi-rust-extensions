@@ -85,6 +85,8 @@ pub struct Outcome {
     pub elicitation: Option<(String, Option<Value>)>,
     /// WorktreeCreate path: `worktreePath`, or the last stdout line of a command hook.
     pub worktree_path: Option<String>,
+    /// Claude and pi PreCompact plain stdout: instructions for the compaction summary.
+    pub compact_instructions: Option<String>,
     pub error: Option<String>,
 }
 
@@ -218,6 +220,8 @@ pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
                     out.error = Some("plain stdout is invalid here; JSON required".into());
                 } else if plain_stdout_is_context(cx.source, cx.event) {
                     out.context = Some(raw.stdout.trim().to_owned());
+                } else if !codex && cx.event == "PreCompact" {
+                    out.compact_instructions = Some(raw.stdout.trim().to_owned());
                 }
             }
             None => {}

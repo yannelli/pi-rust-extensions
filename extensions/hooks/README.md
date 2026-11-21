@@ -1,6 +1,6 @@
 # hooks
 
-Created 2026-10-29. Last updated 2026-11-20.
+Created 2026-10-29. Last updated 2026-11-21.
 
 Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both tools and a pi-native hooks file, maps pi events onto hook events, runs the matching handlers, and applies their decisions to pi. It follows these docs, read 2026-11-20: the Claude Code hooks reference (code.claude.com/docs/en/hooks), settings reference (code.claude.com/docs/en/settings-reference), and managed settings (code.claude.com/docs/en/managed-settings), and the Codex hooks docs (developers.openai.com/codex/hooks) with the Codex 0.171.0 hook schemas.
 
@@ -129,7 +129,7 @@ Each hook has a hash: sha256 hex of the canonical JSON (sorted keys) `{ file, ev
 | `turn_end` with tool results | PostToolBatch (Claude and pi) | `additionalContext` is sent as a `hooks-context` steer message (`display: false`) before the next model call. A block or `continue: false` shows the reason, keeps it as a `hooks-feedback` message for the next turn, and aborts the run. |
 | `agent_end` | none | Keeps the last assistant text and whether it ended with an error. |
 | `agent_settled` | Stop; StopFailure (Claude and pi) after an error; Codex Interrupt when aborted | A Stop block sends `hooks-stop` with the reason (`display: false`, `deliverAs: followUp`, `triggerTurn: true`) and sets `stop_hook_active` until the next user input. Claude and pi `additionalContext` continue the turn in the same way. After 8 consecutive continuations (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`), the next one is skipped and the turn ends; a tool call or user input resets the count. `continue: false` from any hook wins. |
-| `session_before_compact` | PreCompact (`manual`, else `auto`) | Block or `continue: false` cancels the compaction. |
+| `session_before_compact` | PreCompact (`manual`, else `auto`) | Block or `continue: false` cancels the compaction. The plain stdout of Claude and pi hooks that exit 0, each cut at 10,000 characters with a marker, becomes instructions for the summary after the `/compact` text. This needs a host that lists the `compactionInstructions` feature; on other hosts the extension logs a line and does not send it. |
 | `session_compact` | PostCompact, then SessionStart with source `compact` | Context is held. |
 | `model_select` | PreModelSwitch, then PostModelSwitch (Claude and pi) | pi sends `model_select` after the switch, so a block switches back to the previous model and shows the reason. Exit 2, `decision: "block"`, `permissionDecision: "deny"`, `continue: false`, and a timeout block. `ask` asks with `ui.confirm`; without a UI it blocks. PreModelSwitch does not run for a `restore` switch. PostModelSwitch context is held. |
 | `before_provider_request`, `after_provider_response` | Codex PreModelRequest, PostModelRequest | Diagnostic only; the request does not wait. Both get `request_id` (`req-<turn>-<n>`), `attempt_number: 1`, `thread_id` (the session id), and `kind: "sampling"`. PostModelRequest `status` is `completed` for a 2xx HTTP status, else `failed` with `error: "HTTP <status>"`; `token_usage` and `response_id` are `null`. |
@@ -224,7 +224,6 @@ Events marked pi-rust come from host events that only pi-rust 0.12.3 and later s
 - Codex gives background hook output to the next model request of the turn; pi holds it for the next `before_agent_start`.
 - In a linked git worktree, Codex reads each project layer from the main checkout. pi reads the worktree's `.codex` files and falls back to the main checkout's copy only when the worktree has none.
 - Input fields that are not sent: `scratchpad_dir` (pi has no scratchpad) and `agent_id`/`agent_type` in the main session. `permission_mode` is always `default`, because pi has no permission modes.
-- PreCompact stdout does not become compaction instructions: pi's `session_before_compact` reply takes no `customInstructions`, so this needs a pi host change.
 - Output fields: UserPromptSubmit `sessionTitle` sets the session name. A PermissionRequest deny with `decision.interrupt: true` aborts the run. `<system-reminder>` tags in context reach the model with `<` as `&lt;`. PostToolUse `classifierContext` and UserPromptSubmit `suppressOriginalPrompt` have no effect, because pi has no auto mode classifier and shows no block message with the prompt text.
 - Unsupported handler and settings fields: `shell: "powershell"` on non-Windows, Claude `updatedPermissions`, `updatedMCPToolOutput` beyond replacing the content, SessionStart `reloadSkills`, plugin `hooks/hooks.json` files outside the pi-native file, and skill or subagent frontmatter hooks.
 - Claude managed settings come from the managed settings files only: MDM, registry, and server-managed sources are not read, and the files merge without the `first-wins` choice between sources. Under `allowManagedHooksOnly`, hooks of plugins that managed `enabledPlugins` force-enables do not run.

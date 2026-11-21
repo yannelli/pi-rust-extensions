@@ -228,3 +228,43 @@ async fn exec_form_expands_placeholders_and_paths_are_absolute() {
     );
     host.finish().await.unwrap();
 }
+
+#[tokio::test]
+async fn pre_compact_stdout_becomes_compaction_instructions() {
+    let env = env(json!({}));
+    let first = script(&env, "first.sh", "echo 'keep the test names'");
+    let long = script(&env, "long.sh", "head -c 10005 /dev/zero | tr '\\0' x");
+    let quiet = script(&env, "quiet.sh", "exit 0");
+    let hooks = [first, long, quiet].map(|cmd| json!({ "type": "command", "command": cmd }));
+    rewrite_hooks(
+        &env,
+        json!({ "PreCompact": [{ "matcher": "manual", "hooks": hooks }] }),
+    );
+    let ctx = hooks_ctx(&env.cwd, false, true);
+    let manual = json!({
+        "type": "session_before_compact", "reason": "manual", "willRetry": false,
+        "customInstructions": "list the files"
+    });
+
+    let mut host = TestHost::start(extension(env.paths.clone()));
+    host.initialize_with(&["compactionInstructions"]).await;
+    let reply = host
+        .event(1, "session_before_compact", manual.clone(), ctx.clone())
+        .await;
+    let marker = "\n[PreCompact hook output cut at 10000 characters]";
+    let expected = format!(
+        "list the files\n\nkeep the test names\n\n{}{marker}",
+        "x".repeat(10_000)
+    );
+    assert_eq!(
+        reply["result"],
+        json!({ "result": { "customInstructions": expected } })
+    );
+    host.finish().await.unwrap();
+
+    let mut old = TestHost::start(extension(env.paths.clone()));
+    old.initialize().await;
+    let reply = old.event(1, "session_before_compact", manual, ctx).await;
+    assert_eq!(reply["result"], json!({}));
+    old.finish().await.unwrap();
+}

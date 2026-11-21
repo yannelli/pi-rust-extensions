@@ -6,7 +6,7 @@ use pi_ext_sdk::prelude::*;
 use crate::decide::{contexts, first_block, first_stop, fold_tool, stop_text};
 use crate::dispatch::{Dispatch, dispatch};
 use crate::matcher::Target;
-use crate::output::Permission;
+use crate::output::{Outcome, Permission};
 use crate::runtime::Runtime;
 
 pub async fn session_start(rt: Arc<Runtime>, ev: EventCtx) -> Result<EventReply> {
@@ -166,7 +166,58 @@ pub async fn session_before_compact(rt: Arc<Runtime>, ev: EventCtx) -> Result<Ev
                 .await;
             Ok(EventReply::cancel())
         }
-        None => Ok(EventReply::none()),
+        None => Ok(match compact_instructions(&ev, &outcomes) {
+            Some(text) => EventReply::result(json!({ "customInstructions": text })),
+            None => EventReply::none(),
+        }),
+    }
+}
+
+const COMPACT_INSTRUCTIONS_CAP: usize = 10_000;
+/// The host feature for `customInstructions` in a `session_before_compact` result.
+const COMPACT_INSTRUCTIONS_FEATURE: &str = "compactionInstructions";
+
+/// The `/compact` text, then the stdout of each PreCompact hook, cut at 10,000 characters.
+fn compact_instructions(ev: &EventCtx, outcomes: &[Outcome]) -> Option<String> {
+    let hooks: Vec<String> = outcomes
+        .iter()
+        .filter_map(|o| o.compact_instructions.as_deref())
+        .map(cap_instructions)
+        .collect();
+    if hooks.is_empty() {
+        return None;
+    }
+    let supported = ev
+        .host()
+        .init()
+        .is_some_and(|init| init.has_feature(COMPACT_INSTRUCTIONS_FEATURE));
+    if !supported {
+        pi_ext_sdk::info!(
+            "hooks: PreCompact stdout needs the pi feature {COMPACT_INSTRUCTIONS_FEATURE}; not sent"
+        );
+        return None;
+    }
+    let user = ev.event().get("customInstructions").and_then(Value::as_str);
+    let parts: Vec<&str> = user
+        .filter(|text| !text.trim().is_empty())
+        .into_iter()
+        .collect();
+    Some(
+        parts
+            .into_iter()
+            .chain(hooks.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    )
+}
+
+fn cap_instructions(text: &str) -> String {
+    match text.char_indices().nth(COMPACT_INSTRUCTIONS_CAP) {
+        Some((end, _)) => format!(
+            "{}\n[PreCompact hook output cut at {COMPACT_INSTRUCTIONS_CAP} characters]",
+            &text[..end]
+        ),
+        None => text.to_owned(),
     }
 }
 

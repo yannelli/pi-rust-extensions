@@ -84,10 +84,16 @@ impl TestHost {
     }
 
     pub async fn initialize(&mut self) -> Value {
+        self.initialize_with(&[]).await
+    }
+
+    /// `initialize` from a pi that speaks the optional protocol parts `features`.
+    pub async fn initialize_with(&mut self, features: &[&str]) -> Value {
         let params = json!({
             "protocolVersion": 1, "piVersion": "0.8.0", "cwd": "/work",
             "agentDir": "/home/u/.pi/agent", "extensionPath": "native:test/test",
-            "platform": "darwin", "mode": "tui", "hasUI": true, "flags": {}
+            "platform": "darwin", "mode": "tui", "hasUI": true, "flags": {},
+            "features": features
         });
         self.request(0, "initialize", params).await;
         let response = self.expect_response(0).await;
