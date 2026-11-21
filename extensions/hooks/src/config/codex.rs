@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 use toml_edit::{DocumentMut, Item, Table};
@@ -10,9 +10,11 @@ use super::options::read_json;
 #[derive(Debug, Default)]
 pub struct CodexLayer {
     /// `(file, hooks object)` pairs.
-    pub hooks: Vec<(std::path::PathBuf, Value)>,
+    pub hooks: Vec<(PathBuf, Value)>,
     /// `[features] hooks` (or `codex_hooks`) when set.
     pub feature: Option<bool>,
+    /// The layer's `config.toml` document.
+    pub config: Option<Value>,
 }
 
 pub fn load_layer(dir: &Path) -> CodexLayer {
@@ -23,24 +25,42 @@ pub fn load_layer(dir: &Path) -> CodexLayer {
     }
     let toml_path = dir.join("config.toml");
     if let Some(doc) = read_toml(&toml_path) {
-        let features = doc.get("features");
-        layer.feature = features
-            .and_then(|f| f.get("hooks").or_else(|| f.get("codex_hooks")))
-            .and_then(Value::as_bool);
-        if let Some(hooks) = doc
-            .get("hooks")
-            .filter(|h| h.as_object().is_some_and(|o| !o.is_empty()))
-        {
-            if !layer.hooks.is_empty() {
-                pi_ext_sdk::warn!(
-                    "hooks: {} has hooks in both hooks.json and config.toml; merging them",
-                    dir.display()
-                );
-            }
-            layer.hooks.push((toml_path, hooks.clone()));
+        if !layer.hooks.is_empty() && inline_hooks(&doc).is_some() {
+            pi_ext_sdk::warn!(
+                "hooks: {} has hooks in both hooks.json and config.toml; merging them",
+                dir.display()
+            );
         }
+        layer.add_config(toml_path, doc);
     }
     layer
+}
+
+impl CodexLayer {
+    /// A layer that has only a `config.toml` document, such as a managed config source.
+    pub fn from_config(file: PathBuf, doc: Value) -> Self {
+        let mut layer = Self::default();
+        layer.add_config(file, doc);
+        layer
+    }
+
+    fn add_config(&mut self, file: PathBuf, doc: Value) {
+        self.feature = feature(&doc, "hooks").or_else(|| feature(&doc, "codex_hooks"));
+        if let Some(hooks) = inline_hooks(&doc) {
+            self.hooks.push((file, hooks.clone()));
+        }
+        self.config = Some(doc);
+    }
+}
+
+/// `[features] <name>` of a config or requirements document.
+pub fn feature(doc: &Value, name: &str) -> Option<bool> {
+    doc.get("features")?.get(name)?.as_bool()
+}
+
+fn inline_hooks(doc: &Value) -> Option<&Value> {
+    doc.get("hooks")
+        .filter(|h| h.as_object().is_some_and(|o| !o.is_empty()))
 }
 
 /// User `config.toml` `[hooks.state."<key>"] enabled`: per-hook switches set in Codex `/hooks`.
@@ -62,10 +82,15 @@ pub fn hook_states(codex_home: &Path) -> HashMap<String, bool> {
 
 pub fn read_toml(path: &Path) -> Option<Value> {
     let text = std::fs::read_to_string(path).ok()?;
+    parse_toml(&text, &path.display().to_string())
+}
+
+/// Parses TOML text into JSON; `name` labels the warning when it does not parse.
+pub fn parse_toml(text: &str, name: &str) -> Option<Value> {
     match text.parse::<DocumentMut>() {
         Ok(doc) => Some(table_to_json(doc.as_table())),
         Err(err) => {
-            pi_ext_sdk::warn!("hooks: cannot parse {}: {err}", path.display());
+            pi_ext_sdk::warn!("hooks: cannot parse {name}: {err}");
             None
         }
     }

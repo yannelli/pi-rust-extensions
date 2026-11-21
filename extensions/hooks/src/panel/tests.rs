@@ -3,6 +3,7 @@ use pi_ext_sdk::style;
 use serde_json::json;
 
 use super::*;
+use crate::config::options::SWITCHES;
 use crate::model::{Layer, Plugin};
 
 fn def(
@@ -134,7 +135,6 @@ fn renders_within_40_and_100_columns() {
     let wide = plain(&view.render(&rows, 100, None)).join("\n");
     for text in [
         "[All (5)]",
-        "Settings (6)",
         "+ Add a hook",
         "Claude Code (2)",
         "Codex (1)",
@@ -151,6 +151,8 @@ fn renders_within_40_and_100_columns() {
     ] {
         assert!(wide.contains(text), "missing {text}:\n{wide}");
     }
+    let settings = format!("Settings ({})", Setting::all().len());
+    assert!(wide.contains(&settings), "missing {settings}:\n{wide}");
     let narrow = plain(&view.render(&rows, 40, None));
     assert!(
         narrow.iter().any(|l| l.contains("● PreToolUse Bash G✓")),
@@ -282,6 +284,7 @@ fn settings_change_in_place_and_from_the_actions_pane() {
     assert_eq!(press(&mut view, &rows, &[RIGHT]), Action::Set(claude, 1));
     assert_eq!(press(&mut view, &rows, &[LEFT]), Action::Set(claude, 1));
     press(&mut view, &rows, &["\x1b[F"]);
+    press(&mut view, &rows, &vec![UP; SWITCHES.len()]);
     assert_eq!(
         press(&mut view, &rows, &[RIGHT]),
         Action::Set(Setting::Conflicts, 1)

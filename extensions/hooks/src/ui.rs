@@ -86,7 +86,7 @@ fn project_trusted(snap: &Snapshot) -> bool {
 
 fn rows(rt: &Runtime) -> Vec<Row> {
     let hooks = rt.hooks();
-    let enabled = |def: &HookDef| def.layer == Layer::Managed || !rt.is_disabled(&def.hash);
+    let enabled = |def: &HookDef| def.layer == Layer::Managed || !rt.is_disabled(def);
     let active = |def: &HookDef| enabled(def) && rt.trust_of(def) != Trust::Denied;
     let shadowed = match rt.conflict_mode() {
         ConflictMode::Override => policy::shadowed(&hooks, active),
@@ -213,14 +213,17 @@ fn row_action(
         Action::Toggle(_) if row.enabled => manage::set_disabled(&file, def, true, trusted)
             .map(|()| format!("Disabled {name}; saved in {}", file.display())),
         Action::Toggle(_) => manage::set_disabled(&file, def, false, trusted).map(|()| {
+            let keys = def.disabled_keys();
             let legacy = rt
                 .lock()
                 .trust
                 .as_ref()
-                .is_some_and(|t| t.disabled.contains(&hash));
+                .is_some_and(|t| keys.iter().any(|key| t.disabled.contains(*key)));
             if legacy {
                 rt.update_trust(host, |t| {
-                    t.disabled.remove(&hash);
+                    for key in keys {
+                        t.disabled.remove(key);
+                    }
                 });
             }
             format!("Enabled {name}")

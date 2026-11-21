@@ -2,9 +2,11 @@
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
 
 use pi_ext_sdk::Host;
 
+use crate::config::codex_plugin_bundle::bundle_unchanged;
 use crate::dispatch::NO_MATCHER;
 use crate::model::{HookDef, Layer, Source, canonical};
 use crate::output::{Outcome, Permission};
@@ -163,6 +165,7 @@ pub async fn runnable(
     let mut handlers = HashSet::new();
     let mut winners: HashMap<ConflictKey, Layer> = HashMap::new();
     let mut keep = vec![false; selected.len()];
+    let mut fingerprints: HashMap<PathBuf, Option<String>> = HashMap::new();
     for i in order {
         let def = &selected[i];
         let handler = dedupe_key(def);
@@ -174,7 +177,7 @@ pub async fn runnable(
         if ordered && winners.get(&key).is_some_and(|layer| *layer != def.layer) {
             continue;
         }
-        if !may_run(rt, host, def).await {
+        if !may_run(rt, host, def, &mut fingerprints).await {
             continue;
         }
         handlers.insert(handler);
@@ -192,7 +195,15 @@ pub async fn runnable(
     kept
 }
 
-async fn may_run(rt: &Runtime, host: &Host, def: &HookDef) -> bool {
+async fn may_run(
+    rt: &Runtime,
+    host: &Host,
+    def: &HookDef,
+    fingerprints: &mut HashMap<PathBuf, Option<String>>,
+) -> bool {
+    if !bundle_unchanged(def, fingerprints) {
+        return false;
+    }
     if def.layer != Layer::Managed && !rt.resolve_trust(host, def).await {
         return false;
     }

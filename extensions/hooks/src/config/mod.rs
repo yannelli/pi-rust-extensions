@@ -1,4 +1,9 @@
 pub mod codex;
+mod codex_bundled;
+mod codex_cloud;
+mod codex_managed;
+pub(crate) mod codex_plugin_bundle;
+mod codex_plugins;
 pub mod managed;
 pub mod options;
 
@@ -176,16 +181,20 @@ fn load_claude(input: &LoadInput, options: &Options, loaded: &mut Loaded) -> boo
     others_off
 }
 
-/// Codex system (managed), `requirements.toml` (managed), user, and project layers.
+/// Codex managed layers (system dir, legacy file, MDM, requirements), cloud, user, project,
+/// and plugin layers. Each managed method, the cloud cache, and plugin loading have a switch.
 fn load_codex(input: &LoadInput, options: &Options, loaded: &mut Loaded) {
     let scoped = |scope: Scope| options.scope.allows(scope);
-    let system = input.paths.codex_system.as_deref();
-    let requirements = system.map(managed::codex_requirements);
+    let mut sources = codex_managed::ManagedSources::load(input.paths, options);
     let mut layers: Vec<(Scope, Layer, codex::CodexLayer)> = Vec::new();
-    if let Some(system) = system {
+    if let Some(system) = input.paths.codex_system.as_deref()
+        && options.switch_on(options::CODEX_SYSTEM)
+    {
         layers.push((Scope::Global, Layer::Managed, codex::load_layer(system)));
     }
     if scoped(Scope::Global) {
+        let cloud = std::mem::take(&mut sources.cloud_configs);
+        layers.extend(cloud.into_iter().map(|l| (Scope::Global, Layer::Global, l)));
         let user = codex::load_layer(&input.paths.codex_home);
         layers.push((Scope::Global, Layer::Global, user));
     }
@@ -208,20 +217,34 @@ fn load_codex(input: &LoadInput, options: &Options, loaded: &mut Loaded) {
             }
         }
     }
-    let pinned = requirements.as_ref().and_then(|r| r.feature);
+    for layer in std::mem::take(&mut sources.top_configs) {
+        layers.push((Scope::Global, Layer::Managed, layer));
+    }
+    let pinned = sources.pin(|r| r.feature);
     let feature = pinned.or_else(|| layers.iter().rev().find_map(|(_, _, l)| l.feature));
     if feature == Some(false) {
         pi_ext_sdk::info!("hooks: Codex [features] hooks = false; Codex hooks are off");
         return;
     }
-    let managed_only = requirements.as_ref().is_some_and(|r| r.managed_only);
-    if let Some(req) = &requirements
-        && let Some(hooks) = &req.hooks
-    {
-        let defs = parse_hooks(Source::Codex, Scope::Global, &req.file, hooks);
-        loaded.hooks.extend(with_layer(defs, Layer::Managed));
+    let managed_only = sources.pin(|r| r.managed_only) == Some(true);
+    for req in sources.requirements.iter().rev() {
+        if let Some(hooks) = &req.hooks {
+            let defs = parse_hooks(Source::Codex, Scope::Global, &req.file, hooks);
+            loaded.hooks.extend(with_layer(defs, Layer::Managed));
+        }
     }
     let states = codex::hook_states(&input.paths.codex_home);
+    let configs: Vec<&Value> = layers
+        .iter()
+        .filter_map(|(_, _, l)| l.config.as_ref())
+        .collect();
+    let plugins = (!managed_only
+        && scoped(Scope::Global)
+        && options.switch_on(options::CODEX_PLUGINS))
+    .then(|| {
+        let pinned = sources.pin(|r| r.plugins);
+        codex_plugins::load(&input.paths.codex_home, &configs, pinned, &states)
+    });
     for (scope, layer, codex_layer) in layers {
         if managed_only && layer != Layer::Managed {
             continue;
@@ -233,6 +256,7 @@ fn load_codex(input: &LoadInput, options: &Options, loaded: &mut Loaded) {
             }));
         }
     }
+    loaded.hooks.extend(plugins.into_iter().flatten());
 }
 
 /// `.codex` dirs from the project root down to `cwd`; Codex loads each one. The root is the

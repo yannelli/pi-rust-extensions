@@ -9,6 +9,8 @@ pub struct Paths {
     pub codex_system: Option<PathBuf>,
     /// Claude Code managed settings dir (`managed-settings.json` and `managed-settings.d`).
     pub claude_policy: Option<PathBuf>,
+    /// macOS managed preferences dir (`/Library/Managed Preferences`) for Codex MDM payloads.
+    pub codex_mdm: Option<PathBuf>,
     pub temp_dir: PathBuf,
     /// Overrides the agent dir from `initialize`.
     pub agent_dir: Option<PathBuf>,
@@ -29,6 +31,8 @@ impl Paths {
                 .unwrap_or_else(|| home.join(".codex")),
             codex_system: codex_system_dir(),
             claude_policy: Some(claude_policy_dir()),
+            codex_mdm: cfg!(target_os = "macos")
+                .then(|| PathBuf::from("/Library/Managed Preferences")),
             temp_dir: std::env::temp_dir(),
             agent_dir: None,
         }

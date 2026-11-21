@@ -195,7 +195,7 @@ fn select(rt: &Runtime, d: &Dispatch, cwd: &Path) -> Vec<HookDef> {
             (Some(rule), Some((name, input))) => if_rule_matches(rule, name, input, cwd),
             _ => true,
         })
-        .filter(|def| def.layer == Layer::Managed || !rt.is_disabled(&def.hash))
+        .filter(|def| def.layer == Layer::Managed || !rt.is_disabled(def))
         .filter(|def| !(def.kind() == "mcp_tool" && before_mcp(&def.event, &d.payload)))
         .filter(supported)
         .filter(|def| url_allowed(&http, def))
@@ -229,6 +229,7 @@ fn supported(def: &HookDef) -> bool {
         "command" if def.str_field("command").is_none() => "command hook without command",
         "command"
             if def.plugin.is_some()
+                && !def.source.is_codex()
                 && def.handler.get("args").is_none()
                 && def
                     .str_field("command")

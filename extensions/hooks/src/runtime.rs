@@ -197,17 +197,19 @@ impl Runtime {
     }
 
     /// Disabled in a scope's `disabled` list or in the older `state.json` list.
-    pub fn is_disabled(&self, hash: &str) -> bool {
+    pub fn is_disabled(&self, def: &HookDef) -> bool {
         let state = self.lock();
-        let in_scope = state
-            .loaded
-            .as_ref()
-            .is_some_and(|l| l.options.disabled.contains(hash));
-        in_scope
-            || state
-                .trust
+        def.disabled_keys().iter().any(|key| {
+            let in_scope = state
+                .loaded
                 .as_ref()
-                .is_some_and(|t| t.disabled.contains(hash))
+                .is_some_and(|l| l.options.disabled.contains(*key));
+            in_scope
+                || state
+                    .trust
+                    .as_ref()
+                    .is_some_and(|t| t.disabled.contains(*key))
+        })
     }
 
     /// Changes the trust state and writes `state.json`.

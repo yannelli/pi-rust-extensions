@@ -24,6 +24,7 @@ fn fixture() -> Fixture {
             codex_home: base.join("codex"),
             codex_system: None,
             claude_policy: None,
+            codex_mdm: None,
             temp_dir: base.join("tmp"),
             agent_dir: None,
         },
@@ -249,4 +250,43 @@ fn unreadable_files_are_not_overwritten() {
     write(&pi, "{ not json");
     assert!(add(&pi, Scope::Global, true, "Stop", None, "x").is_err());
     assert_eq!(read(&pi), "{ not json");
+}
+
+#[test]
+fn hooks_without_a_config_file_are_not_removed() {
+    let f = fixture();
+    write(&f.paths.claude_dir.join("settings.json"), CLAUDE);
+    let loaded = load_with(&f);
+    let mut cloud = find(&loaded, "c").clone();
+    cloud.file = f
+        .paths
+        .codex_home
+        .join("cloud-config-bundle-cache.json#config_toml/f");
+    let err = remove(&cloud, true).unwrap_err().to_string();
+    assert!(err.contains("is not a file pi can edit"), "{err}");
+}
+
+#[test]
+fn plugin_hooks_disable_under_a_stable_key_and_replace_old_entries() {
+    let f = fixture();
+    let root = f.paths.codex_home.join("plugins/cache/m/p/1.0.0");
+    write(&root.join(".codex-plugin/plugin.json"), r#"{"name":"p"}"#);
+    let hooks =
+        json!({ "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "p" }] }] } });
+    write(&root.join("hooks/hooks.json"), &hooks.to_string());
+    let config = "[plugins.\"p@m\"]\nenabled = true\n";
+    write(&f.paths.codex_home.join("config.toml"), config);
+    let def = find(&load_with(&f), "p").clone();
+    let pi = f.agent.join("ext/hooks.json");
+    write(&pi, &json!({ "disabled": [def.hash] }).to_string());
+    set_disabled(&pi, &def, true, true).unwrap();
+    let doc: Value = serde_json::from_str(&read(&pi)).unwrap();
+    assert_eq!(doc["disabled"], json!([def.disabled_key()]));
+    write(&root.join("hooks/run.sh"), "echo changed");
+    let changed = find(&load_with(&f), "p").clone();
+    assert_ne!(changed.hash, def.hash);
+    assert_eq!(changed.disabled_key(), def.disabled_key());
+    write(&pi, &json!({ "disabled": [def.hash] }).to_string());
+    set_disabled(&pi, &def, false, true).unwrap();
+    assert!(!read(&pi).contains("disabled"));
 }

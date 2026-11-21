@@ -25,6 +25,7 @@ fn env() -> Env {
         codex_home: base.join("codex"),
         codex_system: None,
         claude_policy: None,
+        codex_mdm: None,
         temp_dir: base.join("tmp"),
         agent_dir: Some(base.join("agent")),
     };
@@ -301,5 +302,32 @@ async fn pre_tool_use_continue_false_lets_the_tool_run() {
         .event(1, "tool_call", tool_call(json!({ "command": "ls" })), ctx)
         .await;
     assert_ne!(response["result"]["result"]["block"], true, "{response}");
+    host.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn codex_plugin_hook_stops_after_its_files_change() {
+    let env = env();
+    let root = env.paths.codex_home.join("plugins/cache/m/p/1.0.0");
+    let manifest = root.join(".codex-plugin/plugin.json");
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    std::fs::write(&manifest, r#"{"name":"p"}"#).unwrap();
+    let deny = script(&env, "deny.sh", "echo 'blocked' >&2\nexit 2");
+    write_hooks(
+        &root.join("hooks/hooks.json"),
+        "PreToolUse",
+        Some("^Bash$"),
+        &deny,
+    );
+    let config = "[plugins.\"p@m\"]\nenabled = true\n";
+    std::fs::write(env.paths.codex_home.join("config.toml"), config).unwrap();
+    let mut host = start(&env).await;
+    let ctx = hooks_ctx(&env.cwd, false, true);
+    let call = tool_call(json!({ "command": "ls" }));
+    let first = host.event(1, "tool_call", call.clone(), ctx.clone()).await;
+    assert_eq!(first["result"]["result"]["block"], true, "{first}");
+    std::fs::write(root.join("hooks/run.sh"), "echo changed").unwrap();
+    let second = host.event(2, "tool_call", call, ctx).await;
+    assert_ne!(second["result"]["result"]["block"], true, "{second}");
     host.finish().await.unwrap();
 }

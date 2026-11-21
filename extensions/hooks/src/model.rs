@@ -101,6 +101,8 @@ pub struct HookDef {
     pub handler: Value,
     pub plugin: Option<Plugin>,
     pub hash: String,
+    /// The hash without the plugin fingerprint of a Codex plugin hook, for `disabled` lists.
+    pub stable_hash: Option<String>,
     /// Matcher group and handler index in the file, for Codex `[hooks.state]` keys.
     pub position: (usize, usize),
 }
@@ -125,8 +127,19 @@ impl HookDef {
             handler,
             plugin: None,
             hash,
+            stable_hash: None,
             position: (0, 0),
         }
+    }
+
+    /// The key pi writes to a `disabled` list. It stays the same when plugin files change.
+    pub fn disabled_key(&self) -> &str {
+        self.stable_hash.as_deref().unwrap_or(&self.hash)
+    }
+
+    /// The keys that disable this hook: `disabled_key` and the full hash of older entries.
+    pub fn disabled_keys(&self) -> [&str; 2] {
+        [self.disabled_key(), &self.hash]
     }
 
     pub fn str_field(&self, key: &str) -> Option<&str> {

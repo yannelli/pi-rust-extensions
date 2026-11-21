@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::codex::read_toml;
+use super::codex::{feature, read_toml};
 use super::options::read_json;
 
 /// `managed-settings.json`, then `managed-settings.d/*.json` in name order without hidden files.
@@ -33,7 +33,7 @@ pub fn claude_policy_docs(dir: &Path) -> Vec<(PathBuf, Value)> {
         .collect()
 }
 
-/// Codex `requirements.toml` in the system dir.
+/// One Codex requirements source: the system `requirements.toml`, a cloud fragment, or MDM.
 #[derive(Debug, Default)]
 pub struct Requirements {
     pub file: PathBuf,
@@ -41,22 +41,28 @@ pub struct Requirements {
     pub hooks: Option<Value>,
     /// `[features] hooks`, which wins over every config layer.
     pub feature: Option<bool>,
-    /// `allow_managed_hooks_only`: only system and `requirements.toml` hooks run.
-    pub managed_only: bool,
+    /// `[features] plugins`.
+    pub plugins: Option<bool>,
+    /// `allow_managed_hooks_only`: only managed hooks run.
+    pub managed_only: Option<bool>,
+}
+
+impl Requirements {
+    pub fn from_doc(file: PathBuf, doc: &Value) -> Self {
+        Self {
+            hooks: doc.get("hooks").filter(|h| h.is_object()).cloned(),
+            feature: feature(doc, "hooks").or_else(|| feature(doc, "codex_hooks")),
+            plugins: feature(doc, "plugins"),
+            managed_only: doc.get("allow_managed_hooks_only").and_then(Value::as_bool),
+            file,
+        }
+    }
 }
 
 pub fn codex_requirements(system: &Path) -> Requirements {
     let file = system.join("requirements.toml");
     let doc = read_toml(&file).unwrap_or(Value::Null);
-    let features = doc.get("features");
-    Requirements {
-        hooks: doc.get("hooks").filter(|h| h.is_object()).cloned(),
-        feature: features
-            .and_then(|f| f.get("hooks").or_else(|| f.get("codex_hooks")))
-            .and_then(Value::as_bool),
-        managed_only: doc.get("allow_managed_hooks_only") == Some(&Value::Bool(true)),
-        file,
-    }
+    Requirements::from_doc(file, &doc)
 }
 
 /// Codex `project_root_markers` from the user `config.toml`; `.git` when unset.
@@ -111,7 +117,7 @@ command = "/enterprise/hooks/check.py"
         )
         .unwrap();
         let req = codex_requirements(dir.path());
-        assert!(req.managed_only);
+        assert_eq!(req.managed_only, Some(true));
         assert_eq!(req.feature, Some(true));
         let hooks = req.hooks.unwrap();
         assert_eq!(hooks["PreToolUse"][0]["matcher"], "^Bash$");
