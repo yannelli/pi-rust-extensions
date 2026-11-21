@@ -1,6 +1,6 @@
 # hooks
 
-Created 2026-10-29. Last updated 2026-11-20.
+Created 2026-10-29. Last updated 2026-11-21.
 
 Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both tools and a pi-native hooks file, maps pi events onto hook events, runs the matching handlers, and applies their decisions to pi. It follows these docs, read 2026-11-20: the Claude Code hooks reference (code.claude.com/docs/en/hooks), settings reference (code.claude.com/docs/en/settings-reference), and managed settings (code.claude.com/docs/en/managed-settings), and the Codex hooks docs (developers.openai.com/codex/hooks) with the Codex 0.171.0 hook schemas.
 
@@ -81,6 +81,7 @@ In `<agentDir>/ext/hooks.json` and `<cwd>/.pi/ext/hooks.json` (same file as the 
 | `trustAll` | `false` | Run all hooks without trust prompts. Read from the global options file only; a project file's `trustAll` is ignored. |
 | `conflicts` | `"merge"` | `merge`, `warn`, or `override`; see [Conflicts between layers](#conflicts-between-layers). Read from the global options file only, because a project options file can come from the repository. |
 | `disabled` | `[]` | Hashes of disabled hooks. The lists of both files merge. |
+| `limits/promptAgentHooks` | `false` | Claude Code limit on prompt and agent hooks; see [Handlers](#handlers). Read from the global options file only. |
 | Feature switches | per switch | On and off rows that features add to the Settings tab, each under its own key (for example `managed/<name>`). Read from the global options file only. |
 
 ## Conflicts between layers
@@ -192,6 +193,7 @@ All events: `session_id`, `transcript_path` (session file or `null`), `cwd`, `ho
 - `prompt` (Claude and pi): asks the session model (or `model`: a pi `provider/id`, or a Claude model id that pi knows on the `anthropic` provider; an alias such as `haiku` or an unknown id uses the session model with a log line) through `llm.complete` with the prompt, `$ARGUMENTS` replaced by the event JSON (appended when there is no placeholder); `\$` gives a literal `$`. The reply must hold `{ "ok": bool, "reason"? }` or `{ "decision", "reason" }`; On `ok: false`: Stop and SubagentStop continue the turn with the reason, unless the reply sets `impossible: true`; PreToolUse and PostToolUse end the turn (block plus `continue: false`), or with `continueOnBlock: true` give the reason to the model; PermissionRequest and PermissionDenied ignore it; other events block. Default timeout 30 seconds.
 - `mcp_tool` (Claude, Codex, and pi): calls `tool` of the connected MCP server `server` through pi's `mcp.callTool` (pi-rust only) with `input`. `${field.nested}` in `input` reads the event JSON; a placeholder that is a whole string keeps its JSON type, one inside text renders as text. The text content is read like stdout; `isError: true` is a non-blocking error. Default timeout 600 seconds. It does not run on Setup or on SessionStart `startup` and `resume`, because MCP servers are not ready yet, or on Codex SessionEnd, which Codex does not support. The trust prompt shows `input`.
 - `agent` (Claude and pi): runs a child `pi -p --no-session --tools read,grep,find,ls,bash --max-turns 50` (`$PI_BIN`, else the parent pi, else `pi` on `PATH`) in the session cwd with the prompt (`$ARGUMENTS` as for prompt hooks) and `model`. The last reply must hold `{ "ok", "reason"? }`; `ok: false` acts like a prompt hook with `continueOnBlock: true`, and `impossible` is ignored. Default timeout 60 seconds. Not on PermissionRequest. Codex skips `agent`, as Codex does.
+- Prompt and agent hook limit (Claude and pi, `limits/promptAgentHooks`, off by default), as in Claude Code 2.1.302 and 2.1.312: at most 12 sync prompt and agent hooks of one event run at once, and at most 24 in the session; the rest start as running ones finish. A hook that waited longer than its own `timeout` can also take one of 12 more session slots. The wait counts from when the hook is queued; the hook's `timeout` starts when the hook starts. `async` prompt and agent hooks do not count toward either limit; they run in the 8 background slots of `async: true`.
 - `once: true` (pi-native hooks only; Claude and Codex settings ignore it): after one run that exits 0 and does not block, the hook does not run again this session.
 - The same handler in more than one file runs once per event (see [Conflicts between layers](#conflicts-between-layers)). `statusMessage`: shown as the `hooks` status while the handlers run.
 
@@ -216,7 +218,7 @@ Events marked pi-rust come from host events that only pi-rust 0.12.3 and later s
 - PermissionRequest runs on each tool call that PreToolUse did not allow or deny, because pi has no permission dialog.
 - Codex `prompt` and `agent` handlers are skipped, as in Codex. `mcp_tool` needs a pi-rust host with `mcp.callTool`; older hosts give a non-blocking error.
 - Codex matcher regexes use the Rust `regex` syntax, as Codex does: lookaround and backreferences are invalid there and match nothing.
-- The per-event handler type limits of Claude (for example, SessionStart allows only `command` and `mcp_tool`) are not checked, and prompt hooks have no limit of 12 at a time.
+- The per-event handler type limits of Claude (for example, SessionStart allows only `command` and `mcp_tool`) are not checked.
 - SessionEnd hooks each get their own timeout, not one shared budget. `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` is not read.
 - Codex: `trusted_hash` in `[hooks.state]`, plugin hooks (root `plugin.json` `extensions.com.openai` `hooks`, `.codex-plugin/plugin.json`, and plugin `hooks/hooks.json`), cloud and MDM managed hooks, the legacy `/etc/codex/managed_config.toml`, and `continue: false` on SessionStart `compact` and PostCompact are not supported. `onFailure` is skipped for Codex hooks; Codex has it only on `main` (not in 0.171.0).
 - Codex runs a command that two files register twice; pi runs it once, like Claude Code.
@@ -228,6 +230,6 @@ Events marked pi-rust come from host events that only pi-rust 0.12.3 and later s
 - Output fields: UserPromptSubmit `sessionTitle` sets the session name. A PermissionRequest deny with `decision.interrupt: true` aborts the run. `<system-reminder>` tags in context reach the model with `<` as `&lt;`. PostToolUse `classifierContext` and UserPromptSubmit `suppressOriginalPrompt` have no effect, because pi has no auto mode classifier and shows no block message with the prompt text.
 - Unsupported handler and settings fields: `shell: "powershell"` on non-Windows, Claude `updatedPermissions`, `updatedMCPToolOutput` beyond replacing the content, SessionStart `reloadSkills`, plugin `hooks/hooks.json` files outside the pi-native file, and skill or subagent frontmatter hooks.
 - Claude managed settings come from the managed settings files only: MDM, registry, and server-managed sources are not read, and the files merge without the `first-wins` choice between sources. Under `allowManagedHooksOnly`, hooks of plugins that managed `enabledPlugins` force-enables do not run.
-- Claude Code runs at most 12 prompt and agent hooks of one event at once and starts the rest as those finish. pi starts them all at once.
+- pi starts all prompt and agent hooks at once unless `limits/promptAgentHooks` is on (see [Handlers](#handlers)). With it on, the 24-hook session limit counts the hooks of this pi process; Claude Code also counts sub-agents. Claude Code 2.1.312 gives 12 more slots to hooks that "have waited longer than their event's timeout"; the docs do not define that timeout, and pi uses the hook's own `timeout`.
 - SubagentStart context and SubagentStop blocks go to `pi.events` channels, because the extension cannot reach the subagent session.
 - A denied hook stays denied with `trustAll`.

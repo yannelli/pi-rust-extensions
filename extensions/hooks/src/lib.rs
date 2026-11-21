@@ -3,6 +3,7 @@ mod decide;
 mod dispatch;
 mod events;
 mod exec;
+mod limit;
 mod manage;
 mod matcher;
 mod model;

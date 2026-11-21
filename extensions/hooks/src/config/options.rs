@@ -50,7 +50,12 @@ pub struct Switch {
 }
 
 /// The switches that features add, in Settings tab order.
-pub const SWITCHES: &[Switch] = &[];
+pub const SWITCHES: &[Switch] = &[Switch {
+    key: crate::limit::SWITCH,
+    label: "Claude prompt and agent hook limit",
+    about: "Run at most 12 prompt and agent hooks of one event and 24 of the session at once, as Claude Code does.",
+    default: false,
+}];
 
 /// The value of each switch in `doc`, else its default.
 pub fn read_switches(doc: &Value, switches: &'static [Switch]) -> BTreeMap<&'static str, bool> {

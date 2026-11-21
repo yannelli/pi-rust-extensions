@@ -8,6 +8,7 @@ use tokio::sync::Semaphore;
 
 use crate::config::{self, LoadInput, Loaded};
 use crate::exec::http::HttpPolicy;
+use crate::limit::SessionSlots;
 use crate::model::{HookDef, Layer};
 use crate::paths::{Paths, state_dir};
 use crate::policy::ConflictMode;
@@ -67,6 +68,7 @@ pub struct Runtime {
     pub paths: Paths,
     state: Mutex<State>,
     pub async_slots: Arc<Semaphore>,
+    pub hook_slots: SessionSlots,
 }
 
 impl Runtime {
@@ -75,6 +77,7 @@ impl Runtime {
             paths,
             state: Mutex::new(State::default()),
             async_slots: Arc::new(Semaphore::new(ASYNC_LIMIT)),
+            hook_slots: SessionSlots::default(),
         })
     }
 

@@ -8,6 +8,7 @@ use tokio::task::JoinSet;
 
 use crate::exec::http::HttpPolicy;
 use crate::exec::{self, Context};
+use crate::limit::{self, Gate};
 use crate::matcher::{Target, if_rule_matches, matches_event};
 use crate::model::{HookDef, Layer, Source};
 use crate::output::{Interpret, Outcome, RawRun, interpret, terminal_sequence_allowed};
@@ -127,6 +128,10 @@ pub async fn dispatch(
     if let Some(status) = &status {
         let _ = host.set_status("hooks", Some(status)).await;
     }
+    let gate = Gate::new(
+        rt.lock().loaded.as_ref().map(|l| &l.options),
+        &rt.hook_slots,
+    );
     let mut tasks = JoinSet::new();
     let mut sync_count = 0;
     for def in runnable {
@@ -136,13 +141,12 @@ pub async fn dispatch(
             spawn_async(rt.clone(), cx.clone(), def, input);
             continue;
         }
-        let cx = cx.clone();
+        let (cx, gate) = (cx.clone(), gate.clone());
         let index = sync_count;
         sync_count += 1;
         tasks.spawn(async move {
-            let started = Instant::now();
-            let raw = exec::run(&cx, &def, input).await;
-            (index, def, raw, started.elapsed())
+            let (raw, elapsed) = limit::run(gate.as_ref(), &def, timed(&cx, &def, input)).await;
+            (index, def, raw, elapsed)
         });
     }
     let mut done = tasks.join_all().await;
@@ -336,13 +340,18 @@ fn claude_effort(snap: &Snapshot) -> Option<&'static str> {
     }
 }
 
+/// Runs one hook and measures how long it ran.
+async fn timed(cx: &Context, def: &HookDef, input: String) -> (RawRun, std::time::Duration) {
+    let started = Instant::now();
+    (exec::run(cx, def, input).await, started.elapsed())
+}
+
 fn spawn_async(rt: Arc<Runtime>, cx: Arc<Context>, def: HookDef, input: String) {
     tokio::spawn(async move {
         let Ok(_permit) = rt.async_slots.clone().acquire_owned().await else {
             return;
         };
-        let started = Instant::now();
-        let mut raw = exec::run(&cx, &def, input).await;
+        let (mut raw, elapsed) = timed(&cx, &def, input).await;
         if !def.source.is_codex() {
             raw.stdout = async_json_line(&raw.stdout);
         }
@@ -360,10 +369,7 @@ fn spawn_async(rt: Arc<Runtime>, cx: Arc<Context>, def: HookDef, input: String) 
         cap_outcome(&rt, &cx, &def, &mut outcome);
         rt.record_runs(
             &cx.host,
-            vec![(
-                def.hash.clone(),
-                last_run(&raw, &outcome, started.elapsed()),
-            )],
+            vec![(def.hash.clone(), last_run(&raw, &outcome, elapsed))],
         );
         if let Some(message) = &outcome.system_message {
             let _ = cx.host.notify_warning(message.clone()).await;

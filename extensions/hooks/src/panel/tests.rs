@@ -132,9 +132,10 @@ fn renders_within_40_and_100_columns() {
     }
     let view = View::new(true);
     let wide = plain(&view.render(&rows, 100, None)).join("\n");
+    let settings = format!("Settings ({})", Setting::all().len());
     for text in [
         "[All (5)]",
-        "Settings (6)",
+        &settings,
         "+ Add a hook",
         "Claude Code (2)",
         "Codex (1)",
@@ -281,7 +282,7 @@ fn settings_change_in_place_and_from_the_actions_pane() {
     let claude = Setting::Source(Source::Claude);
     assert_eq!(press(&mut view, &rows, &[RIGHT]), Action::Set(claude, 1));
     assert_eq!(press(&mut view, &rows, &[LEFT]), Action::Set(claude, 1));
-    press(&mut view, &rows, &["\x1b[F"]);
+    press(&mut view, &rows, &[DOWN; 5]);
     assert_eq!(
         press(&mut view, &rows, &[RIGHT]),
         Action::Set(Setting::Conflicts, 1)
