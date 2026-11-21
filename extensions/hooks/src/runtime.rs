@@ -8,7 +8,7 @@ use tokio::sync::Semaphore;
 
 use crate::config::{self, LoadInput, Loaded};
 use crate::exec::http::HttpPolicy;
-use crate::model::{HookDef, Layer};
+use crate::model::HookDef;
 use crate::paths::{Paths, state_dir};
 use crate::policy::ConflictMode;
 use crate::trust::{LastRuns, Trust, TrustState, load_json, save_json};
@@ -157,9 +157,9 @@ impl Runtime {
             .unwrap_or_default()
     }
 
-    /// The trust level the panel shows; managed hooks are trusted by policy.
+    /// The trust level the panel shows; see `HookDef::trusted_by_policy`.
     pub fn trust_of(&self, def: &HookDef) -> Trust {
-        if def.layer == Layer::Managed {
+        if def.trusted_by_policy() {
             Trust::Managed
         } else {
             self.trust_level(&def.hash)

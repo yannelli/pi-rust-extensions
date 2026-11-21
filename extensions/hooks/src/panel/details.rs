@@ -4,7 +4,7 @@ use pi_ext_sdk::style;
 
 use super::keys::managed_text;
 use super::render::{accent, muted};
-use super::{DetailAction, Entry, Row, Setting, View};
+use super::{Entry, Row, Setting, View};
 use crate::trust::LastRun;
 
 const LABEL: usize = 10;
@@ -111,9 +111,12 @@ fn hook_lines(row: &Row, choice: Option<usize>, width: usize) -> Vec<String> {
         lines.push(String::new());
         let text = wrap(&managed_text(row), width.saturating_sub(2));
         lines.extend(text.into_iter().map(|l| muted(&format!(" {l}"))));
+    }
+    if row.actions().is_empty() {
         return lines;
     }
-    let labels = DetailAction::ALL
+    let labels = row
+        .actions()
         .iter()
         .map(|a| a.label(row.enabled).to_owned());
     lines.extend(actions(labels.collect(), choice));

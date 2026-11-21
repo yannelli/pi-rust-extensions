@@ -19,6 +19,7 @@ fn fixture() -> Fixture {
         codex_home: base.join("codex"),
         codex_system: None,
         claude_policy: None,
+        claude_os_policy: None,
         temp_dir: base.join("tmp"),
         agent_dir: None,
     };
@@ -253,6 +254,7 @@ fn codex_layers_and_hook_state() {
     let paths = Paths {
         codex_system: Some(system.clone()),
         claude_policy: None,
+        claude_os_policy: None,
         ..f.paths.clone()
     };
     let f = Fixture { paths, ..f };

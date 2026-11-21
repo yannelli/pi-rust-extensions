@@ -41,6 +41,13 @@ impl DetailAction {
         DetailAction::Deny,
         DetailAction::Remove,
     ];
+    /// The actions of a managed hook that needs trust; its file is not pi's to change.
+    pub const TRUST: [DetailAction; 4] = [
+        DetailAction::TrustAlways,
+        DetailAction::AllowOnce,
+        DetailAction::Untrust,
+        DetailAction::Deny,
+    ];
 
     pub fn label(self, enabled: bool) -> &'static str {
         match self {
@@ -202,7 +209,7 @@ impl View {
     /// The number of actions in the actions pane of the selected entry.
     pub fn choice_count(&self, rows: &[Row]) -> usize {
         match self.selected_entry(rows) {
-            Some(Entry::Hook(row)) if !row.managed() => DetailAction::ALL.len(),
+            Some(Entry::Hook(row)) => row.actions().len(),
             Some(Entry::Setting(setting)) => setting.values().len(),
             _ => 0,
         }

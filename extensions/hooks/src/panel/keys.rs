@@ -133,11 +133,11 @@ impl View {
             Some(Entry::Setting(setting)) if choice < setting.values().len() => {
                 return Action::Set(setting, choice);
             }
-            Some(Entry::Hook(row)) if !row.managed() => row,
+            Some(Entry::Hook(row)) => row,
             _ => return Action::Redraw,
         };
         let hash = row.def.hash.clone();
-        let change = match DetailAction::ALL.get(choice) {
+        let change = match row.actions().get(choice) {
             Some(DetailAction::Toggle) => return Action::Toggle(hash),
             Some(DetailAction::Remove) => {
                 self.screen = Screen::Confirm { hash };

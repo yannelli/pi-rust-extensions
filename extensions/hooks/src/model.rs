@@ -49,8 +49,8 @@ impl Scope {
     }
 }
 
-/// How specific a hook's file is, least specific first. Organization policy files are `Managed`:
-/// trusted by policy, never disabled, and outside the `override` order.
+/// How specific a hook's file is, least specific first. Organization policy is `Managed`: never
+/// disabled, outside the `override` order, and trusted by policy unless `HookDef::user_writable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Layer {
     Global,
@@ -103,6 +103,8 @@ pub struct HookDef {
     pub hash: String,
     /// Matcher group and handler index in the file, for Codex `[hooks.state]` keys.
     pub position: (usize, usize),
+    /// A managed hook from a source the user can write: the server-managed copy or HKCU.
+    pub user_writable: bool,
 }
 
 impl HookDef {
@@ -126,7 +128,13 @@ impl HookDef {
             plugin: None,
             hash,
             position: (0, 0),
+            user_writable: false,
         }
+    }
+
+    /// Runs without a trust prompt because organization policy deployed it.
+    pub fn trusted_by_policy(&self) -> bool {
+        self.layer == Layer::Managed && !self.user_writable
     }
 
     pub fn str_field(&self, key: &str) -> Option<&str> {

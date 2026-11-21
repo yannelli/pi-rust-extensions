@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::config::policy_sources::OsPolicy;
+
 /// Config roots outside pi. `main()` reads them from the environment; tests build them directly.
 #[derive(Debug, Clone)]
 pub struct Paths {
@@ -9,6 +11,8 @@ pub struct Paths {
     pub codex_system: Option<PathBuf>,
     /// Claude Code managed settings dir (`managed-settings.json` and `managed-settings.d`).
     pub claude_policy: Option<PathBuf>,
+    /// Claude Code MDM plist and registry readers; `None` reads neither.
+    pub claude_os_policy: Option<OsPolicy>,
     pub temp_dir: PathBuf,
     /// Overrides the agent dir from `initialize`.
     pub agent_dir: Option<PathBuf>,
@@ -29,6 +33,7 @@ impl Paths {
                 .unwrap_or_else(|| home.join(".codex")),
             codex_system: codex_system_dir(),
             claude_policy: Some(claude_policy_dir()),
+            claude_os_policy: Some(OsPolicy::from_env()),
             temp_dir: std::env::temp_dir(),
             agent_dir: None,
         }

@@ -193,7 +193,7 @@ pub async fn runnable(
 }
 
 async fn may_run(rt: &Runtime, host: &Host, def: &HookDef) -> bool {
-    if def.layer != Layer::Managed && !rt.resolve_trust(host, def).await {
+    if !def.trusted_by_policy() && !rt.resolve_trust(host, def).await {
         return false;
     }
     let once = def.source == Source::Pi && def.bool_field("once");

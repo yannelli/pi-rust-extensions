@@ -99,6 +99,18 @@ impl Row {
         self.def.layer == Layer::Managed
     }
 
+    /// The actions pane items: none for hooks trusted by policy, trust changes only for the
+    /// other managed hooks.
+    pub fn actions(&self) -> &'static [DetailAction] {
+        if self.def.trusted_by_policy() {
+            &[]
+        } else if self.managed() {
+            &DetailAction::TRUST
+        } else {
+            &DetailAction::ALL
+        }
+    }
+
     fn matches(&self, query: &str) -> bool {
         let plugin = self.def.plugin.as_ref().and_then(|p| p.id.as_deref());
         let summary = self.def.summary();

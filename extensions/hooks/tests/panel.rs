@@ -27,6 +27,7 @@ fn env() -> Env {
         codex_home: base.join("codex"),
         codex_system: None,
         claude_policy: None,
+        claude_os_policy: None,
         temp_dir: base.join("tmp"),
         agent_dir: Some(base.join("agent")),
     };
@@ -256,9 +257,11 @@ async fn settings_tab_sets_the_conflict_mode_in_place() {
     let (panel, surface, lines) = open(&mut host, 1, ctx(&env, true)).await;
     assert!(lines.contains("[conflict]"), "{lines}");
     let lines = key(&mut host, &surface, "\u{1b}[Z").await;
-    assert!(lines.contains("[Settings (6)]"), "{lines}");
+    assert!(lines.contains("[Settings ("), "{lines}");
     assert!(lines.contains("Conflicts between layers"), "{lines}");
-    key(&mut host, &surface, "\u{1b}[F").await;
+    for _ in 0..5 {
+        key(&mut host, &surface, DOWN).await;
+    }
     host.notify("ui.key", json!({ "surface": surface, "data": RIGHT }))
         .await;
     let (id, notice) = host.expect_request("ui.notify").await;

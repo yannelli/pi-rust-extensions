@@ -132,9 +132,10 @@ fn renders_within_40_and_100_columns() {
     }
     let view = View::new(true);
     let wide = plain(&view.render(&rows, 100, None)).join("\n");
+    let settings = format!("Settings ({})", Setting::all().len());
     for text in [
         "[All (5)]",
-        "Settings (6)",
+        settings.as_str(),
         "+ Add a hook",
         "Claude Code (2)",
         "Codex (1)",
@@ -281,7 +282,7 @@ fn settings_change_in_place_and_from_the_actions_pane() {
     let claude = Setting::Source(Source::Claude);
     assert_eq!(press(&mut view, &rows, &[RIGHT]), Action::Set(claude, 1));
     assert_eq!(press(&mut view, &rows, &[LEFT]), Action::Set(claude, 1));
-    press(&mut view, &rows, &["\x1b[F"]);
+    press(&mut view, &rows, &[DOWN, DOWN, DOWN, DOWN, DOWN]);
     assert_eq!(
         press(&mut view, &rows, &[RIGHT]),
         Action::Set(Setting::Conflicts, 1)
@@ -363,6 +364,31 @@ fn managed_hooks_show_details_without_actions() {
     let text = plain(&view.render(&rows, 80, None)).join("\n");
     assert!(!text.contains("Actions"), "{text}");
     assert!(text.contains("policy file"), "{text}");
+}
+
+#[test]
+fn user_writable_managed_hooks_offer_only_trust_actions() {
+    let mut rows = rows();
+    rows[0].def.layer = Layer::Managed;
+    rows[0].def.user_writable = true;
+    let hash = rows[0].def.hash.clone();
+    let mut view = View::new(true);
+    assert_eq!(press(&mut view, &rows, &[DOWN, RIGHT]), Action::Redraw);
+    assert!(view.status.clone().unwrap().1.contains("managed hook"));
+    press(&mut view, &rows, &["\r"]);
+    let text = plain(&view.render(&rows, 80, None)).join("\n");
+    assert!(
+        text.contains("Trust always") && text.contains("Deny"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Disable") && !text.contains("Remove"),
+        "{text}"
+    );
+    assert_eq!(
+        press(&mut view, &rows, &[UP, "\r"]),
+        Action::Trust(hash, TrustChange::Deny)
+    );
 }
 
 #[test]

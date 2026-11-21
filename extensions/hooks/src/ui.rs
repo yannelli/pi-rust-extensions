@@ -200,7 +200,8 @@ fn row_action(
         .find(|r| r.def.hash == hash)
         .ok_or_else(|| "The hook is gone; the list was reloaded.".to_owned())?;
     let def = &row.def;
-    if def.layer == Layer::Managed {
+    let trust_change = matches!(action, Action::Trust(..)) && !def.trusted_by_policy();
+    if def.layer == Layer::Managed && !trust_change {
         return Err(format!(
             "{} is a managed hook from {}. Change it in that policy file.",
             def.event,

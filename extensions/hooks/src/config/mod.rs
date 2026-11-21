@@ -1,6 +1,9 @@
+pub mod claude_policy;
 pub mod codex;
 pub mod managed;
 pub mod options;
+pub mod policy_command;
+pub mod policy_sources;
 
 use std::path::{Path, PathBuf};
 
@@ -132,17 +135,12 @@ fn load_claude(input: &LoadInput, options: &Options, loaded: &mut Loaded) -> boo
         .filter(|(layer, _)| *layer != Layer::Global || scoped(Scope::Global))
         .filter_map(|(layer, path)| read_json(&path).map(|doc| (layer, path, doc)))
         .collect();
-    let policy = input
-        .paths
-        .claude_policy
-        .as_deref()
-        .map(managed::claude_policy_docs)
-        .unwrap_or_default();
-    let policy_docs = || policy.iter().map(|(_, doc)| doc);
+    let policy = claude_policy::claude_policy_docs(input.paths, options);
+    let policy_docs = || policy.iter().map(|policy| &policy.doc);
     let user_docs = || docs.iter().map(|(_, _, doc)| doc);
     loaded.http = HttpPolicy::merge(policy_docs().chain(user_docs()));
-    let policy_disable = last_bool(policy_docs(), "disableAllHooks");
-    let managed_only = last_bool(policy_docs(), "allowManagedHooksOnly") == Some(true);
+    let policy_disable = claude_policy::lock(&policy, "disableAllHooks");
+    let managed_only = claude_policy::lock(&policy, "allowManagedHooksOnly") == Some(true);
     let all_off = policy_disable == Some(true);
     let user_off =
         policy_disable.is_none() && last_bool(user_docs(), "disableAllHooks") == Some(true);
@@ -153,10 +151,14 @@ fn load_claude(input: &LoadInput, options: &Options, loaded: &mut Loaded) -> boo
         pi_ext_sdk::info!("hooks: Claude settings allow only managed Claude hooks");
     }
     if !all_off {
-        for (path, doc) in &policy {
-            if let Some(hooks) = doc.get("hooks") {
-                let defs = parse_hooks(Source::Claude, Scope::Global, path, hooks);
-                loaded.hooks.extend(with_layer(defs, Layer::Managed));
+        for policy in &policy {
+            if let Some(hooks) = policy.doc.get("hooks") {
+                let defs = parse_hooks(Source::Claude, Scope::Global, &policy.path, hooks);
+                let mut defs = with_layer(defs, Layer::Managed);
+                for def in &mut defs {
+                    def.user_writable = policy.source.user_writable();
+                }
+                loaded.hooks.extend(defs);
             }
         }
     }

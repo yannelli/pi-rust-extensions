@@ -1,8 +1,8 @@
 # hooks
 
-Created 2026-10-29. Last updated 2026-11-20.
+Created 2026-10-29. Last updated 2026-11-21.
 
-Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both tools and a pi-native hooks file, maps pi events onto hook events, runs the matching handlers, and applies their decisions to pi. It follows these docs, read 2026-11-20: the Claude Code hooks reference (code.claude.com/docs/en/hooks), settings reference (code.claude.com/docs/en/settings-reference), and managed settings (code.claude.com/docs/en/managed-settings), and the Codex hooks docs (developers.openai.com/codex/hooks) with the Codex 0.171.0 hook schemas.
+Runs Claude Code and Codex CLI hooks from pi. It reads the hook configs of both tools and a pi-native hooks file, maps pi events onto hook events, runs the matching handlers, and applies their decisions to pi. It follows these docs, read 2026-11-20: the Claude Code hooks reference (code.claude.com/docs/en/hooks), settings reference (code.claude.com/docs/en/settings-reference), and managed settings (code.claude.com/docs/en/managed-settings), and the Codex hooks docs (developers.openai.com/codex/hooks) with the Codex 0.171.0 hook schemas. The Claude managed policy sources follow managed settings and server-managed settings (code.claude.com/docs/en/server-managed-settings), read 2026-11-21, and the paths in Claude Code 2.1.329.
 
 ## Commands and flags
 
@@ -43,7 +43,7 @@ Writes per scope:
 - Add appends `{ matcher?, hooks: [{ type: "command", command }] }` to the pi file of the chosen scope and marks the new hook trusted.
 - Settings write their key to the global options file.
 - Project scope needs a trusted project (`isProjectTrusted`). In an untrusted project the panel shows a warning, hides project hooks, and offers only the global scope for a new hook.
-- Managed hooks (organization policy files) cannot be disabled, removed, or untrusted from the panel.
+- Managed hooks cannot be disabled or removed from the panel. Hooks from the server-managed copy and HKCU have the trust actions (Trust always, Allow once, Untrust, Deny); the other managed hooks have no actions.
 
 Each change reloads the config, so the running session uses it at once.
 
@@ -53,18 +53,23 @@ The extension registers no tools.
 
 | Source | Managed | Global | Project |
 | --- | --- | --- | --- |
-| Claude | `managed-settings.json`, then `managed-settings.d/*.json` in name order (hidden files skipped), in `/Library/Application Support/ClaudeCode` (macOS), `/etc/claude-code` (Linux), or `C:\Program Files\ClaudeCode` (Windows) | `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` | `<root>/.claude/settings.json`, `<root>/.claude/settings.local.json` (layer `local`) |
+| Claude | In rank order: the server-managed copy `$CLAUDE_CONFIG_DIR/remote-settings.json` (else `~/.claude/remote-settings.json`); the MDM profile `/Library/Managed Preferences/<user>/com.anthropic.claudecode.plist`, else (when that file is missing or cannot be read) `/Library/Managed Preferences/com.anthropic.claudecode.plist` (macOS), or the `HKLM\SOFTWARE\Policies\ClaudeCode` `Settings` value (Windows); the files `managed-settings.json`, then `managed-settings.d/*.json` in name order (hidden files skipped), in `/Library/Application Support/ClaudeCode` (macOS), `/etc/claude-code` (Linux), or `C:\Program Files\ClaudeCode` (Windows); and the `HKCU\SOFTWARE\Policies\ClaudeCode` `Settings` value (Windows) | `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` | `<root>/.claude/settings.json`, `<root>/.claude/settings.local.json` (layer `local`) |
 | Codex | System dir `/etc/codex` (Unix) or `%ProgramData%\OpenAI\Codex` (Windows, `C:\ProgramData` when the variable is unset): `hooks.json`, `config.toml`, and `[hooks]` of `requirements.toml` | `$CODEX_HOME` (else `~/.codex`): `hooks.json` and `config.toml` | Each `.codex/hooks.json` and `.codex/config.toml` from the project root down to the cwd |
 | pi | none | `<agentDir>/ext/hooks.json` | `<cwd>/.pi/ext/hooks.json` |
 
 - `<root>` is the session cwd when it holds `.claude` (or `.codex`), else the nearest parent directory with `.git`, else the cwd. `CLAUDE_PROJECT_DIR` is the Claude `<root>`.
 - In a git worktree without one of the project files, the main checkout's copy applies. This covers the untracked `.claude/settings.local.json`.
 - Hooks from all files merge; the `conflicts` option decides what runs when several layers define the same event and matcher (see [Conflicts between layers](#conflicts-between-layers)).
-- Managed hooks load in every `scope` option and project trust state while their source (`sources.claude` or `sources.codex`) is on. They are trusted by policy, ignore `disabled` lists and Codex `[hooks.state]`, and are not shadowed.
+- Managed hooks load in every `scope` option and project trust state while their source (`sources.claude` or `sources.codex`) is on. They ignore `disabled` lists and Codex `[hooks.state]` and are not shadowed. They are trusted by policy, except hooks from the server-managed copy and HKCU.
+- Claude managed sources are selected as Claude Code does. A source counts when it sets a key other than `managedSourcesBehavior`, `wslInheritsWindowsSettings`, and `$` metadata keys to a non-null value. By default (`first-wins`), only the highest-ranked source that counts applies; none of the hook keys (`hooks`, `disableAllHooks`, `allowManagedHooksOnly`, `allowedHttpHookUrls`, `httpHookAllowedEnvVars`) is read from the other sources. `managedSourcesBehavior: "merge"` in the highest source that carries it or a policy key applies every counting source except HKCU. The HKCU value applies only when no server, MDM, or file document is present. A plist, HKLM value, or file that exists but cannot be read or parsed is present; a server-managed copy that cannot be read or parsed is absent. All selected sources load as layer `managed`.
+- The server-managed copy and the HKCU value are user-writable. Their hooks keep the managed rank for source selection, precedence, and conflicts, and they go through the trust prompt like user hooks; without a UI they are skipped. Claude Code also asks the user to approve server-managed hooks in an interactive session. Claude Code reads the copy only in a session that can fetch server-managed settings, can reject an unsigned or expired copy, and replaces an edited copy at the next fetch; pi reads the copy whenever `managed/claudeServer` is on.
+- The switches `managed/claudeServer`, `managed/claudeMdm`, `managed/claudeRegistry` (HKLM and HKCU), and `managed/claudeFiles` turn each Claude managed source on or off (default on). A source that is off is not read and does not take part in the selection. The plist is converted with `/usr/bin/plutil -convert json -o -`, and the registry is read with `reg query`. Each call gets 5 seconds and 2 MiB of output, as in Claude Code; a call that runs longer or prints more is stopped, and its source is skipped with a warning.
+- The server-managed copy is skipped when it and `remote-settings.json.signature.json` were both last written more than 24 hours ago, because Claude Code plans for its cache to expire 24 hours after the last fetch. A signed fetch that finds the settings unchanged rewrites only the signature file, so an unsigned copy that stays unchanged for 24 hours is skipped too. The extension does not fetch server-managed settings.
+- The managed sources are read each time the config loads (session start, reload, and a ConfigChange reload). ConfigChange (`policy_settings`) watches only the managed settings files, as Claude Code does, and not while `managed/claudeFiles` is off.
 - The Codex project root is the nearest dir with one of the user `config.toml` `project_root_markers` (default `[".git"]`); `project_root_markers = []` makes the cwd the root.
 - Project files of all three sources load only when the ctx snapshot says `isProjectTrusted: true`. Otherwise the extension skips them and shows one warning per session that lists the skipped files. Options in an untrusted project `.pi/ext/hooks.json` are skipped too.
-- `disableAllHooks` follows Claude settings precedence: a managed value wins, else the value in the most specific loaded file (local, then project, then user). A project `false` overrides a user `true`. A managed `true` turns off all Claude hooks. A `true` outside managed settings turns off user, project, and local hooks; managed hooks keep running. Managed `allowManagedHooksOnly: true` keeps only managed Claude hooks. In both cases pi-native groups with a `plugin` id are off too, because they come from Claude Code plugins.
-- Claude `allowedHttpHookUrls` and `httpHookAllowedEnvVars` merge across the managed, user, project, and local files. When any file sets `allowedHttpHookUrls`, a Claude or pi http hook runs only when its URL matches a pattern (`*` is a wildcard; the scheme and host compare without case and without a trailing dot). When any file sets `httpHookAllowedEnvVars`, a header can use a variable only when both that list and the hook's `allowedEnvVars` name it.
+- `disableAllHooks` follows Claude settings precedence: a value in the selected managed sources wins (with `merge`, a `true` in any selected source, else the value in the highest selected source), else the value in the most specific loaded file (local, then project, then user). A project `false` overrides a user `true`. A managed `true` turns off all Claude hooks. A `true` outside managed settings turns off user, project, and local hooks; managed hooks keep running. Managed `allowManagedHooksOnly: true` keeps only managed Claude hooks; with `merge`, a `true` in any selected source turns it on. An invalid managed `allowManagedHooksOnly` reads as `true` (the strings `"true"` and `"false"` read as Booleans), and an invalid managed `disableAllHooks` is ignored. In both cases pi-native groups with a `plugin` id are off too, because they come from Claude Code plugins.
+- Claude `allowedHttpHookUrls` and `httpHookAllowedEnvVars` merge across the selected managed sources and the user, project, and local files. A managed value that is not a list counts as an empty list. When any file sets `allowedHttpHookUrls`, a Claude or pi http hook runs only when its URL matches a pattern (`*` is a wildcard; the scheme and host compare without case and without a trailing dot). When any file sets `httpHookAllowedEnvVars`, a header can use a variable only when both that list and the hook's `allowedEnvVars` name it.
 - Codex `[features] hooks = false` (or `codex_hooks = false`) turns off the Codex source. A `[features] hooks` value in `requirements.toml` wins; else the most specific layer that sets it wins. `requirements.toml` `allow_managed_hooks_only = true` keeps only the system and `requirements.toml` hooks.
 - Codex `[hooks.state."<file>:<snake_event>:<group>:<handler>"] enabled = false` in the user `config.toml` turns off one Codex hook, as Codex `/hooks` does. `trusted_hash` is not read; pi uses its own trust list.
 - Codex inline hooks in `config.toml` (`[[hooks.<Event>]]` with `[[hooks.<Event>.hooks]]`) merge with `hooks.json` of the same layer, with a log warning.
@@ -81,7 +86,7 @@ In `<agentDir>/ext/hooks.json` and `<cwd>/.pi/ext/hooks.json` (same file as the 
 | `trustAll` | `false` | Run all hooks without trust prompts. Read from the global options file only; a project file's `trustAll` is ignored. |
 | `conflicts` | `"merge"` | `merge`, `warn`, or `override`; see [Conflicts between layers](#conflicts-between-layers). Read from the global options file only, because a project options file can come from the repository. |
 | `disabled` | `[]` | Hashes of disabled hooks. The lists of both files merge. |
-| Feature switches | per switch | On and off rows that features add to the Settings tab, each under its own key (for example `managed/<name>`). Read from the global options file only. |
+| Feature switches | per switch | On and off rows that features add to the Settings tab, each under its own key (for example `managed/<name>`). Read from the global options file only. [Sources](#sources) lists the Claude managed source switches. |
 
 ## Conflicts between layers
 
@@ -97,7 +102,7 @@ Managed hooks are not in this order. A conflict occurs when one family has diffe
 | --- | --- |
 | `merge` (default) | The hooks of all layers run. Claude Code and Codex do the same. |
 | `warn` | The hooks of all layers run. At load, one warning for each session shows the new conflicts. It also shows each command that Claude or pi config and Codex config both register for one event. A tool call shows a warning when its hooks give different decisions or when more than one hook changes the input. |
-| `override` | For each conflict, only the hooks of the most specific layer run. If none of these hooks can run, the next layer runs. A hook cannot run when it is disabled, unsupported, or denied, or when it is untrusted and the user does not allow it at the prompt. Managed hooks always run. |
+| `override` | For each conflict, only the hooks of the most specific layer run. If none of these hooks can run, the next layer runs. A hook cannot run when it is disabled, unsupported, or denied, or when it is untrusted and the user does not allow it at the prompt. Managed hooks run outside this order; those from the server-managed copy and HKCU still need trust. |
 
 In all modes:
 
@@ -109,7 +114,7 @@ In all modes:
 
 Each hook has a hash: sha256 hex of the canonical JSON (sorted keys) `{ file, event, matcher, handler }`, with `file` the absolute config path and `matcher` `null` when omitted. A changed handler or a moved file gives a new hash.
 
-- Managed hooks are trusted by policy.
+- Managed hooks are trusted by policy, except hooks from the server-managed copy and HKCU, which the user can write.
 - With `trustAll` or `--hooks-trust-all`, all hooks run except denied ones.
 - Otherwise the first run of an untrusted hook asks with "Allow once", "Always allow", "Deny". "Always allow" and "Deny" go to `state.json`; "Allow once" lasts for the session. A dismissed prompt skips the hook this time.
 - Without a UI, untrusted hooks are skipped with a log line.
@@ -227,7 +232,7 @@ Events marked pi-rust come from host events that only pi-rust 0.12.3 and later s
 - PreCompact stdout does not become compaction instructions: pi's `session_before_compact` reply takes no `customInstructions`, so this needs a pi host change.
 - Output fields: UserPromptSubmit `sessionTitle` sets the session name. A PermissionRequest deny with `decision.interrupt: true` aborts the run. `<system-reminder>` tags in context reach the model with `<` as `&lt;`. PostToolUse `classifierContext` and UserPromptSubmit `suppressOriginalPrompt` have no effect, because pi has no auto mode classifier and shows no block message with the prompt text.
 - Unsupported handler and settings fields: `shell: "powershell"` on non-Windows, Claude `updatedPermissions`, `updatedMCPToolOutput` beyond replacing the content, SessionStart `reloadSkills`, plugin `hooks/hooks.json` files outside the pi-native file, and skill or subagent frontmatter hooks.
-- Claude managed settings come from the managed settings files only: MDM, registry, and server-managed sources are not read, and the files merge without the `first-wins` choice between sources. Under `allowManagedHooksOnly`, hooks of plugins that managed `enabledPlugins` force-enables do not run.
+- Claude managed sources that are not read: live server-managed settings (the fetch needs the network and a claude.ai or gateway sign-in, so only the local copy is read, without its signature check), the organization sign-in copy `hybrid-settings*.json`, `policyHelper` output (pi does not run the policy helper program), parent settings from an embedding host (pi passes no SDK `managedSettings`), and the Windows policy on WSL (`wslInheritsWindowsSettings`). A malformed file, plist, or HKLM value is skipped with a warning; Claude Code refuses to start instead. Under `allowManagedHooksOnly`, hooks of plugins that managed `enabledPlugins` force-enables do not run.
 - Claude Code runs at most 12 prompt and agent hooks of one event at once and starts the rest as those finish. pi starts them all at once.
 - SubagentStart context and SubagentStop blocks go to `pi.events` channels, because the extension cannot reach the subagent session.
 - A denied hook stays denied with `trustAll`.

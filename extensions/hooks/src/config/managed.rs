@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::codex::read_toml;
-use super::options::read_json;
 
 /// `managed-settings.json`, then `managed-settings.d/*.json` in name order without hidden files.
 pub fn claude_policy_files(dir: &Path) -> Vec<PathBuf> {
@@ -24,13 +23,6 @@ pub fn claude_policy_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = vec![dir.join("managed-settings.json")];
     files.extend(drop_ins);
     files
-}
-
-pub fn claude_policy_docs(dir: &Path) -> Vec<(PathBuf, Value)> {
-    claude_policy_files(dir)
-        .into_iter()
-        .filter_map(|path| read_json(&path).map(|doc| (path, doc)))
-        .collect()
 }
 
 /// Codex `requirements.toml` in the system dir.
