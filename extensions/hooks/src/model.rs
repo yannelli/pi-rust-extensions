@@ -144,7 +144,11 @@ impl HookDef {
         self.str_field("type").unwrap_or("command")
     }
 
+    /// Codex reads `async` on `command` hooks only and has no `asyncRewake`.
     pub fn is_async(&self) -> bool {
+        if self.source.is_codex() {
+            return self.kind() == "command" && self.bool_field("async");
+        }
         self.bool_field("async") || self.bool_field("asyncRewake")
     }
 
@@ -350,6 +354,20 @@ mod tests {
         let mut other = handler;
         other["headers"]["X-Key"] = json!("$AWS_SECRET_ACCESS_KEY");
         assert_ne!(def.hash, trust_hash("/f", "Stop", None, &other));
+    }
+
+    #[test]
+    fn codex_runs_only_async_commands_in_the_background() {
+        let def = |source, handler| {
+            HookDef::new(source, Scope::Global, "/f".into(), "Stop", None, handler)
+        };
+        let mcp = json!({ "type": "mcp_tool", "server": "s", "tool": "t", "async": true });
+        let rewake = json!({ "command": "x", "asyncRewake": true });
+        assert!(def(Source::Codex, json!({ "command": "x", "async": true })).is_async());
+        assert!(!def(Source::Codex, mcp.clone()).is_async());
+        assert!(!def(Source::Codex, rewake.clone()).is_async());
+        assert!(def(Source::Claude, mcp).is_async());
+        assert!(def(Source::Claude, rewake).is_async());
     }
 
     #[test]

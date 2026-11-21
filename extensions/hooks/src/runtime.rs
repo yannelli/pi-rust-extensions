@@ -149,6 +149,14 @@ impl Runtime {
             .map_or(ConflictMode::Merge, |l| l.options.conflicts)
     }
 
+    /// A [`crate::config::options::SWITCHES`] value; its default before the config loads.
+    pub fn switch_on(&self, key: &str) -> bool {
+        self.lock().loaded.as_ref().map_or_else(
+            || config::Options::default().switch_on(key),
+            |l| l.options.switch_on(key),
+        )
+    }
+
     pub fn http_policy(&self) -> HttpPolicy {
         self.lock()
             .loaded

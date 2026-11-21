@@ -136,6 +136,45 @@ async fn updated_input_patches_the_event() {
 }
 
 #[tokio::test]
+async fn codex_on_failure_follows_the_global_switch() {
+    let reason =
+        "PreToolUse hook failed. This hook is configured to block continuation on failure.";
+    for (options, blocked) in [
+        (None, false),
+        (Some("agent/ext/hooks.json"), true),
+        (Some("repo/.pi/ext/hooks.json"), false),
+    ] {
+        let env = env();
+        let cmd = script(&env, "fail.sh", "cat > /dev/null\nexit 1");
+        let hook = json!({ "type": "command", "command": cmd, "onFailure": "block" });
+        let group = json!({ "matcher": "Bash", "hooks": [hook] });
+        let file = env.paths.codex_home.join("hooks.json");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            json!({ "hooks": { "PreToolUse": [group] } }).to_string(),
+        )
+        .unwrap();
+        if let Some(options) = options {
+            let path = env.dir.path().join(options);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, json!({ "codex": { "onFailure": true } }).to_string()).unwrap();
+        }
+        let mut host = start(&env).await;
+        let ctx = hooks_ctx(&env.cwd, false, true);
+        let response = host
+            .event(1, "tool_call", tool_call(json!({ "command": "ls" })), ctx)
+            .await;
+        let result = &response["result"]["result"];
+        assert_eq!(result["block"] == true, blocked, "{options:?}: {response}");
+        if blocked {
+            assert_eq!(result["reason"], reason);
+        }
+        host.finish().await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn stop_block_sends_follow_up() {
     let env = env();
     let stdin = env.dir.path().join("stop.json");

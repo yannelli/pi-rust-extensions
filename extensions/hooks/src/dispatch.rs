@@ -6,11 +6,14 @@ use pi_ext_sdk::{CustomMessage, DeliverAs, Host, Snapshot};
 use serde_json::{Value, json};
 use tokio::task::JoinSet;
 
+use crate::config::options::CODEX_ON_FAILURE;
 use crate::exec::http::HttpPolicy;
 use crate::exec::{self, Context};
 use crate::matcher::{Target, if_rule_matches, matches_event};
 use crate::model::{HookDef, Layer, Source};
-use crate::output::{Interpret, Outcome, RawRun, interpret, terminal_sequence_allowed};
+use crate::output::{
+    Interpret, Outcome, RawRun, codex_failure_unenforceable, interpret, terminal_sequence_allowed,
+};
 use crate::policy;
 use crate::runtime::Runtime;
 use crate::trust::LastRun;
@@ -151,6 +154,7 @@ pub async fn dispatch(
         let _ = host.set_status("hooks", None).await;
     }
     let tool = d.tool.as_ref().map(|(name, _)| name.as_str());
+    let codex_on_failure = rt.switch_on(CODEX_ON_FAILURE);
     let mut outcomes = Vec::new();
     let mut runs = Vec::new();
     for (_, def, raw, elapsed) in done {
@@ -160,7 +164,8 @@ pub async fn dispatch(
             event: &def.event,
             tool,
             label: &label,
-            on_failure_block: def.str_field("onFailure") == Some("block"),
+            on_failure_block: def.str_field("onFailure") == Some("block")
+                && (!def.source.is_codex() || codex_on_failure),
             kind: def.kind(),
             plugin: def.plugin.is_some(),
         };
@@ -183,6 +188,7 @@ pub async fn dispatch(
 /// Matched, enabled, and supported hooks in config order; [`policy::runnable`] picks the ones to run.
 fn select(rt: &Runtime, d: &Dispatch, cwd: &Path) -> Vec<HookDef> {
     let http = rt.http_policy();
+    let codex_on_failure = rt.switch_on(CODEX_ON_FAILURE);
     rt.hooks()
         .into_iter()
         .filter(|def| d.event_for(def.source) == Some(def.event.as_str()))
@@ -198,6 +204,7 @@ fn select(rt: &Runtime, d: &Dispatch, cwd: &Path) -> Vec<HookDef> {
         .filter(|def| def.layer == Layer::Managed || !rt.is_disabled(&def.hash))
         .filter(|def| !(def.kind() == "mcp_tool" && before_mcp(&def.event, &d.payload)))
         .filter(supported)
+        .filter(|def| !(codex_on_failure && codex_block_unenforceable(def)))
         .filter(|def| url_allowed(&http, def))
         .collect()
 }
@@ -213,6 +220,19 @@ fn url_allowed(http: &HttpPolicy, def: &HookDef) -> bool {
         pi_ext_sdk::info!("hooks: skipping {def}: URL is not in allowedHttpHookUrls");
     }
     allowed
+}
+
+/// Codex does not load an `onFailure: "block"` handler that cannot block.
+fn codex_block_unenforceable(def: &HookDef) -> bool {
+    let skip = def.source.is_codex()
+        && def.str_field("onFailure") == Some("block")
+        && codex_failure_unenforceable(&def.event, def.is_async());
+    if skip {
+        pi_ext_sdk::warn!(
+            "hooks: skipping {def}: onFailure:block requires a synchronous hook that supports blocking"
+        );
+    }
+    skip
 }
 
 /// Setup and SessionStart at launch run before MCP servers are available, so `mcp_tool` skips them.

@@ -1,7 +1,9 @@
 use serde_json::Value;
 
+mod codex_failure;
 mod json;
 
+pub use codex_failure::codex_failure_unenforceable;
 use json::apply_json;
 pub use json::terminal_sequence_allowed;
 
@@ -205,7 +207,7 @@ pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
     let json = json_output(&raw.stdout);
     let stderr = raw.stderr.trim();
     let blocks = exit2_blocks(cx.source, cx.event);
-    let invalid_json = json.is_none() && looks_like_json(&raw.stdout);
+    let invalid_json = json.is_none() && looks_like_json(cx.source, &raw.stdout);
     match raw.code {
         Some(0) => match &json {
             Some(json) => apply_json(cx, json, &mut out),
@@ -281,7 +283,9 @@ pub fn interpret(cx: &Interpret, raw: &RawRun) -> Outcome {
     let failed = raw.code != Some(0) && raw.code != Some(2)
         || invalid_json && raw.code == Some(0)
         || cx.kind == "mcp_tool" && raw.code == Some(0) && mcp_answer_fails(&raw.stdout);
-    if cx.on_failure_block && !codex && failed && failure_blocks(cx.event) {
+    if cx.on_failure_block && codex {
+        codex_failure::apply_codex_failure(cx.event, &mut out);
+    } else if cx.on_failure_block && failed && failure_blocks(cx.event) {
         out.block = Some(failure_reason(cx, raw, stderr));
         out.permission = None;
         out.updated_input = None;
@@ -313,9 +317,12 @@ fn last_line(stdout: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Stdout that a hook meant as JSON: starts with `{` and ends with `}`.
-fn looks_like_json(stdout: &str) -> bool {
+/// Stdout that a hook meant as JSON: starts with `{` and ends with `}` (Codex: starts with `{` or `[`).
+fn looks_like_json(source: Source, stdout: &str) -> bool {
     let text = stdout.trim();
+    if source.is_codex() {
+        return text.starts_with(['{', '[']);
+    }
     text.starts_with('{') && text.ends_with('}')
 }
 

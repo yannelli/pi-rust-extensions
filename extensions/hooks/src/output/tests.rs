@@ -63,10 +63,11 @@ fn exit_codes() {
         )
     );
     let codex_fail = Interpret { source: X, ..cx };
-    assert!(
+    assert_eq!(
         interpret(&codex_fail, &RawRun::exit(1, "", "x"))
             .block
-            .is_none()
+            .as_deref(),
+        Some("PreToolUse hook failed. This hook is configured to block continuation on failure.")
     );
     let timeout = interpret(&cx, &RawRun::failed("timed out after 1s"));
     assert!(timeout.block.unwrap().contains(": timed out; blocking"));
@@ -198,12 +199,14 @@ fn permission_decisions_and_precedence() {
     );
     let approve = run(C, "PreToolUse", 0, r#"{"decision":"approve"}"#, "");
     assert_eq!(approve.permission.unwrap().0, Permission::Allow);
-    let spec = |body: &str| format!(r#"{{"hookSpecificOutput":{body}}}"#);
+    let spec = |fields: &str| {
+        format!(r#"{{"hookSpecificOutput":{{"hookEventName":"PreToolUse",{fields}}}}}"#)
+    };
     let codex_ask = run(
         X,
         "PreToolUse",
         0,
-        &spec(r#"{"permissionDecision":"ask"}"#),
+        &spec(r#""permissionDecision":"ask""#),
         "",
     );
     assert!(codex_ask.permission.is_none() && codex_ask.error.is_some());
@@ -211,11 +214,11 @@ fn permission_decisions_and_precedence() {
         X,
         "PreToolUse",
         0,
-        &spec(r#"{"permissionDecision":"allow"}"#),
+        &spec(r#""permissionDecision":"allow""#),
         "",
     );
     assert!(codex_allow.permission.is_none() && codex_allow.error.is_some());
-    let rewrite = spec(r#"{"permissionDecision":"allow","updatedInput":{"command":"y"}}"#);
+    let rewrite = spec(r#""permissionDecision":"allow","updatedInput":{"command":"y"}"#);
     let codex_rewrite = run(X, "PreToolUse", 0, &rewrite, "");
     assert_eq!(
         codex_rewrite.permission, None,
@@ -226,7 +229,7 @@ fn permission_decisions_and_precedence() {
         X,
         "PreToolUse",
         0,
-        &spec(r#"{"permissionDecision":"deny"}"#),
+        &spec(r#""permissionDecision":"deny""#),
         "",
     );
     assert!(bare_deny.permission.is_none() && bare_deny.error.is_some());
@@ -238,7 +241,7 @@ fn permission_decisions_and_precedence() {
         C,
         "PreModelSwitch",
         0,
-        &spec(r#"{"permissionDecision":"deny"}"#),
+        &spec(r#""permissionDecision":"deny""#),
         "",
     );
     assert_eq!(switch.decision().map(|d| d.0), Some(Permission::Deny));
@@ -286,7 +289,7 @@ fn permission_request_decision() {
 
 #[test]
 fn post_tool_and_stop_blocks() {
-    let block = r#"{"decision":"block","reason":"fix lint","hookSpecificOutput":{"additionalContext":"ctx"}}"#;
+    let block = r#"{"decision":"block","reason":"fix lint","hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"ctx"}}"#;
     for source in [C, X] {
         let out = run(source, "PostToolUse", 0, block, "");
         assert_eq!(out.block.as_deref(), Some("fix lint"));
@@ -356,6 +359,15 @@ fn json_detection_and_universal_fields() {
     assert!(broken.context.is_none() && broken.error.is_some());
     let plain = run(C, "UserPromptSubmit", 0, "{not json", "");
     assert_eq!(plain.context.as_deref(), Some("{not json"));
+    for stdout in ["{not json", "[note] x"] {
+        let codex = run(X, "SessionStart", 0, stdout, "");
+        assert!(codex.context.is_none() && codex.error.is_some(), "{stdout}");
+    }
+    let unnamed = r#"{"hookSpecificOutput":{"decision":{"behavior":"allow"}}}"#;
+    let codex = run(X, "PermissionRequest", 0, unnamed, "");
+    assert!(codex.permission.is_none() && codex.error.is_some());
+    let claude = run(C, "PermissionRequest", 0, unnamed, "");
+    assert_eq!(claude.permission, Some((Permission::Allow, None)));
     let missing = run(C, "Stop", 2, "", "sh: x.sh: No such file or directory");
     assert!(missing.block.is_none());
     let out = run(

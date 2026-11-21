@@ -137,6 +137,21 @@ fn string_list(value: Option<&Value>) -> Option<Vec<String>> {
     )
 }
 
+/// The Codex `HookEventNameWire` values; Codex does not parse another `hookEventName`.
+const CODEX_EVENT_NAMES: &[&str] = &[
+    "PreToolUse",
+    "PermissionRequest",
+    "PostToolUse",
+    "PreCompact",
+    "PostCompact",
+    "SessionStart",
+    "UserPromptSubmit",
+    "SubagentStart",
+    "SubagentStop",
+    "Stop",
+    "Interrupt",
+];
+
 /// Codex parses these outputs but marks the run failed and ignores its decision.
 fn codex_invalid(event: &str, json: &Value, specific: Option<&Value>) -> Option<String> {
     let has = |key: &str| json.get(key).is_some_and(|v| !v.is_null());
@@ -144,6 +159,14 @@ fn codex_invalid(event: &str, json: &Value, specific: Option<&Value>) -> Option<
     let stops = json.get("continue") == Some(&Value::Bool(false));
     let suppress = json.get("suppressOutput") == Some(&Value::Bool(true));
     let unsupported = |what: &str| Some(format!("{event} hook returned unsupported {what}"));
+    let named = spec("hookEventName")
+        .and_then(Value::as_str)
+        .is_some_and(|name| CODEX_EVENT_NAMES.contains(&name));
+    if has("hookSpecificOutput") && !named {
+        return Some(format!(
+            "{event} hook returned hookSpecificOutput without a valid hookEventName"
+        ));
+    }
     match event {
         "PreToolUse" | "PermissionRequest" if stops => unsupported("continue:false"),
         "PreToolUse" | "PermissionRequest" if has("stopReason") => unsupported("stopReason"),

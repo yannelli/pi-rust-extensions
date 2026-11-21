@@ -49,8 +49,15 @@ pub struct Switch {
     pub default: bool,
 }
 
+pub const CODEX_ON_FAILURE: &str = "codex/onFailure";
+
 /// The switches that features add, in Settings tab order.
-pub const SWITCHES: &[Switch] = &[];
+pub const SWITCHES: &[Switch] = &[Switch {
+    key: CODEX_ON_FAILURE,
+    label: "Codex onFailure (follows a Codex pre-release)",
+    about: "Codex hooks with onFailure: \"block\" block when they fail, as in Codex 0.173.0-alpha.",
+    default: false,
+}];
 
 /// The value of each switch in `doc`, else its default.
 pub fn read_switches(doc: &Value, switches: &'static [Switch]) -> BTreeMap<&'static str, bool> {
@@ -226,6 +233,7 @@ mod tests {
         let doc = json!({ "limits": { "b": true } });
         assert_eq!(read_switches(&doc, &TEST).get("limits/b"), Some(&true));
         assert!(Options::default().switch_on("unknown"));
+        assert!(!Options::default().switch_on(CODEX_ON_FAILURE));
     }
 
     #[test]
