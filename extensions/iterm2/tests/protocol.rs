@@ -4,9 +4,14 @@ use common::TestHost;
 use pi_ext_iterm2::extension;
 use pi_ext_iterm2::reporter::Terminal;
 use pi_ext_iterm2::sequences::{
-    DONE, WORKING, badge, current_dir, request_attention, tab_color, user_var,
+    ProgramState, badge, current_dir, request_attention, tab_color, user_var,
 };
+use pi_ext_iterm2::themes::Theme;
 use serde_json::{Value, json};
+
+fn dark(state: ProgramState) -> Option<[u8; 3]> {
+    Theme::Dark.color(state)
+}
 
 fn ctx(run_state: &str) -> Value {
     json!({
@@ -53,7 +58,10 @@ async fn state_changes_write_iterm2_sequences() {
     event(&mut host, 1, "agent_start", "working").await;
     let terminal = json!({ "iterm2": true, "notifyMinSeconds": 0 });
     let first = answer_settings_then_write(&mut host, terminal).await;
-    assert_eq!(first["params"]["data"], tab_color(Some(WORKING)));
+    assert_eq!(
+        first["params"]["data"],
+        tab_color(dark(ProgramState::Working))
+    );
     assert_eq!(first["params"]["tmuxPassthrough"], true);
     host.answer(&first["id"], json!(true)).await;
     expect_write(&mut host, &user_var("pi_state", "working"), true).await;
@@ -69,7 +77,7 @@ async fn state_changes_write_iterm2_sequences() {
 
     event(&mut host, 3, "agent_end", "done").await;
     expect_write(&mut host, request_attention(), true).await;
-    expect_write(&mut host, &tab_color(Some(DONE)), true).await;
+    expect_write(&mut host, &tab_color(dark(ProgramState::Done)), true).await;
     expect_write(&mut host, &user_var("pi_state", "done"), true).await;
     host.expect_response(3).await;
 
@@ -126,5 +134,43 @@ async fn the_snapshot_mode_wins_over_the_load_time_mode() {
     host.request(1, "event", params).await;
     let terminal = json!({ "iterm2": true, "notifyMinSeconds": 0 });
     let first = answer_settings_then_write(&mut host, terminal).await;
-    assert_eq!(first["params"]["data"], tab_color(Some(WORKING)));
+    assert_eq!(
+        first["params"]["data"],
+        tab_color(dark(ProgramState::Working))
+    );
+}
+
+#[tokio::test]
+async fn the_config_theme_and_custom_colors_pick_the_tab_color() {
+    let agent = std::env::temp_dir().join(format!("pi-iterm2-theme-{}", std::process::id()));
+    std::fs::create_dir_all(agent.join("ext")).unwrap();
+    let config = json!({ "theme": "light", "colors": { "working": "#ff8800", "done": "profile" } });
+    std::fs::write(agent.join("ext/iterm2.json"), config.to_string()).unwrap();
+    let mut host = TestHost::start(extension(Terminal {
+        iterm2: true,
+        tmux: false,
+    }));
+    host.initialize_in("/work", agent.to_str().unwrap()).await;
+    event(&mut host, 1, "agent_start", "working").await;
+    let first = answer_settings_then_write(&mut host, json!({ "notifyMinSeconds": 60 })).await;
+    assert_eq!(first["params"]["data"], tab_color(Some([255, 136, 0])));
+    host.answer(&first["id"], json!(true)).await;
+    for _ in 0..6 {
+        let (id, _) = host.expect_request("ui.writeTerminal").await;
+        host.answer(&id, json!(true)).await;
+    }
+    host.expect_response(1).await;
+
+    event(&mut host, 2, "message_start", "blocked").await;
+    let light = Theme::Light.color(ProgramState::Blocked);
+    expect_write(&mut host, &tab_color(light), false).await;
+    expect_write(&mut host, &user_var("pi_state", "blocked"), false).await;
+    host.expect_response(2).await;
+
+    event(&mut host, 3, "agent_end", "done").await;
+    expect_write(&mut host, &tab_color(None), false).await;
+    expect_write(&mut host, &user_var("pi_state", "done"), false).await;
+    host.expect_response(3).await;
+    host.finish().await.unwrap();
+    std::fs::remove_dir_all(agent).unwrap();
 }

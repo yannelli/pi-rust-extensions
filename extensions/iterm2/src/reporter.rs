@@ -8,10 +8,9 @@ use std::time::{Duration, Instant};
 use pi_ext_sdk::prelude::*;
 use pi_ext_sdk::tokio::sync::OnceCell;
 
-use crate::features::{self, Features};
+use crate::features::{self, Config, Features};
 use crate::sequences::{
-    ProgramState, badge, current_dir, request_attention, state_color, state_name, tab_color,
-    user_var,
+    ProgramState, badge, current_dir, request_attention, state_name, tab_color, user_var,
 };
 
 const NOTIFY_MIN_SECONDS: f64 = 10.0;
@@ -25,14 +24,15 @@ pub struct Terminal {
 
 #[derive(Clone, Copy, Debug)]
 struct Loaded {
-    features: Features,
+    config: Config,
     attention_after: Duration,
 }
 
 pub struct Reporter {
     terminal: Terminal,
     loaded: OnceCell<Loaded>,
-    features: Mutex<Option<Features>>,
+    config: Mutex<Option<Config>>,
+    state: Mutex<Option<ProgramState>>,
     sent: Mutex<HashMap<&'static str, String>>,
     run_started: Mutex<Option<Instant>>,
 }
@@ -42,7 +42,8 @@ impl Reporter {
         Self {
             terminal,
             loaded: OnceCell::new(),
-            features: Mutex::new(None),
+            config: Mutex::new(None),
+            state: Mutex::new(None),
             sent: Mutex::new(HashMap::new()),
             run_started: Mutex::new(None),
         }
@@ -56,9 +57,13 @@ impl Reporter {
     pub async fn config_value(&self, host: &Host) -> Value {
         let global = features::read_config(&features::global_config_path(&host.agent_dir()));
         let project = features::read_config(&features::project_config_path(&host.cwd()));
+        features::resolve(global, project, self.legacy_value(host).await)
+    }
+
+    /// The old `terminal.iterm2` setting.
+    pub async fn legacy_value(&self, host: &Host) -> Option<Value> {
         let terminal: Option<Value> = host.settings("terminal").await.unwrap_or(None);
-        let legacy = terminal.as_ref().and_then(|t| t.get("iterm2")).cloned();
-        features::resolve(global, project, legacy)
+        terminal.as_ref().and_then(|t| t.get("iterm2")).cloned()
     }
 
     async fn load(&self, host: &Host) -> Loaded {
@@ -74,30 +79,55 @@ impl Reporter {
                     .unwrap_or(NOTIFY_MIN_SECONDS);
                 let value = self.config_value(host).await;
                 Loaded {
-                    features: Features::from_value(Some(&value)),
+                    config: Config::from_value(&value),
                     attention_after: Duration::try_from_secs_f64(seconds).unwrap_or(Duration::MAX),
                 }
             })
             .await
     }
 
-    /// The enabled features, or `None` outside iTerm2, without a TUI, or when all are off.
-    async fn active(&self, host: &Host) -> Option<Features> {
+    /// The config, or `None` outside iTerm2, without a TUI, or when all features are off.
+    async fn active(&self, host: &Host) -> Option<Config> {
         if !self.terminal.iterm2 || !is_tui(host) {
             return None;
         }
-        let loaded = self.load(host).await;
-        let features = self
-            .features
-            .lock()
-            .expect("features lock")
-            .unwrap_or(loaded.features);
-        features.any().then_some(features)
+        let config = self.config(host).await;
+        config.features.any().then_some(config)
     }
 
-    /// Replaces the features after `/terminal-setup` changed the config.
-    pub fn set_features(&self, features: Features) {
-        *self.features.lock().expect("features lock") = Some(features);
+    async fn config(&self, host: &Host) -> Config {
+        let loaded = self.load(host).await;
+        self.config
+            .lock()
+            .expect("config lock")
+            .unwrap_or(loaded.config)
+    }
+
+    /// Replaces the config after `/terminal-setup` or `/iterm2` changed it.
+    pub fn set_config(&self, config: Config) {
+        *self.config.lock().expect("config lock") = Some(config);
+    }
+
+    /// Shows `color` on the tab until `restore`; `None` shows the profile color.
+    pub async fn preview(&self, host: &Host, color: Option<[u8; 3]>) {
+        if self.terminal.iterm2 {
+            self.write(host, "tab", tab_color(color)).await;
+        }
+    }
+
+    /// The tab color of the last agent state, after a preview or a config change.
+    pub async fn restore(&self, host: &Host) {
+        if !self.terminal.iterm2 {
+            return;
+        }
+        let state = *self.state.lock().expect("state lock");
+        let color = match self.active(host).await {
+            Some(config) if config.features.tab_color => {
+                state.and_then(|state| config.palette.color(state))
+            }
+            _ => None,
+        };
+        self.write(host, "tab", tab_color(color)).await;
     }
 
     async fn write(&self, host: &Host, key: &'static str, sequence: String) {
@@ -115,11 +145,34 @@ impl Reporter {
         }
     }
 
+    /// After `/iterm2` changed the config: the tab color, the session features that turned on,
+    /// and no badge when the badge pi set turned off.
+    pub async fn apply(&self, host: &Host, snapshot: &Snapshot) {
+        if !self.terminal.iterm2 {
+            return;
+        }
+        let config = self.active(host).await;
+        let shown = self
+            .sent
+            .lock()
+            .expect("sent lock")
+            .get("badge")
+            .is_some_and(|sent| *sent != badge(""));
+        if shown && !config.is_some_and(|c| c.features.badge) {
+            self.write(host, "badge", badge("")).await;
+        }
+        if let Some(config) = config {
+            self.report_session(host, snapshot, config.features).await;
+        }
+        self.restore(host).await;
+    }
+
     /// The tab color and `user.pi_state` from the footer `runState`, then the session.
     pub async fn report(&self, host: &Host, snapshot: &Snapshot) {
-        let Some(features) = self.active(host).await else {
+        let Some(config) = self.active(host).await else {
             return;
         };
+        let features = config.features;
         let state = snapshot
             .footer
             .as_ref()
@@ -127,8 +180,10 @@ impl Reporter {
             .and_then(Value::as_str)
             .and_then(ProgramState::parse);
         if let Some(state) = state {
+            *self.state.lock().expect("state lock") = Some(state);
             if features.tab_color {
-                self.write(host, "tab", tab_color(state_color(state))).await;
+                let color = config.palette.color(state);
+                self.write(host, "tab", tab_color(color)).await;
             }
             if features.user_vars {
                 let var = user_var("pi_state", state_name(state));
@@ -176,11 +231,11 @@ impl Reporter {
     /// When a run took at least `terminal.notifyMinSeconds`, asks iTerm2 for attention.
     pub async fn run_finished(&self, host: &Host) {
         let started = self.run_started.lock().expect("run lock").take();
-        let Some(features) = self.active(host).await else {
+        let Some(config) = self.active(host).await else {
             return;
         };
         let after = self.load(host).await.attention_after;
-        if features.attention && started.is_some_and(|start| start.elapsed() >= after) {
+        if config.features.attention && started.is_some_and(|start| start.elapsed() >= after) {
             let _ = host
                 .write_terminal(request_attention(), self.terminal.tmux)
                 .await;
@@ -189,7 +244,7 @@ impl Reporter {
 
     /// On exit: the profile tab color and no badge.
     pub async fn reset(&self, host: &Host) {
-        let Some(features) = self.active(host).await else {
+        let Some(Config { features, .. }) = self.active(host).await else {
             return;
         };
         if features.tab_color {

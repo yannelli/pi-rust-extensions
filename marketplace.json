@@ -152,7 +152,7 @@
     {
       "name": "iterm2",
       "displayName": "iTerm2",
-      "description": "iTerm2 integration: tab color follows the agent state, session badge, status bar user variables, attention requests, and /terminal-setup.",
+      "description": "iTerm2 integration: tab color follows the agent state with themes and per-state colors (/iterm2), session badge, status bar user variables, attention requests, and /terminal-setup.",
       "version": "0.5.23",
       "args": [
         "iterm2"

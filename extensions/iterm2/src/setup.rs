@@ -8,7 +8,7 @@ use std::time::Duration;
 use pi_ext_sdk::prelude::*;
 use pi_ext_sdk::style;
 
-use crate::features::{self, Features};
+use crate::features::{self, Config};
 use crate::reporter::Reporter;
 
 const DEFAULTS_TIMEOUT: Duration = Duration::from_secs(5);
@@ -97,6 +97,7 @@ pub fn setup_report(enabled: bool, clipboard: &std::result::Result<(), String>) 
     [
         integration,
         &clipboard,
+        "- `/iterm2` picks the tab color theme and the color of each agent state.",
         "",
         "For optional automation, install [tmc/it2](https://github.com/tmc/it2) on your Mac and run `it2 auth check`. Enable iTerm2 Settings > General > Magic > Enable Python API if required, and approve its access prompt. Run `/terminal-setup` again: Pi offers to set Option-as-Alt and notification alerts for this pane only. It does not install utilities or replace saved profiles.",
         "",
@@ -164,7 +165,8 @@ pub async fn terminal_setup(reporter: Arc<Reporter>, ctx: CommandCtx) -> Result<
     let path = features::global_config_path(&host.agent_dir());
     let enabled = features::enable(&path, &effective).map_err(|e| Error::msg(e.to_string()))?;
     if enabled {
-        reporter.set_features(Features::from_value(Some(&serde_json::json!(true))));
+        let value = reporter.config_value(&host).await;
+        reporter.set_config(Config::from_value(&value));
     }
     reporter.report(&host, ctx.snapshot()).await;
     let clipboard = allow_clipboard_access().await;

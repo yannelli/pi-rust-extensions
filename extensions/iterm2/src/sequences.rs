@@ -1,13 +1,6 @@
-//! iTerm2 escape sequences and the colors for each agent state.
+//! iTerm2 escape sequences and the agent states.
 
 use std::path::Path;
-
-// iTerm2 picks tab-title ink at a brightness cutoff, not WCAG contrast. Keep backgrounds
-// light enough for black titles, including its inactive-tab blend toward middle gray.
-pub const WORKING: [u8; 3] = [132, 184, 255];
-pub const BLOCKED: [u8; 3] = [242, 202, 114];
-pub const DONE: [u8; 3] = [151, 211, 163];
-pub const ERROR: [u8; 3] = [245, 160, 164];
 
 /// The footer `runState` of pi.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,17 +101,6 @@ pub fn current_dir(path: &Path) -> String {
     format!("\x1b]1337;CurrentDir={path}\x07")
 }
 
-/// The tab color for a state; idle uses the profile color.
-pub fn state_color(state: ProgramState) -> Option<[u8; 3]> {
-    match state {
-        ProgramState::Working => Some(WORKING),
-        ProgramState::Blocked => Some(BLOCKED),
-        ProgramState::Done => Some(DONE),
-        ProgramState::Error => Some(ERROR),
-        ProgramState::Idle => None,
-    }
-}
-
 pub fn state_name(state: ProgramState) -> &'static str {
     match state {
         ProgramState::Idle => "idle",
@@ -157,13 +139,6 @@ mod tests {
 
     use super::*;
 
-    const COLORED: [ProgramState; 4] = [
-        ProgramState::Working,
-        ProgramState::Blocked,
-        ProgramState::Done,
-        ProgramState::Error,
-    ];
-
     #[test]
     fn detects_iterm2_directly_and_through_tmux_or_ssh() {
         let env = |vars: &[(&str, &str)]| -> HashMap<String, String> {
@@ -179,31 +154,6 @@ mod tests {
         assert!(is_iterm2(&env(&[("ITERM_SESSION_ID", "w0t0p0:1")])));
         assert!(!is_iterm2(&env(&[("TERM_PROGRAM", "ghostty")])));
         assert!(!is_iterm2(&env(&[])));
-    }
-
-    #[test]
-    fn state_colors_keep_black_titles_readable_when_tabs_are_dimmed() {
-        let linear = |value: f64| {
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        for state in COLORED {
-            let rgb = state_color(state).expect("colored state");
-            // Selected/unselected tabs in active/inactive windows use these blends in iTerm2.
-            for alpha in [1.0, 0.6, 0.4, 0.3] {
-                let [r, g, b] = rgb.map(|c| f64::from(c) / 255.0 * alpha + 0.5 * (1.0 - alpha));
-                assert!(
-                    0.299 * r + 0.587 * g + 0.114 * b > 0.5,
-                    "{state:?}, alpha {alpha}"
-                );
-                let luminance = 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
-                assert!((luminance + 0.05) / 0.05 >= 4.5, "{state:?}, alpha {alpha}");
-            }
-        }
-        assert_eq!(state_color(ProgramState::Idle), None);
     }
 
     #[test]
@@ -228,7 +178,6 @@ mod tests {
             "\x1bPtmux;\x1b\x1b]9;x\x07\x1b\\"
         );
         assert_eq!(passthrough("\x1b]9;x\x07", false), "\x1b]9;x\x07");
-        assert_eq!(state_color(ProgramState::Working), Some(WORKING));
         assert_eq!(state_name(ProgramState::Blocked), "blocked");
         assert_eq!(ProgramState::parse("done"), Some(ProgramState::Done));
         assert_eq!(ProgramState::parse("clear"), None);

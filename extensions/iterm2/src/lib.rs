@@ -1,10 +1,14 @@
 //! iTerm2 integration for pi-rust: tab color by agent state, session badge, status bar user
-//! variables, attention on long runs, and the cwd. `/terminal-setup` turns it on.
+//! variables, attention on long runs, and the cwd. `/terminal-setup` turns it on, and `/iterm2`
+//! picks the tab color theme, the color of each state, and the features.
 
 pub mod features;
+pub mod panel;
 pub mod reporter;
 pub mod sequences;
 pub mod setup;
+pub mod themes;
+pub mod ui;
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -49,10 +53,16 @@ pub fn extension(terminal: Terminal) -> Extension {
         });
     }
     let setup = reporter.clone();
+    let panel = reporter.clone();
     ext.command(
         "terminal-setup",
         "Set up iTerm2: the pi integration, clipboard access, and Option as Alt",
         move |_args, ctx: CommandCtx| setup::terminal_setup(setup.clone(), ctx),
+    )
+    .command(
+        "iterm2",
+        "iTerm2 tab colors: pick a theme, set each agent state's color, and turn features on or off",
+        move |_args, ctx: CommandCtx| ui::iterm2_command(panel.clone(), ctx),
     )
     .on_shutdown(move |host: Host| {
         let reporter = reporter.clone();
