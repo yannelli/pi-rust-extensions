@@ -3,6 +3,7 @@ use std::path::Path;
 use pi_ext_subagents::agent::{PromptMode, Source, map_tools};
 use pi_ext_subagents::frontmatter::{FmValue, Frontmatter};
 use pi_ext_subagents::registry::{self, Layers, merge_file};
+use pi_ext_subagents::ui::ops::scope_of;
 
 const CLAUDE_AGENT: &str = "---\r\nname: code-reviewer\r\ndescription: >\r\n  Reviews code for bugs\r\n  and style.\r\ntools: Read, Grep, Glob, Bash(git:*), Task\r\nmodel: sonnet\r\ncolor: blue\r\n---\r\nYou review code.\r\n";
 
@@ -153,6 +154,41 @@ fn layers_override_per_field() {
     assert!(untrusted.iter().all(|a| a.name != "docs"));
     let explore = untrusted.iter().find(|a| a.name == "explore").unwrap();
     assert_eq!(explore.thinking.as_deref(), Some("low"));
+}
+
+#[test]
+fn shared_agent_folders_load_before_the_native_ones() {
+    let root = pi_ext_e2e::TempDir::new().unwrap();
+    let agent_dir = root.path().join("agent");
+    let project = root.path().join("work/.pi");
+    write(
+        &agent_dir.join("agents"),
+        "scout.md",
+        "---\ndescription: Scouts\nmodel: openai/gpt-5\n---\nScout.",
+    );
+    write(
+        &registry::agents_dir(&agent_dir),
+        "scout.md",
+        "---\nmodel: anthropic/claude-x\n---\n",
+    );
+    write(
+        &project.join("agents"),
+        "docs.md",
+        "---\ndescription: Writes docs\n---\nYou write docs.",
+    );
+    let layers = Layers::new(&agent_dir, Some(&project));
+    let agents = registry::load(&layers);
+    let scout = agents.iter().find(|a| a.name == "scout").unwrap();
+    assert_eq!(scout.description, "Scouts");
+    assert_eq!(scout.model.as_deref(), Some("anthropic/claude-x"));
+    assert_eq!(scout.files.len(), 2);
+    let docs = agents.iter().find(|a| a.name == "docs").unwrap();
+    assert_eq!(docs.source, Source::Project);
+    assert_eq!(scope_of(&layers, &docs.files[0]), Source::Project);
+    assert!(registry::has_project_agents(&project));
+
+    let untrusted = registry::load(&Layers::new(&agent_dir, None));
+    assert!(untrusted.iter().all(|a| a.name != "docs"));
 }
 
 #[test]

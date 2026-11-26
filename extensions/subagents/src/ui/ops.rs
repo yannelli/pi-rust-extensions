@@ -213,10 +213,16 @@ pub fn scope_dir(layers: &Layers, source: Source) -> Option<PathBuf> {
     layers.dir(source).map(Path::to_path_buf)
 }
 
-/// The scope of a file: project when it is under the project agents dir.
+/// The scope of a file: project when it is under a project agents dir.
 pub fn scope_of(layers: &Layers, file: &Path) -> Source {
-    match &layers.project {
-        Some(project) if file.starts_with(project) => Source::Project,
-        _ => Source::Global,
+    let project = [&layers.project, &layers.shared_project];
+    if project
+        .into_iter()
+        .flatten()
+        .any(|dir| file.starts_with(dir))
+    {
+        Source::Project
+    } else {
+        Source::Global
     }
 }

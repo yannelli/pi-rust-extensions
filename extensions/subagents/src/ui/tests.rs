@@ -59,6 +59,8 @@ pub fn state(f: &Fixture) -> State {
         layers: Layers {
             global: f.global.clone(),
             project: Some(f.project.clone()),
+            shared_global: f._root.path().join("agent/agents"),
+            shared_project: Some(f._root.path().join("work/.pi/agents")),
         },
         models: [
             "anthropic/claude-sonnet-4-6",
@@ -314,6 +316,19 @@ fn creates_from_a_template_copies_and_renames() {
     select(&mut s, "build");
     keys(&mut s, &[Key::Char('r')]);
     assert!(s.message.as_ref().unwrap().1.contains("built-in"));
+}
+
+#[test]
+fn move_refuses_when_a_shared_folder_of_that_scope_has_the_agent() {
+    let f = fixture();
+    let shared = f._root.path().join("agent/agents/explore.md");
+    write(&shared, "---\nmodel: openai/gpt-5\n---\n");
+    let mut s = state(&f);
+    select(&mut s, "explore");
+    keys(&mut s, &[Key::Char('m')]);
+    let message = &s.message.as_ref().unwrap().1;
+    assert!(message.contains("exists. Delete it first."), "{message}");
+    assert!(f.project.join("explore.md").exists() && shared.exists());
 }
 
 #[test]

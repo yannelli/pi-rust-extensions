@@ -1,6 +1,6 @@
 # pi-ext-subagents
 
-Created 2026-10-30. Last updated 2026-11-19.
+Created 2026-10-30. Last updated 2026-11-25.
 
 Runs tasks in child pi processes. Three built-in agents: `explore` (read-only search), `build` (full tools), and `advisor` (read-only review with a recommendation). You can change them and add your own. Run it with `pi-rust-ext subagents`. Simplified from `pi-subagents`.
 
@@ -64,7 +64,7 @@ Paseo stops pi when a runtime is idle for 60 minutes and when its daemon restart
 
 ## Agent files
 
-Built-in defaults, then `<agentDir>/ext/subagents/agents/*.md`, then `<cwd>/.pi/ext/subagents/agents/*.md`. A later file overrides only the fields it sets. A file with a new name adds an agent. Project agents load only when the project is trusted. The format is the Claude Code agent format (YAML frontmatter and a prompt body), so `claude-marketplace` writes plugin agents here. In a git worktree without the project agents folder, the main checkout's folder applies.
+Built-in defaults, then `<agentDir>/agents/*.md`, `<agentDir>/ext/subagents/agents/*.md`, `<cwd>/.pi/agents/*.md`, and `<cwd>/.pi/ext/subagents/agents/*.md`. `<agentDir>/agents` and `.pi/agents` are the folders other pi subagent extensions use (`pi-subagents` among them), so agents written for those load here too. A later file overrides only the fields it sets. A file with a new name adds an agent. Project agents load only when the project is trusted. The format is the Claude Code agent format (YAML frontmatter and a prompt body), so `claude-marketplace` writes plugin agents here. In a git worktree without a project agents folder, the main checkout's copy of that folder applies.
 
 ```markdown
 ---
