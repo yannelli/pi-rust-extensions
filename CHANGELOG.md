@@ -2,6 +2,13 @@
 
 All notable changes to pi-rust-extensions are documented here. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, breaking changes bump the minor version.
 
+## [0.5.28] - 2026-11-25
+
+### Added
+
+- ssh bash routing tools, Windows ssh, and a port for launch_browser (#84) ([65ef865](https://github.com/yannelli/pi-rust-extensions/commit/65ef865b3b0f461351d2d1b892655b49697e5fd2))
+- **subagents:** load agents from the folders other pi subagent extensions use ([e0dd9b2](https://github.com/yannelli/pi-rust-extensions/commit/e0dd9b270cbc45112cc62e4dc978045232767fe8))
+
 ## [0.5.27] - 2026-11-25
 
 ### Fixed
