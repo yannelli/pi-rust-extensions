@@ -1,4 +1,5 @@
-//! Agent definitions: built-in defaults, then `<agentDir>/ext/subagents/agents/*.md`, then
+//! Agent definitions: built-in defaults, then `<agentDir>/agents/*.md`,
+//! `<agentDir>/ext/subagents/agents/*.md`, `<cwd>/.pi/agents/*.md`, and
 //! `<cwd>/.pi/ext/subagents/agents/*.md`. Later layers override earlier ones per field.
 
 use std::path::{Path, PathBuf};
@@ -17,10 +18,20 @@ pub fn project_agents_dir(project_base: &Path) -> PathBuf {
     pi_ext_sdk::paths::project_path(project_base, "ext/subagents/agents")
 }
 
+/// `<project_base>/agents`, the project folder of other pi subagent extensions, with the same
+/// worktree fallback.
+pub fn shared_project_dir(project_base: &Path) -> PathBuf {
+    pi_ext_sdk::paths::project_path(project_base, "agents")
+}
+
 #[derive(Debug, Clone)]
 pub struct Layers {
     pub global: PathBuf,
     pub project: Option<PathBuf>,
+    /// `<agentDir>/agents` and `<cwd>/.pi/agents`, where other pi subagent extensions keep
+    /// agents. Each loads before the native folder of its scope.
+    pub shared_global: PathBuf,
+    pub shared_project: Option<PathBuf>,
 }
 
 impl Layers {
@@ -29,6 +40,8 @@ impl Layers {
         Self {
             global: agents_dir(agent_dir),
             project: project_base.map(project_agents_dir),
+            shared_global: agent_dir.join("agents"),
+            shared_project: project_base.map(shared_project_dir),
         }
     }
 
@@ -43,11 +56,20 @@ impl Layers {
 
 pub fn load(layers: &Layers) -> Vec<AgentDef> {
     let mut agents = builtin_agents();
+    merge_dir(&mut agents, &layers.shared_global, Source::Global);
     merge_dir(&mut agents, &layers.global, Source::Global);
-    if let Some(project) = &layers.project {
-        merge_dir(&mut agents, project, Source::Project);
+    for dir in [&layers.shared_project, &layers.project]
+        .into_iter()
+        .flatten()
+    {
+        merge_dir(&mut agents, dir, Source::Project);
     }
     agents
+}
+
+/// Whether the project has agent files, which load only when the project is trusted.
+pub fn has_project_agents(project_base: &Path) -> bool {
+    project_agents_dir(project_base).is_dir() || shared_project_dir(project_base).is_dir()
 }
 
 pub fn merge_dir(agents: &mut Vec<AgentDef>, dir: &Path, source: Source) {

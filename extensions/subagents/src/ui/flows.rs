@@ -431,6 +431,10 @@ impl State {
         } else {
             Source::Project
         };
+        let layers = &self.setup.layers;
+        if let Some(file) = e.def.files.iter().find(|f| ops::scope_of(layers, f) == to) {
+            return self.err(format!("{} exists. Delete it first.", file.display()));
+        }
         let dir = self.scope_dir(to);
         let options = vec![
             pair(format!("Move to {}", to.label()), dir.display().to_string()),
