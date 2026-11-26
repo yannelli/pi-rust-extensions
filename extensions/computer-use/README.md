@@ -1,8 +1,8 @@
 # computer-use
 
-Created 2026-10-30. Last updated 2026-11-04.
+Created 2026-10-30. Last updated 2026-11-25.
 
-This extension lets the agent see and operate desktop windows and a managed Chrome or Helium browser. It is a Rust port of [@injaneity/pi-computer-use](https://github.com/injaneity/pi-computer-use) 0.5.1. The tool names, parameter names, refs, and `details` fields are the same as upstream.
+This extension lets the agent see and operate desktop windows and a managed Chrome or Helium browser. It is a Rust port of [@injaneity/pi-computer-use](https://github.com/injaneity/pi-computer-use) 0.5.1. The tool names, parameter names, refs, and `details` fields are the same as upstream, plus the `port` parameter of `launch_browser`.
 
 ## Tools
 
@@ -16,7 +16,7 @@ This extension lets the agent see and operate desktop windows and a managed Chro
 | `act_ui` | `stateId`, `actions` (1 to 20), `expect` (optional) | Runs `press`, `click`, `setText`, `typeText`, `keypress`, `scroll`, `drag`, and `moveMouse`. Returns the next state and the outline changes. The first desktop `act_ui` of a session asks for confirmation; without a UI, desktop `act_ui` is refused. |
 | `read_text` | `ref`, `offset`, `stateId` | Reads one page of `@e` text (4000 characters) or of `@o` output (16 KiB). An `@o` ref needs no `stateId`. |
 | `wait_for` | `stateId`, `ref` or `scopeRef`, `text`, `role`, `value`, `until`, `timeoutMs` | Observes again every 500 ms until the condition is true or the time limit (default 10000 ms) ends. |
-| `launch_browser` | `url` (optional) | Starts the managed browser with a DevTools port, or uses the browser that runs. Returns an observed `browser_page` state. |
+| `launch_browser` | `url`, `port` (both optional) | Starts the managed browser with a DevTools port, or uses the browser that runs. With `port`, connects to the browser on that DevTools port of 127.0.0.1 instead and closes a browser that the extension started on another port. Returns an observed `browser_page` state. |
 | `navigate_browser` | `stateId`, `url` | Opens an HTTP or HTTPS URL in the page of a browser state. |
 | `evaluate_browser` | `stateId`, `expression` (a maximum of 64 KiB) | Runs JavaScript in the page of a browser state. The value goes after the outline. |
 

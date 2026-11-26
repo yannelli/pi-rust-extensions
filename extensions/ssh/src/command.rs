@@ -41,19 +41,24 @@ pub fn arguments(agent_dir: &Path, config: &Config, profile: &Profile) -> Result
         "-o".into(),
         "BatchMode=yes".into(),
         "-o".into(),
-        "ControlMaster=auto".into(),
-        "-o".into(),
-        format!("ControlPersist={}", config.control_persist),
-        "-o".into(),
-        format!(
-            "ControlPath={}",
-            socket.file_name().unwrap().to_string_lossy()
-        ),
-        "-o".into(),
         "ConnectTimeout=15".into(),
         "-p".into(),
         profile.port.to_string(),
     ];
+    // Windows OpenSSH has no client ControlMaster support.
+    if !cfg!(windows) {
+        args.extend([
+            "-o".into(),
+            "ControlMaster=auto".into(),
+            "-o".into(),
+            format!("ControlPersist={}", config.control_persist),
+            "-o".into(),
+            format!(
+                "ControlPath={}",
+                socket.file_name().unwrap().to_string_lossy()
+            ),
+        ]);
+    }
     for (flag, value) in [
         ("-l", &profile.user),
         ("-i", &profile.identity_file),

@@ -52,6 +52,26 @@ async fn profiles_trust_remote_mode_and_session_replay() {
             "event",
             json!({"name":"tool_call","event":{"toolName":"bash","input":{"command":"local"}},"ctx":ctx}),
         ),
+        (
+            7,
+            "tool.execute",
+            json!({"name":"ssh_use_profile","params":{"profile":"dev"},"toolCallId":"use","ctx":ctx}),
+        ),
+        (
+            8,
+            "event",
+            json!({"name":"tool_call","event":{"toolName":"bash","input":{"command":"echo hi"}},"ctx":ctx}),
+        ),
+        (
+            9,
+            "tool.execute",
+            json!({"name":"ssh_use_local_bash","params":{},"toolCallId":"local","ctx":ctx}),
+        ),
+        (
+            10,
+            "event",
+            json!({"name":"tool_call","event":{"toolName":"bash","input":{"command":"local"}},"ctx":ctx}),
+        ),
     ];
     let mut notices = 0;
     let mut entries = Vec::<Value>::new();
@@ -79,17 +99,17 @@ async fn profiles_trust_remote_mode_and_session_replay() {
                 let result = &message["result"];
                 match id {
                     1 => {
-                        assert_eq!(result["tools"].as_array().unwrap().len(), 4);
+                        assert_eq!(result["tools"].as_array().unwrap().len(), 6);
                         assert_eq!(result["commands"][0]["name"], "ssh");
                     }
                     2 => assert_eq!(result["details"]["profiles"][0]["host"], "global-host"),
-                    4 => assert!(
+                    4 | 8 => assert!(
                         result["patch"]["input"]["command"]
                             .as_str()
                             .unwrap()
                             .contains("global-host")
                     ),
-                    6 => assert!(result.get("patch").is_none()),
+                    6 | 10 => assert!(result.get("patch").is_none()),
                     _ => {}
                 }
                 break;
@@ -124,6 +144,8 @@ async fn profiles_trust_remote_mode_and_session_replay() {
     }
     assert_eq!(notices, 1);
     assert_eq!(entries[0], json!({"customType":"ssh-remote","data":"dev"}));
+    assert_eq!(entries[1], entries[0]);
+    assert_eq!(entries[2], json!({"customType":"ssh-remote","data":null}));
     writer.shutdown().await.unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(5), serve)
         .await

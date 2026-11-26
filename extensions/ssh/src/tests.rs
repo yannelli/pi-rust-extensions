@@ -71,8 +71,17 @@ fn shared_socket_depends_on_connection_and_not_remote_cwd() {
     profile.port = 2222;
     assert_ne!(first, command::socket_path(&temp.0, &profile).unwrap());
     let args = command::arguments(&temp.0, &config::Config::default(), &profile).unwrap();
-    assert!(args.contains(&"ControlMaster=auto".into()));
-    assert!(args.contains(&"ControlPersist=600".into()));
+    #[cfg(not(windows))]
+    {
+        assert!(args.contains(&"ControlMaster=auto".into()));
+        assert!(args.contains(&"ControlPersist=600".into()));
+    }
+    #[cfg(windows)]
+    {
+        assert!(!args.iter().any(|arg| arg.starts_with("ControlMaster=")));
+        assert!(!args.iter().any(|arg| arg.starts_with("ControlPersist=")));
+        assert!(!args.iter().any(|arg| arg.starts_with("ControlPath=")));
+    }
     assert!(args.contains(&"/keys/my key".into()));
     assert!(args.contains(&"bastion".into()));
 }

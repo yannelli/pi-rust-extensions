@@ -92,7 +92,10 @@ pub fn specs() -> Vec<ToolSpec> {
             "Connect to or start Chrome for automation.",
             schema(
                 vec![
-                    ("port", json!({ "type": "number" })),
+                    (
+                        "port",
+                        json!({ "type": "number", "description": "DevTools port of the Chrome to connect to. Defaults to the configured port." }),
+                    ),
                     ("url", json!({ "type": "string" })),
                     ("userDataDir", json!({ "type": "string" })),
                     ("useDefaultProfile", b("Unsupported.")),

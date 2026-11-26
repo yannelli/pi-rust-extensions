@@ -49,6 +49,11 @@ struct FileArgs {
     timeout: u64,
 }
 
+#[derive(Deserialize)]
+struct ProfileArgs {
+    profile: String,
+}
+
 async fn execute(
     state: &State,
     args: ExecArgs,
@@ -84,6 +89,8 @@ pub fn extension() -> Extension {
     let list = state.clone();
     let menu = state.clone();
     let routing = state.clone();
+    let use_profile = state.clone();
+    let use_local = state.clone();
     let mut extension = Extension::new("ssh")
         .tool(tool("ssh_exec", "Run a command using an SSH profile", json!({
             "profile":{"type":"string"}, "command":{"type":"string"}, "cwd":{"type":"string"},
@@ -120,6 +127,22 @@ pub fn extension() -> Extension {
                     "host":p.host,"user":p.user,"port":p.port,"cwd":p.cwd,"enabled":p.enabled})).collect();
                 Ok(ToolResult::text(serde_json::to_string_pretty(&profiles)?).details(json!({
                     "profiles":profiles,"remoteProfile":state.remote.lock().await.clone()})))
+            }
+        })
+        .tool(tool("ssh_use_profile", "Route this session's built-in bash to an SSH profile for subsequent commands. Use only when the user explicitly asks to connect to or work through that remote host.", json!({
+            "profile":{"type":"string","description":"Name of a configured SSH profile"}
+        }), &["profile"]), move |args: ProfileArgs, ctx: ToolCtx| {
+            let state = use_profile.clone();
+            async move {
+                ui::set_remote(&state, ctx.host(), Some(args.profile.clone())).await?;
+                Ok(ToolResult::text(format!("This session's bash now uses SSH profile '{}'. Subsequent bash commands will run remotely.", args.profile)))
+            }
+        })
+        .tool(tool("ssh_use_local_bash", "Route this session's built-in bash back to the local machine. Use when the user asks to disconnect or return to local commands.", json!({}), &[]), move |_args: Value, ctx: ToolCtx| {
+            let state = use_local.clone();
+            async move {
+                ui::set_remote(&state, ctx.host(), None).await?;
+                Ok(ToolResult::text("This session's bash now runs locally."))
             }
         })
         .command("ssh", "Manage SSH profiles and remote bash mode", move |args, ctx| {
